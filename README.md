@@ -92,11 +92,16 @@ V3 已按「五模块框架」重构，完整设计见 [ARCHITECTURE.md](ARCHITE
 - **引擎层**（`core/engine/`）：直连 OpenAI 兼容 API，用户可配置 Provider（SiliconFlow / OpenAI / DeepSeek / Ollama / 自定义）
 - **通道层**（`core/channels/`）：微信 iLink 协议双向通道（扫码登录 + 长轮询），预留多平台扩展
 - **记忆层**（`core/memory/`）：联系人档案、意图库、关系状态、看板对话、未读计数
-- **输入管道**（`core/ingest/` + `core/capture/`）：Node 剪贴板监听与实时消息统一归档
+- **输入管道**（`core/ingest/` + `core/capture/`）：Node 剪贴板监听与实时消息统一归档（唯一保留的 PowerShell 组件是 15 行的剪贴板传感器 `core/capture/clipboard-sensor.ps1`，仅负责读剪贴板）
 - **主动层**（`core/remind/` + `core/status.js`）：进程内定时调度 + 心跳/主动级别/未读状态
 - **本地看板**：Node.js HTTP 服务 + 原生 ES 模块前端（`dashboard/`，无构建步骤）
 - **桌面窗口**：Electron（`app/`，启动时拉起核心服务并热重启）
 - **数据存储**：本地 JSON / JSONL / TOML，默认不上传
+
+### PowerShell 组件（仅两处）
+
+- `start.ps1`：开发模式一键启动——后台拉起核心守护进程，并打开 Edge 应用窗口
+- `core/capture/clipboard-sensor.ps1`：剪贴板传感器（约 15 行），由 Node 核心作为子进程拉起，只负责检测剪贴板变化并以 `CHANGE <base64>` 输出到标准输出；解析、去重、归档全部在 Node 侧完成
 
 ---
 
@@ -137,6 +142,9 @@ npm run daemon   # 守护核心：服务 + 剪贴板监听 + 微信通道 + 定�
 npm run server   # 只看板，浏览器打开 http://127.0.0.1:18791
 npm test         # 单元测试与 fixture 测试
 npm run check    # 全量语法检查
+
+# 或一键脚本（Edge 应用窗口，等价于 start.ps1）
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\Lenovo\v3\start.ps1
 ```
 
 > 剪贴板捕获默认关闭，需在「记忆 → 记忆输入」开启；微信消息收发需先在设置/记忆输入里扫码登录。

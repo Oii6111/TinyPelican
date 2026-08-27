@@ -55,7 +55,8 @@ core/                   核心服务（Node，无第三方依赖，Node >= 18）
     pipeline.js         批次/实时消息统一归档管道
     dedupe.js           消息去重
   capture/              ④ 记忆输入（剪贴板）
-    clipboard.js        Node 剪贴板监听（常驻 PowerShell 传感器 + 解析）
+    clipboard.js        Node 剪贴板监听（拉起 clipboard-sensor.ps1 传感器 + 解析）
+    clipboard-sensor.ps1  剪贴板传感器（约 15 行）：检测剪贴板变化并输出 base64 行，由 Node 拉起
   remind/               ⑤ 主动提醒
     scheduler.js        进程内定时调度（防重叠、异常隔离）
     runner.js           提醒执行器（到期点、免打扰、文案生成、推送）
@@ -73,6 +74,8 @@ dashboard/              看板前端：index.html 骨架 + styles.css（设计�
                         strategy / mcp / skills / workflows / settings
 tests/                  单元测试与 fixture 测试（node --test）
 ```
+
+根目录另有 `start.ps1`（开发模式一键启动：拉起核心守护 + 打开 Edge 应用窗口）。PowerShell 组件仅此两处，均为"薄壳"，核心逻辑全部在 Node 侧。
 
 ## 全局状态与心跳
 
