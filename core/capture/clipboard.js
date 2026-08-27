@@ -7,6 +7,8 @@ const path = require('path');
 const { parseChatText, getBatchContact } = require('../lib/chat-parser');
 const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
+const { applyVoiceFill } = require('../ingest/pipeline');
+const voice = require('../memory/stores/voice');
 
 function msgKey(m) {
   return `${m.name}|${m.ts}|${m.type}|${m.content}`;
@@ -71,6 +73,15 @@ class ClipboardWatcher {
 
   _handleClip(text) {
     const msgs = parseChatText(text);
+    // 不是聊天记录：若存在待回填语音，则把这段文本当作语音转写内容回填
+    if (msgs.length === 0 && voice.list().length) {
+      const p = voice.fillFirst(text);
+      if (p) {
+        applyVoiceFill(p);
+        log('info', 'capture', '语音回填：' + (p.contact || p.name) + ' ' + p.ts);
+      }
+      return;
+    }
     if (msgs.length < this.minMatchLines) return;
     const fresh = msgs.filter((m) => !this.seen.has(msgKey(m)));
     if (!fresh.length) return;

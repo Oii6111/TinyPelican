@@ -8,6 +8,7 @@ const { getPaths } = require('../lib/paths');
 const { appendJsonl } = require('../lib/store');
 const { readContact, addMessages, saveContact } = require('../memory/stores/contacts');
 const { increment } = require('../memory/stores/unread');
+const voice = require('../memory/stores/voice');
 
 const P = getPaths();
 
@@ -57,10 +58,47 @@ function ingestMessages(msgs, contact, opts = {}) {
     saveContact(doc);
     for (const m of added) {
       appendJsonl(P.inbox, { ...m, contact: key });
+      // 语音消息进入待回填队列
+      if (m.type === '语音') voice.enqueue(key, m);
     }
     if (opts.unread) increment(added.length);
   }
   return added.length;
 }
 
-module.exports = { processBatchFile, processAllBatches, ingestMessages };
+// 语音回填：把转写文本写回联系人档案与 inbox 流水
+function applyVoiceFill(p) {
+  const key = p.contact || p.name || '';
+  if (!key) return false;
+  let updated = false;
+  const doc = readContact(key);
+  for (const m of doc.messages) {
+    if (m.name === p.name && m.ts === p.ts && m.type === p.type && m.content === '') {
+      m.content = p.content;
+      updated = true;
+      break;
+    }
+  }
+  if (updated) saveContact(doc);
+
+  try {
+    if (fs.existsSync(P.inbox)) {
+      const lines = fs.readFileSync(P.inbox, 'utf8').split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        try {
+          const o = JSON.parse(lines[i]);
+          if (o.name === p.name && o.ts === p.ts && o.type === p.type && o.content === '') {
+            o.content = p.content;
+            lines[i] = JSON.stringify(o);
+            break;
+          }
+        } catch {}
+      }
+      fs.writeFileSync(P.inbox, lines.join('\n'), 'utf8');
+    }
+  } catch {}
+  return updated;
+}
+
+module.exports = { processBatchFile, processAllBatches, ingestMessages, applyVoiceFill };

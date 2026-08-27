@@ -19,12 +19,10 @@
     "extraResources": [
       { "from": "../dashboard", "to": "content/dashboard" },
       { "from": "../core", "to": "content/core" },
-      { "from": "../watch-clipboard.ps1", "to": "content/watch-clipboard.ps1" },
       { "from": "../_process_batches.js", "to": "content/_process_batches.js" },
       { "from": "../extract_intents.js", "to": "content/extract_intents.js" },
       { "from": "../remind.js", "to": "content/remind.js" },
       { "from": "../check_relations.js", "to": "content/check_relations.js" },
-      { "from": "../logger.js", "to": "content/logger.js" },
       { "from": "../config.json", "to": "content/config.json" },
       { "from": "../config.example.json", "to": "content/config.example.json" },
       { "from": "../RULES.md", "to": "content/RULES.md" },

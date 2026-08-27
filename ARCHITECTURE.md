@@ -49,7 +49,7 @@ core/                   核心服务（Node，无第三方依赖，Node >= 18）
       channel.js        WeChatChannel（长轮询、入站处理、出站发送）
       push.js           主动推送统一入口
   memory/               ③ 记忆框架
-    stores/             contacts（一人一档）、intents、conversations、unread（未读数）
+    stores/             contacts（一人一档）、intents、conversations、unread（未读数）、voice（语音待回填队列）
     relations.js        关系维护检查（冷落检测 + 问候建议）
   ingest/               ④ 记忆输入
     pipeline.js         批次/实时消息统一归档管道
@@ -169,6 +169,6 @@ Electron：`cd app && npm install && npm start`。
 ## 已知边界（待真机验证）
 
 - 微信扫码登录、长轮询收发的 HTTP 细节按公开协议实现，需真实设备扫码验证一次
-- 剪贴板捕获默认关闭，需在记忆输入页开启；Node 监听与旧 `watch-clipboard.ps1` 二选一，勿同时运行
-- 语音回填队列（voice-pending.json）目前仍由旧监听器写入，Node 捕获接管后建议将回填逻辑迁入 ingest
+- 剪贴板捕获默认关闭，需在记忆输入页开启（已完全并入 Node 核心，旧 PowerShell 监听器已移除）
+- 语音回填已迁移至 Node 核心：归档【语音】消息时自动入队，粘贴转写文本时自动回填并写回档案与流水
 - 心跳间隔修改后需重启核心生效（重启由守护/Electron 自动处理）
