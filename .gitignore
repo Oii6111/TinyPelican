@@ -27,6 +27,16 @@ logs/
 # 个人配置（含微信推送账号，不入库）
 config.json
 
+# 密钥/凭据类文件（额外保险）
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+credentials.*
+
 # 系统/编辑器
 .DS_Store
 Thumbs.db
