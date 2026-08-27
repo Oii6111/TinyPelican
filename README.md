@@ -14,6 +14,7 @@
 | `batches/` | 待处理批次（监听器写入，处理完成后删除） |
 | `inbox.jsonl` | 全量聊天流水（只读） |
 | `dashboard/` | 最小 Web 看板（`server.mjs` + `index.html`，含后台日志页） |
+| `app/` | Electron 桌面壳：自动拉起 gateway + 看板 + 监听器，并打开桌面窗口 |
 | `check_relations.js` | 关系维护提醒：扫描「特别关心」联系人，超过 N 天未联系则生成问候建议并微信推送 |
 | `relation-pushed.json` | 关系维护去重状态（避免同一个人反复提醒） |
 | `voice-pending.json` | 语音待回填队列：记录还没回填内容的语音占位 |
@@ -24,15 +25,37 @@
 
 ## 启动
 
-```powershell
-# 方式 A：一键（自动拉起 gateway + 监听器）
-powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\Lenovo\v3\start.ps1
+### 方式 A：桌面窗口 App（推荐）
 
-# 方式 B：gateway 已在跑，直接启动监听器
+项目带 Electron 桌面壳，启动后会自动拉起 gateway、Web 看板和剪贴板监听器，并打开「小鹈鹕」桌面窗口。
+
+```powershell
+cd C:\Users\Lenovo\v3\app
+npm install   # 首次运行或 node_modules 不存在时需要
+npm start
+```
+
+### 方式 B：一键脚本（Edge 应用窗口 / 开发模式）
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\Lenovo\v3\start.ps1
+```
+
+### 方式 C：gateway 已在跑，只启动监听器
+
+```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\Lenovo\v3\watch-clipboard.ps1
 ```
 
-## 看板
+## 打包桌面安装包
+
+```powershell
+cd C:\Users\Lenovo\v3\app
+npm run dist
+# 安装包生成在 app\dist\ 下
+```
+
+## 只看板（不带桌面壳）
 
 ```powershell
 node C:\Users\Lenovo\v3\dashboard\server.mjs
