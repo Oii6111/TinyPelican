@@ -1,7 +1,8 @@
 # 小鹈鹕 V3 — 社交关系归档规则
 
 > 这是「剪贴板捕获 → 一人一档案」管道的 Agent 侧行为契约。
-> 常规归档由 `_process_batches.js` 自动完成；需要人工/Agent 介入时，严格按本文件执行。
+> 常规归档由 `core/ingest/pipeline.js`（CLI 壳 `_process_batches.js`）自动完成；需要人工/Agent 介入时，严格按本文件执行。
+> 剪贴板捕获默认关闭，需在「记忆 → 记忆输入」开启；微信 iLink 通道的消息实时归档走同一管道。
 
 ## 目标
 

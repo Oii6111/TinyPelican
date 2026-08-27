@@ -1,0 +1,16 @@
+{
+  "name": "xiaotihu-v3",
+  "version": "0.4.0",
+  "private": true,
+  "description": "小鹈鹕 V3 — 长记忆 + 主动关系 个人 AI 助手",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\"",
+    "server": "node core/server.js",
+    "daemon": "node core/launcher.js",
+    "remind:dry": "node remind.js --dry-run",
+    "check": "node --check core/lib/paths.js && node --check core/lib/config.js && node --check core/lib/log.js && node --check core/lib/store.js && node --check core/lib/deadline.js && node --check core/lib/chat-parser.js && node --check core/lib/reminder-rules.js && node --check core/lib/toml.js && node --check core/engine/providers.js && node --check core/engine/extract.js && node --check core/engine/client.js && node --check core/engine/intent-runner.js && node --check core/memory/stores/contacts.js && node --check core/memory/stores/intents.js && node --check core/memory/stores/conversations.js && node --check core/memory/stores/unread.js && node --check core/memory/relations.js && node --check core/ingest/dedupe.js && node --check core/ingest/pipeline.js && node --check core/capture/clipboard.js && node --check core/channels/interface.js && node --check core/channels/weixin/client.js && node --check core/channels/weixin/context.js && node --check core/channels/weixin/login.js && node --check core/channels/weixin/channel.js && node --check core/channels/weixin/push.js && node --check core/remind/scheduler.js && node --check core/remind/runner.js && node --check core/status.js && node --check core/api/router.js && node --check core/api/models.js && node --check core/api/rest.js && node --check core/api/routes/health.js && node --check core/api/routes/status.js && node --check core/api/routes/search.js && node --check core/api/routes/contacts.js && node --check core/api/routes/intents.js && node --check core/api/routes/voice.js && node --check core/api/routes/logs.js && node --check core/api/routes/settings.js && node --check core/api/routes/engine.js && node --check core/api/routes/wechat.js && node --check core/api/routes/chat.js && node --check core/server.js && node --check core/index.js && node --check core/launcher.js && node --check extract_intents.js && node --check remind.js && node --check check_relations.js && node --check _process_batches.js && node --check logger.js && node --check dashboard/server.mjs && node --check dashboard/src/api.mjs && node --check dashboard/src/ui.mjs && node --check dashboard/src/app.mjs && node --check dashboard/src/components/wechat-login.mjs && node --check dashboard/src/views/chat.mjs && node --check dashboard/src/views/contacts.mjs && node --check dashboard/src/views/settings.mjs && node --check dashboard/src/views/channels.mjs && node --check dashboard/src/views/timeline.mjs && node --check dashboard/src/views/knowledge.mjs && node --check dashboard/src/views/memory-input.mjs && node --check dashboard/src/views/proactive.mjs && node --check dashboard/src/views/pending.mjs && node --check dashboard/src/views/records.mjs && node --check dashboard/src/views/strategy.mjs && node --check dashboard/src/views/mcp.mjs && node --check dashboard/src/views/skills.mjs && node --check dashboard/src/views/workflows.mjs"
+  }
+}

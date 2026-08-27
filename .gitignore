@@ -26,6 +26,11 @@ logs/
 
 # 个人配置（含微信推送账号，不入库）
 config.json
+config.toml
+weixin-cursor.json
+weixin-context.json
+conversations.json
+unread.json
 
 # 密钥/凭据类文件（额外保险）
 .env

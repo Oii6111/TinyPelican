@@ -33,5 +33,46 @@
     "notifyComplete": true,
     "accountId": "your-account-id",
     "to": "your-wechat-openid"
+  },
+  "engine": {
+    "provider": "siliconflow",
+    "providers": {
+      "siliconflow": {
+        "baseUrl": "https://api.siliconflow.cn/v1",
+        "apiKey": "",
+        "model": "Qwen/Qwen3.5-9B"
+      },
+      "openai": {
+        "baseUrl": "https://api.openai.com/v1",
+        "apiKey": "",
+        "model": "gpt-4o-mini"
+      },
+      "deepseek": {
+        "baseUrl": "https://api.deepseek.com/v1",
+        "apiKey": "",
+        "model": "deepseek-chat"
+      },
+      "ollama": {
+        "baseUrl": "http://127.0.0.1:11434/v1",
+        "apiKey": "",
+        "model": "qwen3:8b"
+      },
+      "custom": {
+        "baseUrl": "",
+        "apiKey": "",
+        "model": ""
+      }
+    },
+    "timeoutMs": 120000,
+    "retries": 2
+  },
+  "proactivity": {
+    "level": "L2"
+  },
+  "capture": {
+    "enabled": false
+  },
+  "heartbeat": {
+    "intervalSec": 30
   }
 }

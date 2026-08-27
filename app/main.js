@@ -1,5 +1,5 @@
 // 小鹈鹕 V3 — Electron 壳
-// 启动时后台拉起 gateway + 剪贴板监听器 + webui，然后弹窗加载 webui。
+// 启动时后台拉起核心服务（core/index.js）；核心以退出码 42 退出时自动重启（微信登录/登出热重启）。
 const { app, BrowserWindow } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -8,12 +8,10 @@ const fs = require('fs');
 
 const isPackaged = app.isPackaged;
 const V3 = isPackaged ? path.join(process.resourcesPath, 'content') : path.resolve(__dirname, '..'); // v3
-const SERVER = path.join(V3, 'dashboard', 'server.mjs');
-const WATCHER = path.join(V3, 'watch-clipboard.ps1');
+const CORE = path.join(V3, 'core', 'index.js');
 const LOGO = path.join(V3, 'logo2.png');
 const PORT = 18791;
-const GW_PORT = 18789;
-const OPENCLAW_ENTRY = path.join(process.env.APPDATA || '', 'npm', 'node_modules', 'openclaw', 'openclaw.mjs');
+const RESTART_EXIT_CODE = 42;
 
 // 数据目录：打包后放用户可写目录；开发模式不设（脚本沿用现路径）。
 if (isPackaged && !process.env.XIAOTIHU_DATA_DIR) {
@@ -30,7 +28,7 @@ if (isPackaged) {
   }
 }
 
-const services = [];
+let coreProc = null;
 let win = null;
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
@@ -61,50 +59,29 @@ function portFree(port) {
   });
 }
 
-function startService(cmd, args) {
-  const c = spawn(cmd, args, { stdio: 'ignore', windowsHide: true });
-  c.on('error', () => {});
-  services.push(c);
-  return c;
-}
-
-function watcherAlive() {
-  const pidFile = path.join(V3, '.watcher.pid');
-  try {
-    const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
-    if (!pid) return false;
-    process.kill(pid, 0); // 存在则继续
-    return true;
-  } catch { return false; }
-}
-
-async function ensureServices() {
-  const node = findNode();
-  // gateway
-  if (await portFree(GW_PORT)) {
-    startService(node, [OPENCLAW_ENTRY, 'gateway', 'run']);
-    await sleep(8000);
-  }
-  // webui
-  if (await portFree(PORT)) {
-    startService(node, [SERVER]);
-    await sleep(2000);
-  }
-  // 监听器
-  if (!watcherAlive()) {
-    startService('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', WATCHER]);
-    await sleep(1000);
-  }
+function startCore(node) {
+  coreProc = spawn(node, [CORE], { stdio: 'ignore', windowsHide: true });
+  coreProc.on('error', () => {});
+  coreProc.on('exit', (code) => {
+    if (code === RESTART_EXIT_CODE) {
+      startCore(node); // 微信登录/登出后的热重启
+    }
+  });
+  return coreProc;
 }
 
 app.whenReady().then(async () => {
-  await ensureServices();
+  const node = findNode();
+  if (await portFree(PORT)) {
+    startCore(node);
+    await sleep(3000);
+  }
 
   win = new BrowserWindow({
-    width: 1040,
-    height: 760,
-    minWidth: 720,
-    minHeight: 520,
+    width: 1280,
+    height: 800,
+    minWidth: 760,
+    minHeight: 560,
     icon: LOGO,
     title: '小鹈鹕',
     autoHideMenuBar: true,
@@ -114,7 +91,7 @@ app.whenReady().then(async () => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      win = new BrowserWindow({ width: 1040, height: 760, icon: LOGO, autoHideMenuBar: true });
+      win = new BrowserWindow({ width: 1280, height: 800, minWidth: 760, minHeight: 560, icon: LOGO, autoHideMenuBar: true });
       win.loadURL(`http://127.0.0.1:${PORT}`);
     }
   });
@@ -123,7 +100,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => app.quit());
 
 app.on('will-quit', () => {
-  for (const c of services) {
-    try { c.kill(); } catch {}
+  if (coreProc) {
+    try { coreProc.kill(); } catch {}
   }
 });
