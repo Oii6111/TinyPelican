@@ -1,0 +1,35 @@
+# 依赖与构建产物
+node_modules/
+dist/
+release/
+*.tgz
+
+# 本地数据（聊天内容/隐私，不入库）
+contacts/*.json
+contacts/_legacy/
+inbox.jsonl
+pending.jsonl
+batches/*.jsonl
+voice-pending.json
+intents.json
+intent-state.json
+intent-last-run.json
+remark-pending.json
+relation-pushed.json
+.watcher-state.json
+.watcher.pid
+activity.log
+
+# 日志
+logs/
+*.log
+
+# 个人配置（含微信推送账号，不入库）
+config.json
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,37 @@
+{
+  "selfNicknames": [
+    "你的微信昵称"
+  ],
+  "pollMs": 700,
+  "debounceMs": 5000,
+  "minMatchLines": 2,
+  "inboxMaxLines": 500,
+  "relationCheck": {
+    "enabled": true,
+    "days": 7
+  },
+  "intent": {
+    "agent": "intent",
+    "highConfidence": 0.85,
+    "mediumConfidence": 0.5,
+    "maxMessagesPerBatch": 50,
+    "agentTimeoutMs": 120000,
+    "minIntervalMinutes": 0
+  },
+  "reminder": {
+    "deadlineLeadDays": [1],
+    "deadlineLeadHours": [2],
+    "scheduleLeadMinutes": 30
+  },
+  "doNotDisturb": {
+    "enabled": true,
+    "start": "23:00",
+    "end": "08:00"
+  },
+  "weixinPush": {
+    "enabled": false,
+    "notifyComplete": true,
+    "accountId": "your-account-id",
+    "to": "your-wechat-openid"
+  }
+}
