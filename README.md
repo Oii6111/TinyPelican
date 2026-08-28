@@ -60,6 +60,9 @@
 | 意图识别 / 待确认行动 | ✅ 已落地 | 新消息归档后自动识别，待确认行动页可 👍 确认 / 👎 忽略 |
 | 主动提醒引擎 | ✅ 已落地 | 进程内定时调度（替代外部 cron），心跳间隔可配置 |
 | 本地 Web 看板 | ✅ 已重构 | 顶部状态栏（心跳/主动级别/未读）+ 对话板块 + 四大板块子页导航 |
+| DSH Agent 对话回复 | ✅ 已落地 | 所有通道对话默认走 DSH harness 大模型回复；WebUI 流式展示思考、工具调用、执行过程，最终回答独立显示 |
+| Agent 事件裁剪与增量展示 | ✅ 已落地 | 工具结果限长、连续增量合并、任务接口 `afterSeq` 增量拉取，页面不因超长输出卡顿 |
+| 联系人档案编辑/删除 | ✅ 已落地 | 联系人页可直接编辑备注与画像；支持清空聊天记录、删除联系人并同步清理 `inbox.jsonl` |
 | 全局消息检索 | ✅ 已落地 | 聊天记录查看器可不选联系人直接按关键词搜索全部档案 |
 | 桌面壳（Electron） | ✅ 已搭建 | 可打包用户端，窗口可自适应缩放 |
 | 群聊消息模型 | ⏳ 待设计 | 群聊识别、群聊档案、任务指向判断 |
@@ -90,6 +93,7 @@ V3 已按「五模块框架」重构，完整设计见 [ARCHITECTURE.md](ARCHITE
 
 ### 当前技术栈
 - **引擎层**（`core/engine/`）：直连 OpenAI 兼容 API，用户可配置 Provider（SiliconFlow / OpenAI / DeepSeek / Ollama / 自定义）
+- **Agent 层**（`core/agent/` + `agent/dsh-event-stream/`）：基于 DSH（DeepSeek Harness）headless 执行对话任务，自定义插件把 session/event 输出为 JSONL 事件流，WebUI 实时展示思考/工具调用/执行过程
 - **通道层**（`core/channels/`）：微信 iLink 协议双向通道（扫码登录 + 长轮询），预留多平台扩展
 - **记忆层**（`core/memory/`）：联系人档案、意图库、关系状态、看板对话、未读计数
 - **输入管道**（`core/ingest/` + `core/capture/`）：Node 剪贴板监听与实时消息统一归档（唯一保留的 PowerShell 组件是 15 行的剪贴板传感器 `core/capture/clipboard-sensor.ps1`，仅负责读剪贴板）
@@ -116,8 +120,11 @@ V3 已按「五模块框架」重构，完整设计见 [ARCHITECTURE.md](ARCHITE
 
 ```powershell
 cd C:\Users\Lenovo\v3
+npm install          # 安装依赖，包含 @deepseek-ai/dsh
 copy config.example.json config.json
 ```
+
+> DSH Agent 默认通过 `npm install` 安装的 `@deepseek-ai/dsh` 运行；也可以手动设置 `DSH_BIN` 指向本机 DSH 的 `lib/bin.js`。
 
 也可以不手动编辑，直接启动后在看板里配置：
 
@@ -164,7 +171,8 @@ npm run dist
 - **默认本地优先**：聊天记录默认保存在本地 `C:\Users\Lenovo\v3`，不上传、不外发。
 - **剪贴板隐私**：只识别“聊天记录格式”，非聊天内容（密码/验证码/普通文本）立即丢弃、不落盘。
 - **Git 安全**：真实联系人档案、聊天流水、意图库、`config.json`（含 Provider Key）、`config.toml`（微信凭据）、未读/对话状态均已被 `.gitignore` 排除，不会提交到仓库。
-- **用户控制**：可随时删除某段记录或某个联系人画像。
+- **Agent 事件隐私**：工具结果默认截断，历史会话只保留最终回答与执行摘要，避免把完整本地文件内容写入仓库或聊天记录。
+- **用户控制**：联系人页可编辑/删除画像，可清空聊天记录；看板会话也可直接删除。
 
 ---
 
@@ -172,6 +180,9 @@ npm run dist
 
 ### 当前已落地（2026-08）
 - ✅ 五模块框架重构 + 引擎直连大模型 API（多 Provider 可配置）
+- ✅ DSH Agent 对话回复：所有通道对话自动走 DSH harness，WebUI 流式展示思考/工具/执行过程
+- ✅ Agent 事件裁剪、增量 `afterSeq` 拉取、回答卡片执行过程折叠
+- ✅ 联系人档案编辑 / 清空聊天记录 / 删除联系人（同步清理 `inbox.jsonl`）
 - ✅ 微信 iLink 双向通道（扫码登录 + 长轮询）
 - ✅ 看板板块化重构（顶部状态栏 / 对话 / 四大板块 / 子页导航）
 - ✅ 待确认行动 + 思考和行动记录 + 全局消息检索
