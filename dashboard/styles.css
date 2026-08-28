@@ -299,6 +299,24 @@ body {
 .contact-detail { flex: 1; overflow-y: auto; padding: 24px 30px; }
 .star-btn { border: none; background: none; cursor: pointer; font-size: 22px; color: var(--text-3); padding: 0; }
 .star-btn.on { color: var(--accent); }
+.contact-header-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.contact-profile-view {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-2);
+}
+.contact-profile-edit {
+  resize: vertical;
+  font-family: ui-monospace, Consolas, monospace;
+  line-height: 1.7;
+}
 .msg { display: flex; gap: 8px; padding: 3px 0; }
 .msg .t { color: var(--text-3); font-size: 12px; white-space: nowrap; font-family: ui-monospace, monospace; }
 
@@ -394,3 +412,388 @@ body {
 }
 .toast.ok { background: var(--green); }
 .toast.err { background: var(--red); }
+
+/* ---------- Agent 任务（DSH） ---------- */
+.agent-page { max-width: 1200px; }
+.agent-page textarea.input { resize: vertical; min-height: 90px; font-family: inherit; }
+.agent-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 16px;
+  align-items: start;
+  margin-top: 16px;
+}
+.agent-list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  max-height: calc(100vh - 260px);
+  overflow-y: auto;
+}
+.agent-item {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  margin-bottom: 6px;
+}
+.agent-item:hover { background: var(--surface-2); }
+.agent-item.active { background: var(--blue-soft); border-color: var(--blue); }
+.agent-item .t {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.agent-item .s { font-size: 12px; color: var(--text-3); margin-top: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.agent-detail { min-width: 0; }
+.agent-detail .card { max-width: none; }
+.agent-events {
+  max-height: calc(100vh - 420px);
+  overflow-y: auto;
+  margin-top: 12px;
+  padding-right: 4px;
+}
+.event-item {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin: 8px 0;
+  background: var(--surface);
+}
+.event-item .event-body { margin-top: 4px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.event-item .agent-think { color: var(--text-2); }
+.event-item .agent-tool { background: var(--blue-soft); border-radius: var(--radius-sm); padding: 8px; }
+.event-item .agent-tool-result { background: var(--green-soft); border-radius: var(--radius-sm); padding: 8px; }
+.event-item pre {
+  margin: 6px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.tool-name { font-weight: 600; }
+.agent-final {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 14px;
+}
+.agent-final pre { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.agent-error { color: var(--red-text); background: var(--red-soft); border: 1px solid var(--red); border-radius: var(--radius); padding: 12px; margin-top: 12px; white-space: pre-wrap; }
+
+/* ---------- 对话页 DSH 实时活动流（浅色主题） ---------- */
+.dsh-activity {
+  align-self: flex-start;
+  max-width: 86%;
+  min-width: min(560px, 80%);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  border-bottom-left-radius: 4px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, .08);
+}
+.dsh-activity-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+.dsh-pulse {
+  color: var(--blue);
+  animation: dshPulse 1.2s infinite;
+}
+@keyframes dshPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .4; transform: scale(.8); }
+}
+.dsh-events {
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dsh-empty { color: var(--text-3); font-size: 12px; }
+.dsh-event {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.dsh-event-meta { color: var(--text-3); font-size: 11px; margin-bottom: 2px; }
+.dsh-event-body { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+.dsh-think { color: #7c3aed; }
+.dsh-tool { background: #eff6ff; border-left-color: #38bdf8; }
+.dsh-tool-result { background: #ecfdf5; border-left-color: #34d399; }
+.dsh-tool-name { font-weight: 600; color: #0369a1; }
+.dsh-event pre {
+  margin: 6px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-2);
+}
+.dsh-think-details {
+  border: 1px solid var(--border);
+  border-left: 3px solid #7c3aed;
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.dsh-think-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #7c3aed;
+  user-select: none;
+}
+.dsh-think-details pre {
+  margin: 6px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-2);
+}
+
+/* 对话页：DSH 正式回复卡片（思考/工具附在回复气泡内） */
+.dsh-answer-card {
+  max-width: 86%;
+  color: var(--text);
+}
+.dsh-message-group {
+  align-self: flex-start;
+  width: fit-content;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.dsh-message-group > .dsh-answer-text {
+  max-width: min(100%, 860px);
+  padding: 10px 14px;
+  overflow: visible;
+}
+.dsh-answer-card .dsh-answer-status {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.dsh-answer-card .dsh-reasoning-collapse {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  padding: 8px 14px;
+}
+.dsh-answer-card .dsh-reasoning-collapse summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #7c3aed;
+  user-select: none;
+}
+.dsh-answer-card .dsh-reasoning-collapse pre {
+  margin: 6px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-2);
+}
+.dsh-answer-card .dsh-answer-tools {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dsh-answer-card .dsh-answer-tool {
+  border: 1px solid var(--border);
+  border-left: 3px solid #38bdf8;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.dsh-answer-card .dsh-answer-tool-result {
+  border-left-color: #34d399;
+  background: #ecfdf5;
+}
+.dsh-answer-card .dsh-answer-tool-name {
+  font-weight: 600;
+  color: #0369a1;
+}
+.dsh-answer-card .dsh-answer-tool pre {
+  margin: 4px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-2);
+}
+.dsh-answer-card .dsh-answer-text {
+  line-height: 1.6;
+  word-break: break-word;
+  color: var(--text);
+}
+.dsh-answer-card .dsh-answer-text > div + div { margin-top: 4px; }
+.dsh-answer-card .dsh-answer-text ul { margin: 6px 0; padding-left: 22px; }
+.dsh-answer-card .dsh-answer-text li + li { margin-top: 4px; }
+.dsh-answer-card .dsh-answer-text code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: .92em;
+}
+.dsh-answer-card .rich-spacer { height: 6px; }
+
+/* 增量回答卡片：执行过程整体折叠，工具结果限高，最终回答永远独立可见 */
+.dsh-answer-card .dsh-process-collapse {
+  width: min(620px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  padding: 8px 12px;
+}
+.dsh-answer-card .dsh-process-collapse > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #334155;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dsh-answer-card .dsh-process-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.dsh-answer-card .dsh-process-body {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-right: 4px;
+}
+.dsh-answer-card .dsh-reasoning-collapse {
+  border: 1px solid var(--border);
+  border-left: 3px solid #7c3aed;
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.dsh-answer-card .dsh-reasoning-collapse summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #7c3aed;
+  user-select: none;
+}
+.dsh-answer-card .dsh-reasoning-collapse pre {
+  margin: 6px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-2);
+  max-height: 220px;
+  overflow-y: auto;
+}
+.dsh-answer-card .dsh-tool-details {
+  border: 1px solid var(--border);
+  border-left: 3px solid #38bdf8;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.dsh-answer-card .dsh-tool-details > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+.dsh-answer-card .dsh-tool-name,
+.dsh-answer-card .dsh-answer-tool-name {
+  font-weight: 600;
+  color: #0369a1;
+}
+.dsh-answer-card .dsh-tool-state {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.dsh-answer-card .dsh-tool-args,
+.dsh-answer-card .dsh-tool-result pre,
+.dsh-answer-card .dsh-process-item pre {
+  margin: 6px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-2);
+  max-height: 160px;
+  overflow-y: auto;
+}
+.dsh-answer-card .dsh-tool-result {
+  margin-top: 6px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+  color: var(--text-2);
+}
+.dsh-answer-card .dsh-tool-result.dsh-tool-error {
+  color: var(--red-text);
+}
+.dsh-answer-card .dsh-tool-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #047857;
+  font-size: 12px;
+}
+.dsh-answer-card .dsh-tool-result.dsh-tool-error .dsh-tool-result-head { color: var(--red-text); }
+.dsh-answer-card .dsh-tool-truncated {
+  font-weight: 400;
+  color: var(--text-3);
+}
+.dsh-answer-card .dsh-process-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.dsh-answer-card .dsh-process-item-label {
+  font-weight: 600;
+  color: #334155;
+}
+.dsh-answer-card .dsh-answer-summary {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -1,5 +1,7 @@
-// 小鹈鹕核心 — 关系维护检查
-// 找「特别关心 + 冷落」的联系人，生成问候建议并推送给用户。
+// 小鹈鹕核心 — 关系维护检查（潜意识）
+// 找「特别关心 + 冷落」的联系人，由小模型判断需要维护后，
+// 把“生成问候消息”作为具体任务写入 agent-tasks.jsonl，
+// 再由 DSH 大模型 Worker 拉取执行；执行结果通过队列 Worker 推送给用户。
 'use strict';
 
 const fs = require('fs');
@@ -7,9 +9,8 @@ const path = require('path');
 const { getPaths } = require('../lib/paths');
 const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
-const { readJson, writeJson, listJsonFiles } = require('../lib/store');
-const { runTask } = require('../engine/client');
-const { pushToUser } = require('../channels/weixin/push');
+const { readJson, listJsonFiles } = require('../lib/store');
+const agentQueue = require('../agent/queue');
 
 const P = getPaths();
 
@@ -26,18 +27,30 @@ function lastInteractionMs(c) {
   return max;
 }
 
-function fallbackSuggestion(c) {
-  const recent = (c.messages || []).slice(-3)
-    .map((m) => (m.name || '?') + '：' + (m.content || '[' + (m.type || 'text') + ']')).join('\n');
-  const first = (recent.split('\n')[0] || '上次聊天').slice(0, 40);
-  return '最近怎么样？上次聊到「' + first + '」，好久没联系了，想着问候一下～';
+function buildRelationDetail(c) {
+  const recent = (c.messages || []).slice(-5)
+    .map((m) => `${m.ts || ''} ${m.name || '?'}：${m.content || '[' + (m.type || 'text') + ']'}`)
+    .join('\n');
+  const profile = Object.entries(c.profile || {})
+    .filter(([, v]) => v && String(v).trim())
+    .map(([k, v]) => `${k}：${v}`)
+    .join('\n');
+  const parts = [`已 ${c.days} 天未联系。`];
+  if (profile) parts.push('联系人档案：\n' + profile);
+  if (recent) parts.push('近期消息：\n' + recent);
+  return parts.join('\n\n');
 }
 
 async function runRelationCheck(opts = {}) {
   const cfg = opts.config || loadConfig();
+  const queueCfg = (cfg.agent && cfg.agent.queue) || {};
   if (!cfg.relationCheck || cfg.relationCheck.enabled === false) {
     log('info', 'relation', '未启用，跳过');
     return { skipped: true };
+  }
+  if (queueCfg.enabled === false) {
+    log('info', 'relation', 'Agent 队列未启用，关系维护不投递 DSH 任务');
+    return { skipped: true, reason: 'agent.queue.enabled=false' };
   }
   if (!fs.existsSync(P.contacts)) {
     log('warn', 'relation', '无档案目录，跳过');
@@ -66,29 +79,26 @@ async function runRelationCheck(opts = {}) {
   if (!cold.length) {
     console.log('没有需要维护的关系');
     log('info', 'relation', '没有需要维护的关系');
-    return { checked: 0, pushed: 0 };
+    return { checked: 0, enqueued: 0 };
   }
   console.log('发现 ' + cold.length + ' 个冷落联系人：' + cold.map((c) => c.remark || c.name).join('、'));
   log('info', 'relation', '发现 ' + cold.length + ' 个冷落联系人：' + cold.map((c) => c.remark || c.name).join('、'));
 
-  let pushedCount = 0;
+  let enqueued = 0;
   for (const c of cold) {
-    const r = await runTask('relation', { contact: c }, { config: cfg });
-    const suggestion = r.ok && r.text ? r.text : fallbackSuggestion(c);
-    const msg = '🦩 关系维护提醒\n你和「' + (c.remark || c.name) + '」已经 ' + c.days + ' 天没联系了。\n\n💬 可以发：' + suggestion;
-    const ok = await pushToUser(msg, { config: cfg });
-    if (ok) {
-      pushed[c.name] = Date.now();
-      pushedCount++;
-      console.log('已推送：' + (c.remark || c.name));
-      log('info', 'relation', '已推送：' + (c.remark || c.name));
-    } else {
-      console.log('推送失败：' + (c.remark || c.name));
-      log('error', 'relation', '推送失败：' + (c.remark || c.name));
-    }
+    const label = c.remark || c.name;
+    agentQueue.enqueueTask({
+      type: 'relation',
+      summary: `为「${label}」生成一条自然问候消息`,
+      detail: buildRelationDetail(c),
+      source: { contact: c.name },
+      payload: { contact: c.name, remark: label, days: c.days }
+    });
+    enqueued++;
+    console.log('已入队：' + label);
+    log('info', 'relation', `已入队关系维护任务：${label}`);
   }
-  writeJson(P.relationPushed, pushed);
-  return { checked: cold.length, pushed: pushedCount };
+  return { checked: cold.length, enqueued };
 }
 
-module.exports = { runRelationCheck, daysBetween, lastInteractionMs };
+module.exports = { runRelationCheck, daysBetween, lastInteractionMs, buildRelationDetail };

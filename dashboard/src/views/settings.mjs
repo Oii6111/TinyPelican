@@ -23,6 +23,8 @@ export function mount(container) {
   const modelInput = el('input', { class: 'input', placeholder: 'Qwen/Qwen3.5-9B' });
   const engineMsg = el('span', { class: 'muted' });
   const testBtn = el('button', { class: 'btn btn-edit', text: '测试连接' });
+  const engineSaveBtn = el('button', { class: 'btn btn-primary', text: '保存模型设置' });
+  const engineSaveMsg = el('span', { class: 'muted' });
 
   // 旧版推送（已弃用，仅兼容）
   const pushChk = el('input', { type: 'checkbox' });
@@ -52,7 +54,7 @@ export function mount(container) {
         field('API 地址', baseUrlInput),
         field('API Key', apiKeyInput, '只保存在本地 config.json，不回显完整密钥。'),
         field('模型', modelInput),
-        el('div', { class: 'field' }, testBtn, ' ', engineMsg)
+        el('div', { class: 'field' }, testBtn, ' ', engineMsg, ' ', engineSaveBtn, ' ', engineSaveMsg)
       ),
       el('div', { class: 'card' },
         el('h2', { text: '微信通道（iLink 扫码登录）' }),
@@ -83,6 +85,19 @@ export function mount(container) {
     };
   }
 
+  // 合并当前配置，只覆盖当前选中的 provider，避免丢掉其它 provider 和 engine 其它字段
+  function buildEnginePatch(cur) {
+    const name = providerSel.value;
+    const providers = { ...((cur && cur.engine && cur.engine.providers) || {}) };
+    providers[name] = {
+      ...(providers[name] || {}),
+      baseUrl: baseUrlInput.value.trim(),
+      apiKey: apiKeyInput.value.trim(),
+      model: modelInput.value.trim()
+    };
+    return { provider: name, providers };
+  }
+
   function fillProvider(p) {
     baseUrlInput.value = (p && p.baseUrl) || '';
     apiKeyInput.value = (p && p.apiKey) || '';
@@ -103,10 +118,22 @@ export function mount(container) {
     wxLogin.refresh();
   }
 
+  async function saveEngine() {
+    try {
+      const cur = await api.settings.get();
+      await api.settings.save({ engine: buildEnginePatch(cur) });
+      engineSaveMsg.textContent = '已保存 ✓';
+      setTimeout(() => { engineSaveMsg.textContent = ''; }, 2000);
+    } catch (e) {
+      engineSaveMsg.textContent = '保存失败：' + e.message;
+    }
+  }
+
   async function save() {
     try {
       const cur = await api.settings.get();
       await api.settings.save({
+        engine: buildEnginePatch(cur),
         weixinPush: { ...(cur.weixinPush || {}), enabled: pushChk.checked, notifyComplete: completeChk.checked }
       });
       saveMsg.textContent = '已保存 ✓';
@@ -116,6 +143,7 @@ export function mount(container) {
     }
   }
 
+  engineSaveBtn.onclick = saveEngine;
   testBtn.onclick = async () => {
     engineMsg.textContent = '测试中…';
     try {

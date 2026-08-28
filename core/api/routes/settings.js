@@ -19,6 +19,8 @@ module.exports = (router, ctx) => {
     restoreMaskedKeys(cur, patch);
     const next = { ...cur, ...patch };
     writeJson(P.config, next);
+    // 让正在运行的核心立即使用新配置（尤其是引擎模型设置）
+    if (ctx) ctx.config = loadConfig();
     return ctx.json(res, 200, maskConfig(next));
   });
 };

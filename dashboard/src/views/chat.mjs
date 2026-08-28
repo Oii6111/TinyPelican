@@ -1,7 +1,13 @@
 import { api } from '../api.mjs';
-import { el, empty } from '../ui.mjs';
+import { el, empty, renderRichText } from '../ui.mjs';
+import {
+  createStreamAnswerCard,
+  appendAnswerEvents,
+  createSummaryAnswerCard,
+  createHistoryAnswerCard
+} from '../components/agent-events.mjs';
 
-export function mount(container) {
+export function mount(container, ctx = {}) {
   empty(container);
   container.className = 'view padless';
 
@@ -28,6 +34,14 @@ export function mount(container) {
   let session = null;
   let sending = false;
   let firstShow = true;
+  let pollTimer = null;
+
+  function stopPoll() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
 
   async function ensureSession() {
     if (session) return;
@@ -52,7 +66,7 @@ export function mount(container) {
           el('div', { class: 's', text: c.count + ' 条' }),
           el('button', { class: 'del', text: '🗑', onclick: (e) => { e.stopPropagation(); removeConv(c.key); } })
         );
-        item.onclick = () => { session = c.key; loadConvs(); loadHistory(); };
+        item.onclick = () => { stopPoll(); session = c.key; loadConvs(); loadHistory(); };
         convList.append(item);
       }
     }
@@ -72,13 +86,28 @@ export function mount(container) {
       log.append(el('div', { class: 'bubble bot', text: '新的对话，说点什么吧～' }));
     } else {
       for (const m of msgs) {
-        log.append(el('div', { class: 'bubble ' + (m.role === 'user' ? 'user' : 'bot'), text: m.text }));
+        if (m.role === 'user') {
+          log.append(el('div', { class: 'bubble user', text: m.text }));
+        } else if (m.role === 'bot' && Array.isArray(m.agentEvents) && m.agentEvents.length) {
+          try {
+            log.append(createHistoryAnswerCard({ text: m.text, events: m.agentEvents }));
+          } catch {
+            log.append(el('div', { class: 'bubble bot', text: m.text }));
+          }
+        } else if (m.role === 'bot' && m.executionSummary) {
+          log.append(createSummaryAnswerCard({ text: m.text, summary: m.executionSummary }));
+        } else {
+          const answer = el('div', { class: 'bubble bot' });
+          renderRichText(answer, m.text);
+          log.append(answer);
+        }
       }
     }
     log.scrollTop = log.scrollHeight;
   }
 
   async function newConversation() {
+    stopPoll();
     try {
       const d = await api.chat.create();
       session = d.key;
@@ -89,6 +118,7 @@ export function mount(container) {
 
   async function removeConv(key) {
     if (!confirm('删除这个会话？该操作不可撤销。')) return;
+    stopPoll();
     await api.chat.remove(key);
     if (session === key) {
       session = null;
@@ -107,24 +137,56 @@ export function mount(container) {
     log.append(el('div', { class: 'bubble user', text: msg }));
     sending = true;
     sendBtn.disabled = true;
-    const thinking = el('div', { class: 'bubble bot', text: '思考中…' });
-    log.append(thinking);
+
+    const answerCard = createStreamAnswerCard({ running: true, text: '' });
+    log.append(answerCard);
     log.scrollTop = log.scrollHeight;
-    try {
-      const d = await api.chat.send(msg, session);
-      thinking.remove();
-      if (d.ok) log.append(el('div', { class: 'bubble bot', text: d.reply || '(空回复)' }));
-      else log.append(el('div', { class: 'bubble bot error', text: '出错了：' + (d.error || '未知') }));
-      loadConvs();
-    } catch (e) {
-      thinking.remove();
-      log.append(el('div', { class: 'bubble bot error', text: '请求失败：' + e.message }));
-    } finally {
+    let lastSeq = 0;
+
+    let settled = false;
+    const finishSend = () => {
+      if (settled) return;
+      settled = true;
       sending = false;
       sendBtn.disabled = false;
       input.focus();
+      setTimeout(() => { log.scrollTop = log.scrollHeight; }, 50);
+    };
+
+    try {
+      const d = await api.chat.send(msg, session);
+      if (!d.ok || !d.taskId) {
+        appendAnswerEvents(answerCard, [], { running: false, done: true, error: d.error || 'DSH 启动失败' });
+        finishSend();
+        return;
+      }
+
+      pollTimer = setInterval(async () => {
+        try {
+          const d2 = await api.agent.get(d.taskId, lastSeq);
+          const t = d2.task;
+          const events = t.events || [];
+          const isDone = t.status === 'completed' || t.status === 'failed';
+          appendAnswerEvents(answerCard, events, {
+            running: !isDone,
+            done: isDone,
+            finalText: isDone ? (t.output || null) : null,
+            error: isDone && t.status === 'failed' ? (t.error || '未知') : ''
+          });
+          if (typeof t.lastSeq === 'number') lastSeq = t.lastSeq;
+          if (events.length) log.scrollTop = log.scrollHeight;
+          if (isDone) {
+            stopPoll();
+            loadConvs();
+            log.scrollTop = log.scrollHeight;
+            finishSend();
+          }
+        } catch {}
+      }, 300);
+    } catch (e) {
+      appendAnswerEvents(answerCard, [], { running: false, done: true, error: '请求失败：' + e.message });
+      finishSend();
     }
-    log.scrollTop = log.scrollHeight;
   }
 
   sendBtn.onclick = send;
@@ -144,9 +206,8 @@ export function mount(container) {
       }
       loadConvs();
       input.focus();
-      // 打开对话即视为已读
       api.unread.read().catch(() => {});
     },
-    hide() {}
+    hide() { stopPoll(); }
   };
 }

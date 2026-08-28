@@ -96,7 +96,8 @@ class WeChatChannel {
       name: (raw && (raw.from_user_name || raw.from_user_nickname)) || from,
       ts: new Date().toISOString().slice(0, 16).replace('T', ' '),
       type: 'text',
-      content: text
+      content: text,
+      contextToken: ctx || ''
     });
   }
 

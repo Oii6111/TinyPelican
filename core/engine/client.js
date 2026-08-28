@@ -61,7 +61,12 @@ async function runTask(taskName, context, opts = {}) {
   const task = getTask(taskName);
   if (!task) return { ok: false, error: `未知任务：${taskName}` };
   const prompt = task.buildPrompt(context);
-  const r = await chatCompletion([{ role: 'user', content: prompt }], { ...(task.opts || {}), ...opts });
+  const smallModel = (opts.config && opts.config.engine && opts.config.engine.smallModel) || '';
+  const r = await chatCompletion([{ role: 'user', content: prompt }], {
+    ...(task.opts || {}),
+    ...opts,
+    ...(smallModel && !opts.model ? { model: smallModel } : {})
+  });
   if (!r.ok) return r;
   return task.parse(r.text, context) || { ok: false, error: '模型输出无法解析' };
 }

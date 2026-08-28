@@ -18,7 +18,8 @@ const DEFAULTS = {
     mediumConfidence: 0.5,
     maxMessagesPerBatch: 50,
     agentTimeoutMs: 120000,
-    minIntervalMinutes: 0
+    minIntervalMinutes: 0,
+    scanIntervalMs: 0
   },
   reminder: {
     deadlineLeadDays: [1],
@@ -46,7 +47,23 @@ const DEFAULTS = {
       custom: { baseUrl: '', apiKey: '', model: '' }
     },
     timeoutMs: 120000,
-    retries: 2
+    retries: 2,
+    smallModel: ''
+  },
+  agent: {
+    reply: {
+      enabled: true,
+      profile: 'xiaotihu',
+      maxHistory: 12,
+      timeoutMs: 180000
+    },
+    queue: {
+      enabled: true,
+      intervalMs: 10000,
+      maxConcurrent: 1,
+      profile: 'xiaotihu',
+      timeoutMs: 300000
+    }
   },
   proactivity: {
     level: 'L2'

@@ -1,0 +1,4 @@
+# 小鹈鹕 DSH 事件流插件：挂载到 headless profile，把 session/event 输出为 JSONL。
+- insert:
+    - id: xiaotihu-event-stream
+      name: '@xiaotihu/dsh-event-stream'

@@ -35,6 +35,7 @@ function getPaths() {
     intents: path.join(b, 'intents.json'),
     relationPushed: path.join(b, 'relation-pushed.json'),
     conversations: path.join(b, 'conversations.json'),
+    agentQueue: path.join(b, 'agent-tasks.jsonl'),
     unread: path.join(b, 'unread.json'),
     configToml: path.join(b, 'config.toml'),
     weixinCursor: path.join(b, 'weixin-cursor.json'),

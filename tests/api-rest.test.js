@@ -43,6 +43,26 @@ test('REST 服务：健康/设置读写/静态资源/404', async () => {
     });
     assert.strictEqual((await r.json()).engine.provider, 'ollama');
 
+    // Agent 任务 API
+    const agentList = await (await fetch(base + '/api/agent/tasks')).json();
+    assert.ok(Array.isArray(agentList));
+    const badAgent = await fetch(base + '/api/agent/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: '   ' })
+    });
+    assert.strictEqual(badAgent.status, 400);
+
+    // Agent 队列 API
+    const queueList = await (await fetch(base + '/api/agent/queue')).json();
+    assert.ok(Array.isArray(queueList));
+    const badQueue = await fetch(base + '/api/agent/queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summary: '   ' })
+    });
+    assert.strictEqual(badQueue.status, 400);
+
     // 静态资源
     const html = await (await fetch(base + '/')).text();
     assert.ok(html.includes('小鹈鹕'));

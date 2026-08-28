@@ -34,7 +34,10 @@ export const api = {
   contacts: {
     list: () => get('/api/contacts'),
     get: (name) => get('/api/contacts/' + encodeURIComponent(name)),
-    setImportant: (name, important) => post('/api/contacts/' + encodeURIComponent(name) + '/important', { important })
+    save: (name, patch) => post('/api/contacts/' + encodeURIComponent(name), patch),
+    setImportant: (name, important) => post('/api/contacts/' + encodeURIComponent(name) + '/important', { important }),
+    remove: (name) => del('/api/contacts/' + encodeURIComponent(name)),
+    clearMessages: (name) => del('/api/contacts/' + encodeURIComponent(name) + '/messages')
   },
   search: (q) => get('/api/search?q=' + encodeURIComponent(q)),
 
@@ -75,5 +78,15 @@ export const api = {
     loginCheck: (session) => get('/api/wechat/login/check?session=' + encodeURIComponent(session)),
     loginConfirm: (session) => post('/api/wechat/login/confirm', { session }),
     logout: () => post('/api/wechat/logout')
+  },
+
+  agent: {
+    list: (limit = 50) => get('/api/agent/tasks?limit=' + limit),
+    create: (task, cwd = '') => post('/api/agent/tasks', { task, cwd: cwd || null }),
+    get: (id, afterSeq = 0) => get('/api/agent/tasks/' + encodeURIComponent(id) + (afterSeq ? '?afterSeq=' + afterSeq : '')),
+    queue: {
+      list: (status = '') => get('/api/agent/queue' + (status ? '?status=' + encodeURIComponent(status) : '')),
+      create: (summary, detail = '', type = 'task') => post('/api/agent/queue', { summary, detail, type })
+    }
   }
 };

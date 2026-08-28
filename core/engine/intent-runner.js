@@ -12,6 +12,7 @@ const { runTask } = require('./client');
 const { parseDeadline } = require('../lib/deadline');
 const { typeLabel } = require('../lib/reminder-rules');
 const { pushToUser } = require('../channels/weixin/push');
+const agentQueue = require('../agent/queue');
 
 const P = getPaths();
 
@@ -154,6 +155,16 @@ async function runIntentExtraction(opts = {}) {
           intents.push(intent);
           added++;
           totalNew++;
+          // 具体任务型意图交给 DSH 大模型 Worker 执行
+          const queueCfg = (cfg.agent && cfg.agent.queue) || {};
+          if (intent.type === 'task' && queueCfg.enabled !== false) {
+            agentQueue.enqueueTask({
+              type: 'task',
+              summary: intent.summary,
+              detail: intent.detail,
+              source: intent.source
+            });
+          }
         }
       }
       console.log(`[intent] ${key} 新增 ${added} 条意图`);

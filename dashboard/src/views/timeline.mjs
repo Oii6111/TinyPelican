@@ -7,17 +7,34 @@ export function mount(container) {
   const sel = el('select', { class: 'select' });
   const search = el('input', { class: 'input', placeholder: '搜索关键词…' });
   const list = el('div');
+  const clearBtn = el('button', { class: 'btn btn-danger btn-sm', text: '清空该联系人记录', onclick: clearSelected });
   container.append(
     el('div', { class: 'card' },
       el('h2', { text: '聊天记录查看器' }),
       el('div', { class: 'desc', text: '按时间线查看与某位联系人的完整对话，支持关键词检索；导出功能后续版本接入。' }),
-      el('div', { class: 'row', style: 'margin-bottom:14px;' },
+      el('div', { class: 'row', style: 'margin-bottom:14px;align-items:center;' },
         el('div', { class: 'field', style: 'margin:0;' }, sel),
-        el('div', { class: 'field', style: 'margin:0;' }, search)
+        el('div', { class: 'field', style: 'margin:0;flex:1;' }, search),
+        clearBtn
       ),
       list
     )
   );
+
+  async function clearSelected() {
+    const name = sel.value;
+    if (!name) {
+      alert('请先选择联系人');
+      return;
+    }
+    if (!confirm('确定清空「' + name + '」的全部聊天记录？档案和画像会保留。')) return;
+    try {
+      await api.contacts.clearMessages(name);
+      render();
+    } catch (e) {
+      alert('清空失败：' + e.message);
+    }
+  }
 
   async function loadContacts() {
     let items = [];
