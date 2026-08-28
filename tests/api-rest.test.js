@@ -63,6 +63,18 @@ test('REST 服务：健康/设置读写/静态资源/404', async () => {
     });
     assert.strictEqual(badQueue.status, 400);
 
+    // 回复建议 API
+    const cur = await (await fetch(base + '/api/reply-suggestions/current')).json();
+    assert.strictEqual(cur.suggestion, null);
+    const badApply = await fetch(base + '/api/reply-suggestions/nope/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ index: 0 })
+    });
+    assert.strictEqual(badApply.status, 400);
+    const dismiss = await (await fetch(base + '/api/reply-suggestions/nope/dismiss', { method: 'POST' })).json();
+    assert.strictEqual(dismiss.ok, false);
+
     // 静态资源
     const html = await (await fetch(base + '/')).text();
     assert.ok(html.includes('小鹈鹕'));
@@ -70,6 +82,8 @@ test('REST 服务：健康/设置读写/静态资源/404', async () => {
     assert.ok(css.includes('--accent'));
     const src = await fetch(base + '/src/app.mjs');
     assert.strictEqual(src.status, 200);
+    assert.strictEqual((await fetch(base + '/suggestion-icon.html')).status, 200);
+    assert.strictEqual((await fetch(base + '/suggestion-card.html')).status, 200);
 
     // 未匹配路由
     assert.strictEqual((await fetch(base + '/api/nope')).status, 404);

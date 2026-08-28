@@ -80,6 +80,12 @@ export const api = {
     logout: () => post('/api/wechat/logout')
   },
 
+  replySuggestions: {
+    current: () => get('/api/reply-suggestions/current'),
+    apply: (id, index) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/apply', { index }),
+    dismiss: (id) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/dismiss')
+  },
+
   agent: {
     list: (limit = 50) => get('/api/agent/tasks?limit=' + limit),
     create: (task, cwd = '') => post('/api/agent/tasks', { task, cwd: cwd || null }),

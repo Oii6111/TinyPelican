@@ -9,9 +9,22 @@ const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
 const { applyVoiceFill } = require('../ingest/pipeline');
 const voice = require('../memory/stores/voice');
+const internalClipboard = require('./internal-clipboard');
 
 function msgKey(m) {
   return `${m.name}|${m.ts}|${m.type}|${m.content}`;
+}
+
+// 解析传感器输出：新格式 CHANGE <handle> <b64>，旧格式 CHANGE <b64>
+function parseSensorLine(line) {
+  const current = line.match(/^CHANGE\s+(-?\d+)\s+(.+)$/);
+  if (current) {
+    const handle = current[1] === '0' ? null : current[1];
+    return { handle, encoded: current[2] };
+  }
+  const legacy = line.match(/^CHANGE\s+(.+)$/);
+  if (legacy) return { handle: null, encoded: legacy[1] };
+  return null;
 }
 
 class ClipboardWatcher {
@@ -64,14 +77,17 @@ class ClipboardWatcher {
       const line = this._buffer.slice(0, idx).trim();
       this._buffer = this._buffer.slice(idx + 1);
       if (!line.startsWith('CHANGE ')) continue;
+      if (internalClipboard.isInternalClipboardWrite()) continue;
+      const parsed = parseSensorLine(line);
+      if (!parsed) continue;
       try {
-        const text = Buffer.from(line.slice(7), 'base64').toString('utf8');
-        this._handleClip(text);
+        const text = Buffer.from(parsed.encoded, 'base64').toString('utf8');
+        this._handleClip(text, parsed.handle);
       } catch {}
     }
   }
 
-  _handleClip(text) {
+  _handleClip(text, targetWindow = null) {
     const msgs = parseChatText(text);
     // 不是聊天记录：若存在待回填语音，则把这段文本当作语音转写内容回填
     if (msgs.length === 0 && voice.list().length) {
@@ -93,7 +109,7 @@ class ClipboardWatcher {
     this._debounceTimer = setTimeout(() => {
       const contact = getBatchContact(msgs, this.selfNicknames);
       log('info', 'capture', `捕获 ${fresh.length} 条新消息`);
-      this.onBatch({ msgs: fresh, contact });
+      this.onBatch({ msgs: fresh, contact, targetWindow: targetWindow ? { handle: String(targetWindow) } : null });
     }, 500);
   }
 
@@ -108,4 +124,4 @@ class ClipboardWatcher {
   }
 }
 
-module.exports = { ClipboardWatcher };
+module.exports = { ClipboardWatcher, parseSensorLine };

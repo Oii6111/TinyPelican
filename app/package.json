@@ -15,7 +15,7 @@
     "appId": "com.xiaotihu.app",
     "productName": "小鹈鹕",
     "directories": { "output": "dist" },
-    "files": ["main.js", "package.json"],
+    "files": ["main.js", "preload.js", "package.json"],
     "extraResources": [
       { "from": "../dashboard", "to": "content/dashboard" },
       { "from": "../core", "to": "content/core" },

@@ -15,6 +15,7 @@ const { WeChatChannel } = require('./channels/weixin/channel');
 const { ingestMessages } = require('./ingest/pipeline');
 const { readContact } = require('./memory/stores/contacts');
 const { dshReply } = require('./agent/dsh-reply');
+const { generateReplySuggestions } = require('./reply/suggestions');
 const agentQueue = require('./agent/queue');
 const { drainOnce } = require('./agent/queue-runner');
 
@@ -135,9 +136,12 @@ async function main() {
 
   const watcher = new ClipboardWatcher({
     config: cfg,
-    onBatch: ({ msgs, contact }) => {
+    onBatch: ({ msgs, contact, targetWindow }) => {
       const added = ingestMessages(msgs, contact);
       if (added) triggerIntent();
+      // 回复建议：先归档再生成，失败不影响归档
+      generateReplySuggestions({ contact, targetWindow, config: cfg })
+        .catch((e) => log('warn', 'reply', '回复建议生成失败：' + String((e && e.message) || e)));
     }
   });
   const captureCfg = cfg.capture || {};

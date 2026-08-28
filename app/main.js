@@ -1,6 +1,7 @@
 // 小鹈鹕 V3 — Electron 壳
 // 启动时后台拉起核心服务（core/index.js）；核心以退出码 42 退出时自动重启（微信登录/登出热重启）。
-const { app, BrowserWindow } = require('electron');
+// 同时创建两个无边框浮窗：右下角建议小图标 + 点击后弹出的建议卡片。
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
@@ -30,6 +31,9 @@ if (isPackaged) {
 
 let coreProc = null;
 let win = null;
+let iconWin = null;
+let cardWin = null;
+let suggestionPollTimer = null;
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -70,6 +74,81 @@ function startCore(node) {
   return coreProc;
 }
 
+function positionFloatingWindows() {
+  if (!iconWin || !cardWin) return;
+  const area = screen.getPrimaryDisplay().workArea;
+  const iconX = area.x + area.width - 68;
+  const iconY = area.y + area.height - 68;
+  iconWin.setPosition(iconX, iconY);
+  cardWin.setPosition(area.x + area.width - 340, area.y + area.height - 68 - 290);
+}
+
+function showCard() {
+  if (!cardWin || cardWin.isDestroyed()) return;
+  positionFloatingWindows();
+  if (!cardWin.isVisible()) cardWin.show();
+  cardWin.webContents.send('suggestion:card-opened');
+}
+
+function hideCard() {
+  if (cardWin && !cardWin.isDestroyed() && cardWin.isVisible()) cardWin.hide();
+}
+
+function hideAllSuggestions() {
+  hideCard();
+  if (iconWin && !iconWin.isDestroyed() && iconWin.isVisible()) iconWin.hide();
+}
+
+function createFloatingWindows() {
+  const preload = path.join(__dirname, 'preload.js');
+
+  iconWin = new BrowserWindow({
+    width: 48,
+    height: 48,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, preload }
+  });
+  iconWin.loadURL(`http://127.0.0.1:${PORT}/suggestion-icon.html`);
+  iconWin.setAlwaysOnTop(true, 'screen-saver');
+
+  cardWin = new BrowserWindow({
+    width: 340,
+    height: 300,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, preload }
+  });
+  cardWin.loadURL(`http://127.0.0.1:${PORT}/suggestion-card.html`);
+  cardWin.setAlwaysOnTop(true, 'screen-saver');
+
+  positionFloatingWindows();
+}
+
+async function pollSuggestions() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/reply-suggestions/current`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const s = data && data.suggestion;
+    if (s && iconWin && !iconWin.isDestroyed()) {
+      if (!iconWin.isVisible()) iconWin.showInactive();
+    } else {
+      hideAllSuggestions();
+    }
+  } catch {}
+}
+
 app.whenReady().then(async () => {
   const node = findNode();
   if (await portFree(PORT)) {
@@ -89,6 +168,15 @@ app.whenReady().then(async () => {
   });
   win.loadURL(`http://127.0.0.1:${PORT}`);
 
+  createFloatingWindows();
+
+  ipcMain.on('suggestion:show-card', () => showCard());
+  ipcMain.on('suggestion:hide-card', () => hideCard());
+  ipcMain.on('suggestion:apply-done', () => hideAllSuggestions());
+
+  suggestionPollTimer = setInterval(pollSuggestions, 800);
+  pollSuggestions();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       win = new BrowserWindow({ width: 1280, height: 800, minWidth: 760, minHeight: 560, icon: LOGO, autoHideMenuBar: true });
@@ -100,6 +188,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => app.quit());
 
 app.on('will-quit', () => {
+  if (suggestionPollTimer) clearInterval(suggestionPollTimer);
   if (coreProc) {
     try { coreProc.kill(); } catch {}
   }

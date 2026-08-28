@@ -69,7 +69,16 @@ const DEFAULTS = {
     level: 'L2'
   },
   capture: {
-    enabled: false
+    enabled: false,
+    replySuggestions: {
+      enabled: true,
+      optionCount: 3,
+      maxHistoryMessages: 24,
+      expireSeconds: 120,
+      autoPopup: true,
+      popupDelayMs: 1500,
+      timeoutMs: 30000
+    }
   },
   heartbeat: {
     intervalSec: 30

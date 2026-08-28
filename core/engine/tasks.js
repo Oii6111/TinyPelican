@@ -6,6 +6,7 @@ const { buildIntentPrompt } = require('./prompts/intent');
 const { buildRelationPrompt } = require('./prompts/relation');
 const { buildReminderPrompt } = require('./prompts/reminder');
 const { buildReplyPrompt } = require('./prompts/reply');
+const { buildReplySuggestionsPrompt } = require('./prompts/reply-suggestions');
 const { extractJsonArray } = require('./extract');
 
 const TASKS = {
@@ -29,6 +30,11 @@ const TASKS = {
     opts: { temperature: 0.8 },
     buildPrompt: (ctx) => buildReplyPrompt(ctx),
     parse: (text) => ({ ok: true, text })
+  },
+  reply_suggestions: {
+    opts: { temperature: 0.75, timeoutMs: 30000 },
+    buildPrompt: (ctx) => buildReplySuggestionsPrompt(ctx),
+    parse: (text) => ({ ok: true, text, array: extractJsonArray(text) })
   }
 };
 

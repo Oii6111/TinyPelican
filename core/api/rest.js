@@ -71,6 +71,7 @@ function createRestServer({ config = null, onRestart = null } = {}) {
   require('./routes/wechat')(router, ctx);
   require('./routes/chat')(router, ctx);
   require('./routes/agent')(router, ctx);
+  require('./routes/reply-suggestions')(router, ctx);
 
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
@@ -86,7 +87,10 @@ function createRestServer({ config = null, onRestart = null } = {}) {
         res.writeHead(200, { 'Content-Type': 'image/png' });
         return res.end(data);
       }
-      if (p === '/favicon.ico' || p === '/styles.css' || p.startsWith('/src/')) {
+      if (p === '/favicon.ico' || p === '/styles.css' ||
+          p === '/suggestion-icon.html' || p === '/suggestion-card.html' ||
+          p === '/suggestion-icon.css' || p === '/suggestion-card.css' ||
+          p.startsWith('/src/')) {
         if (await serveStatic(res, p.slice(1))) return;
       }
       if (await router.match(req, res, ctx)) return;

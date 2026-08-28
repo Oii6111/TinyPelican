@@ -8,6 +8,7 @@ export function mount(container) {
   const wxLogin = createWechatLogin();
 
   const captureChk = el('input', { type: 'checkbox' });
+  const replyChk = el('input', { type: 'checkbox' });
   const selfInput = el('input', { class: 'input', placeholder: '多个用逗号分隔，如：六壹' });
   const captureMsg = el('span', { class: 'muted' });
   const capBadge = el('span', { class: 'badge warn', text: '已关闭' });
@@ -21,6 +22,10 @@ export function mount(container) {
       el('label', { text: '我的微信昵称' }),
       selfInput,
       el('div', { class: 'hint', text: '用于解析时排除自己，只为「对方」建档。' })
+    ),
+    el('div', { class: 'field' },
+      el('label', { class: 'switch' }, replyChk, ' 复制聊天后生成回复建议'),
+      el('div', { class: 'hint', text: '识别私聊联系人后，根据画像与最近聊天生成三条建议。点击建议只填入微信输入框，不会自动发送。' })
     ),
     el('div', {},
       el('button', { class: 'btn btn-primary btn-sm', text: '保存', onclick: saveCapture }),
@@ -80,7 +85,14 @@ export function mount(container) {
       const cur = await api.settings.get();
       await api.settings.save({
         selfNicknames: selfInput.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean),
-        capture: { ...(cur.capture || {}), enabled: captureChk.checked }
+        capture: {
+          ...(cur.capture || {}),
+          enabled: captureChk.checked,
+          replySuggestions: {
+            ...((cur.capture && cur.capture.replySuggestions) || {}),
+            enabled: replyChk.checked
+          }
+        }
       });
       captureMsg.textContent = '已保存 ✓';
       setTimeout(() => { captureMsg.textContent = ''; }, 2000);
@@ -129,6 +141,7 @@ export function mount(container) {
       capBadge.textContent = on ? '已开启' : '已关闭';
       capBadge.className = 'badge ' + (on ? 'info' : 'warn');
       captureChk.checked = on;
+      replyChk.checked = !!(s.capture && s.capture.replySuggestions && s.capture.replySuggestions.enabled);
       selfInput.value = (s.selfNicknames || []).join(', ');
     } catch {}
   }
