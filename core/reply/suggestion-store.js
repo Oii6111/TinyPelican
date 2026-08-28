@@ -20,10 +20,11 @@ function isExpired(s, at = now()) {
   return at >= s.expiresAt;
 }
 
-// 新捕获/新请求会使旧建议立即失效
+// 新捕获/新请求会使旧建议立即失效，并推进生成版本，让还在途中的旧模型请求作废。
 function invalidate() {
   current = null;
   consumeLockedId = null;
+  generationToken++;
 }
 
 function replaceSuggestion(suggestion) {
@@ -47,6 +48,8 @@ function sanitize(s) {
     id: s.id,
     contact: s.contact,
     sourceMessage: s.sourceMessage,
+    sourceSpeaker: s.sourceSpeaker || '',
+    sourceIsSelf: !!s.sourceIsSelf,
     canPaste: !!(s.targetWindow && s.targetWindow.handle),
     options: (s.options || []).map((o) => ({ tone: o.tone, text: o.text })),
     createdAt: s.createdAt
@@ -71,7 +74,8 @@ function consume(id) {
 
 function lock(id) {
   if (!current || current.id !== id || isExpired(current)) return false;
-  if (consumeLockedId && consumeLockedId !== id) return false;
+  // 任何已有锁（无论是否同 ID）都拒绝第二次申请，防止并发粘贴两次。
+  if (consumeLockedId) return false;
   consumeLockedId = id;
   return true;
 }

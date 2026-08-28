@@ -15,12 +15,23 @@ function msgKey(m) {
   return `${m.name}|${m.ts}|${m.type}|${m.content}`;
 }
 
-// 解析传感器输出：新格式 CHANGE <handle> <b64>，旧格式 CHANGE <b64>
+// 解析传感器输出：
+//   新格式 CHANGE <handle> <pid> <processName> <b64>
+//   兼容格式 CHANGE <handle> <b64>
+//   旧格式 CHANGE <b64>
 function parseSensorLine(line) {
+  const full = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+(.+)$/);
+  if (full) {
+    return {
+      handle: full[1] === '0' ? null : full[1],
+      pid: full[2] === '0' ? null : full[2],
+      processName: full[3],
+      encoded: full[4]
+    };
+  }
   const current = line.match(/^CHANGE\s+(-?\d+)\s+(.+)$/);
   if (current) {
-    const handle = current[1] === '0' ? null : current[1];
-    return { handle, encoded: current[2] };
+    return { handle: current[1] === '0' ? null : current[1], encoded: current[2] };
   }
   const legacy = line.match(/^CHANGE\s+(.+)$/);
   if (legacy) return { handle: null, encoded: legacy[1] };
@@ -77,18 +88,28 @@ class ClipboardWatcher {
       const line = this._buffer.slice(0, idx).trim();
       this._buffer = this._buffer.slice(idx + 1);
       if (!line.startsWith('CHANGE ')) continue;
-      if (internalClipboard.isInternalClipboardWrite()) continue;
       const parsed = parseSensorLine(line);
       if (!parsed) continue;
       try {
         const text = Buffer.from(parsed.encoded, 'base64').toString('utf8');
-        this._handleClip(text, parsed.handle);
+        // 内部回填写剪贴板：只忽略内容完全相同的那一次变化
+        if (internalClipboard.isInternalClipboardWrite(text)) continue;
+        this._handleClip(text, {
+          handle: parsed.handle || null,
+          pid: parsed.pid || null,
+          processName: parsed.processName || null
+        });
       } catch {}
     }
   }
 
   _handleClip(text, targetWindow = null) {
     const msgs = parseChatText(text);
+    const windowRef = targetWindow && targetWindow.handle ? {
+      handle: String(targetWindow.handle),
+      pid: targetWindow.pid ? String(targetWindow.pid) : null,
+      processName: targetWindow.processName || null
+    } : null;
     // 不是聊天记录：若存在待回填语音，则把这段文本当作语音转写内容回填
     if (msgs.length === 0 && voice.list().length) {
       const p = voice.fillFirst(text);
@@ -109,7 +130,7 @@ class ClipboardWatcher {
     this._debounceTimer = setTimeout(() => {
       const contact = getBatchContact(msgs, this.selfNicknames);
       log('info', 'capture', `捕获 ${fresh.length} 条新消息`);
-      this.onBatch({ msgs: fresh, contact, targetWindow: targetWindow ? { handle: String(targetWindow) } : null });
+      this.onBatch({ msgs: fresh, contact, targetWindow: windowRef });
     }, 500);
   }
 

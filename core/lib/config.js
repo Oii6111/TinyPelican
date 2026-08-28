@@ -75,8 +75,7 @@ const DEFAULTS = {
       optionCount: 3,
       maxHistoryMessages: 24,
       expireSeconds: 120,
-      autoPopup: true,
-      popupDelayMs: 1500,
+      maxOptionChars: 120,
       timeoutMs: 30000
     }
   },

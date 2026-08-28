@@ -4,10 +4,17 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { parseSensorLine } = require('../core/capture/clipboard');
+const internalClipboard = require('../core/capture/internal-clipboard');
 const { latestTextMessage, normalizeOptions, canSuggest } = require('../core/reply/suggestions');
 const store = require('../core/reply/suggestion-store');
 
 test('剪贴板传感器新/旧格式解析', () => {
+  const full = parseSensorLine('CHANGE 123456 999 WeChat.exe aGVsbG8=');
+  assert.strictEqual(full.handle, '123456');
+  assert.strictEqual(full.pid, '999');
+  assert.strictEqual(full.processName, 'WeChat.exe');
+  assert.strictEqual(full.encoded, 'aGVsbG8=');
+
   const current = parseSensorLine('CHANGE 123456 aGVsbG8=');
   assert.strictEqual(current.handle, '123456');
   assert.strictEqual(current.encoded, 'aGVsbG8=');
@@ -20,6 +27,15 @@ test('剪贴板传感器新/旧格式解析', () => {
   assert.strictEqual(legacy.encoded, 'aGVsbG8=');
 
   assert.strictEqual(parseSensorLine('CHANGE'), null);
+});
+
+test('内部剪贴板写入只忽略内容相同的那一次', () => {
+  internalClipboard.clearInternalWrite();
+  internalClipboard.markInternalWrite('建议文本A');
+  assert.strictEqual(internalClipboard.isInternalClipboardWrite('建议文本A'), true);
+  assert.strictEqual(internalClipboard.isInternalClipboardWrite('建议文本A'), false);
+  assert.strictEqual(internalClipboard.isInternalClipboardWrite('用户紧接着复制的新聊天'), false);
+  internalClipboard.clearInternalWrite();
 });
 
 test('最后一条文本消息不区分发送方', () => {
@@ -46,9 +62,12 @@ test('建议选项规范化：去空/去重/限长/最多 3 条', () => {
     { tone: '正式', text: 'x'.repeat(600) },
     { tone: '自然', text: '嗯嗯' },
     { tone: '简洁', text: '收到' }
-  ]);
+  ], 3, 120);
   assert.strictEqual(out.length, 3);
   assert.deepStrictEqual(out.map((o) => o.text), ['好的', '嗯嗯', '收到']);
+
+  const limited = normalizeOptions([{ tone: '自然', text: '1234567890' }], 3, 5);
+  assert.strictEqual(limited.length, 0);
 });
 
 test('触发条件：剪贴板开启、私聊联系人、建议开关', () => {
@@ -82,7 +101,8 @@ test('建议状态：过期/失效/锁定/消费/忽略', () => {
   assert.strictEqual(store.sanitize(store.getCurrent()).targetWindow, undefined);
 
   assert.strictEqual(store.lock('reply_test_1'), true);
-  assert.strictEqual(store.lock('reply_test_1'), true);
+  // 已有锁时，无论是否同 ID，都必须拒绝第二次申请（防止并发粘贴两次）
+  assert.strictEqual(store.lock('reply_test_1'), false);
   assert.strictEqual(store.consume('reply_test_1'), true);
   assert.strictEqual(store.getCurrent(), null);
 
@@ -95,10 +115,13 @@ test('建议状态：过期/失效/锁定/消费/忽略', () => {
   assert.strictEqual(store.getCurrent(), null);
 });
 
-test('生成序号乱序防护', () => {
+test('生成序号乱序防护：invalidate 也会推进版本', () => {
   store.invalidate();
   const a = store.beginGeneration();
-  const b = store.beginGeneration();
+  assert.strictEqual(store.isLatestGeneration(a), true);
+  // 模拟期间来了无法识别的新剪贴板事件：invalidate 必须让在途请求作废
+  store.invalidate();
   assert.strictEqual(store.isLatestGeneration(a), false);
+  const b = store.beginGeneration();
   assert.strictEqual(store.isLatestGeneration(b), true);
 });

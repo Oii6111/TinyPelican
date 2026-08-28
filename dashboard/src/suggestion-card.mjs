@@ -35,7 +35,8 @@ function render(s) {
     el('span', { class: 'contact', text: '· ' + s.contact }),
     el('button', { class: 'close', text: '✕', title: '关闭', onclick: () => dismiss(s.id) })
   );
-  const source = el('div', { class: 'source', text: '对方最后说：' + (s.sourceMessage || '') });
+  const sourceLabel = s.sourceIsSelf ? '你最后说：' : '对方最后说：';
+  const source = el('div', { class: 'source', text: sourceLabel + (s.sourceMessage || '') });
   const optionsBox = el('div', { class: 'options' });
 
   s.options.forEach((o, i) => {

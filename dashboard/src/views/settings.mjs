@@ -121,9 +121,9 @@ export function mount(container) {
   async function saveEngine() {
     try {
       const cur = await api.settings.get();
-      await api.settings.save({ engine: buildEnginePatch(cur) });
-      engineSaveMsg.textContent = '已保存 ✓';
-      setTimeout(() => { engineSaveMsg.textContent = ''; }, 2000);
+      const r = await api.settings.save({ engine: buildEnginePatch(cur) });
+      engineSaveMsg.textContent = r && r.restarting ? '已保存 ✓，服务即将自动重启' : '已保存 ✓';
+      setTimeout(() => { engineSaveMsg.textContent = ''; }, 2500);
     } catch (e) {
       engineSaveMsg.textContent = '保存失败：' + e.message;
     }
@@ -132,12 +132,12 @@ export function mount(container) {
   async function save() {
     try {
       const cur = await api.settings.get();
-      await api.settings.save({
+      const r = await api.settings.save({
         engine: buildEnginePatch(cur),
         weixinPush: { ...(cur.weixinPush || {}), enabled: pushChk.checked, notifyComplete: completeChk.checked }
       });
-      saveMsg.textContent = '已保存 ✓';
-      setTimeout(() => { saveMsg.textContent = ''; }, 2000);
+      saveMsg.textContent = r && r.restarting ? '已保存 ✓，服务即将自动重启' : '已保存 ✓';
+      setTimeout(() => { saveMsg.textContent = ''; }, 2500);
     } catch (e) {
       saveMsg.textContent = '保存失败：' + e.message;
     }

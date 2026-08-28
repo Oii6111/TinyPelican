@@ -83,7 +83,7 @@ export function mount(container) {
   async function saveCapture() {
     try {
       const cur = await api.settings.get();
-      await api.settings.save({
+      const r = await api.settings.save({
         selfNicknames: selfInput.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean),
         capture: {
           ...(cur.capture || {}),
@@ -94,8 +94,8 @@ export function mount(container) {
           }
         }
       });
-      captureMsg.textContent = '已保存 ✓';
-      setTimeout(() => { captureMsg.textContent = ''; }, 2000);
+      captureMsg.textContent = r && r.restarting ? '已保存 ✓，服务即将自动重启' : '已保存 ✓';
+      setTimeout(() => { captureMsg.textContent = ''; }, 2500);
       refreshBadge();
     } catch (e) {
       captureMsg.textContent = '保存失败：' + e.message;

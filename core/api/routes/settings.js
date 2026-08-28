@@ -21,6 +21,14 @@ module.exports = (router, ctx) => {
     writeJson(P.config, next);
     // 让正在运行的核心立即使用新配置（尤其是引擎模型设置）
     if (ctx) ctx.config = loadConfig();
-    return ctx.json(res, 200, maskConfig(next));
+    // 运行中的剪贴板监听器/回复建议/微信通道使用启动时配置，短期方案：保存后自动重启核心服务
+    let restarting = false;
+    if (ctx && typeof ctx.onRestart === 'function') {
+      restarting = true;
+      setTimeout(() => ctx.onRestart(), 800);
+    }
+    const masked = maskConfig(next);
+    masked.restarting = restarting;
+    return ctx.json(res, 200, masked);
   });
 };

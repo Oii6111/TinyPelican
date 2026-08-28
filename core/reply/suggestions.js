@@ -18,7 +18,7 @@ function latestTextMessage(contactDoc) {
   return null;
 }
 
-function normalizeOptions(rawArray) {
+function normalizeOptions(rawArray, maxCount = 3, maxChars = 120) {
   const seen = new Set();
   const out = [];
   for (const item of Array.isArray(rawArray) ? rawArray : []) {
@@ -26,12 +26,12 @@ function normalizeOptions(rawArray) {
     const tone = String(item.tone || '').trim() || '自然';
     const text = String(item.text || '').trim();
     if (!text) continue;
-    if (text.length > 500) continue;
+    if (text.length > maxChars) continue;
     const key = text.replace(/\s+/g, '');
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({ tone, text });
-    if (out.length >= 3) break;
+    if (out.length >= maxCount) break;
   }
   return out;
 }
@@ -63,8 +63,14 @@ async function generateReplySuggestions({ contact, targetWindow = null, config =
     return null;
   }
 
-  // 同一联系人 + 同一条最后消息：不重复生成
-  if (old && old.contact === contact && old.sourceMessage === latest.content) {
+  const selfNicknames = Array.isArray(cfg.selfNicknames) ? cfg.selfNicknames : [];
+  const isSelf = selfNicknames.includes(latest.name) || (selfNicknames.length === 0 && latest.name === '我');
+  // 消息指纹：联系人 + 发送者 + 时间 + 类型 + 内容
+  const fingerprint = [contact, latest.name, latest.ts, latest.type, latest.content].join('|');
+
+  // 同一条消息（指纹相同）不重复生成
+  if (old && old.contact === contact && (old.sourceFingerprint === fingerprint ||
+      (!old.sourceFingerprint && old.sourceMessage === latest.content))) {
     return store.sanitize(old);
   }
 
@@ -73,6 +79,8 @@ async function generateReplySuggestions({ contact, targetWindow = null, config =
   const maxHistory = rs.maxHistoryMessages || 24;
   const history = (doc.messages || []).slice(-maxHistory);
   const profile = doc.profile || {};
+  const optionCount = rs.optionCount || 3;
+  const maxOptionChars = rs.maxOptionChars || 120;
 
   try {
     const r = await runTask('reply_suggestions', {
@@ -80,8 +88,15 @@ async function generateReplySuggestions({ contact, targetWindow = null, config =
       remark: doc.remark || '',
       profile,
       history,
-      latestMessage: latest.content,
-      selfNicknames: cfg.selfNicknames || []
+      latestMessage: {
+        text: latest.content,
+        speaker: latest.name,
+        isSelf,
+        timestamp: latest.ts
+      },
+      selfNicknames,
+      maxOptionChars,
+      optionCount
     }, {
       config: cfg,
       timeoutMs: rs.timeoutMs || 30000
@@ -93,7 +108,7 @@ async function generateReplySuggestions({ contact, targetWindow = null, config =
       return null;
     }
 
-    const options = normalizeOptions(r.array);
+    const options = normalizeOptions(r.array, optionCount, maxOptionChars);
     if (!options.length) {
       log('warn', 'reply', '回复建议模型输出为空或无法解析');
       return null;
@@ -104,8 +119,15 @@ async function generateReplySuggestions({ contact, targetWindow = null, config =
       id: store.createId(),
       contact,
       sourceMessage: latest.content,
+      sourceSpeaker: latest.name,
+      sourceIsSelf: isSelf,
+      sourceFingerprint: fingerprint,
       options,
-      targetWindow: targetWindow && targetWindow.handle ? { handle: String(targetWindow.handle) } : null,
+      targetWindow: targetWindow && targetWindow.handle ? {
+        handle: String(targetWindow.handle),
+        pid: targetWindow.pid ? String(targetWindow.pid) : null,
+        processName: targetWindow.processName || null
+      } : null,
       createdAt: new Date().toISOString(),
       expiresAt: Date.now() + expireMs
     };

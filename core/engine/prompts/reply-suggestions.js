@@ -26,12 +26,25 @@ function buildReplySuggestionsPrompt({
   profile = {},
   history = [],
   latestMessage = '',
-  selfNicknames = []
+  selfNicknames = [],
+  maxOptionChars = 120
 }) {
   const me = Array.isArray(selfNicknames) && selfNicknames.length ? selfNicknames[0] : '我';
   const historyText = formatHistory(history, 24);
   const profileText = filterProfile(profile);
-  const latest = String(latestMessage || '').trim() || '（无）';
+
+  let latestText = '';
+  let latestSpeaker = '';
+  let latestIsSelf = false;
+  if (typeof latestMessage === 'string') {
+    latestText = String(latestMessage || '').trim();
+  } else if (latestMessage && typeof latestMessage === 'object') {
+    latestText = String(latestMessage.text || '').trim();
+    latestSpeaker = String(latestMessage.speaker || '').trim();
+    latestIsSelf = !!latestMessage.isSelf;
+  }
+  if (!latestText) latestText = '（无）';
+  const latestRole = latestIsSelf ? '你' : '对方';
 
   return [
     '你是用户的微信回复助手。',
@@ -46,8 +59,8 @@ function buildReplySuggestionsPrompt({
     '最近聊天：',
     historyText || '（无）',
     '',
-    `最近一条消息（可能来自你或对方，本会话中“${me}”代表你）：`,
-    latest,
+    `最近一条消息（来自${latestRole}${latestSpeaker ? '：' + latestSpeaker : ''}，本会话中“${me}”代表你）：`,
+    latestText,
     '',
     '要求：',
     '1. 生成 3 条不同风格的回复；',
@@ -56,7 +69,7 @@ function buildReplySuggestionsPrompt({
     '4. 不要解释；',
     '5. 不要使用 Markdown；',
     '6. 不要替用户做无法确认的承诺；',
-    '7. 单条回复最多 120 个中文字符；',
+    `7. 单条回复最多 ${maxOptionChars} 个中文字符；`,
     '8. 只输出合法 JSON 数组。',
     '',
     '输出格式（必须使用双引号）：',
