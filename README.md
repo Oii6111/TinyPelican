@@ -177,6 +177,3 @@ The current MVP proves the core loop on one platform. The bigger product is alre
 
 ---
 
-## Project Description (GitHub About)
-
-> **TinyPelican (小鹈鹕 AI)** — a local-first personal AI assistant that remembers relationships, extracts tasks from chat, proactively maintains the people who matter, and lets a DSH Agent act on your behalf with streaming, transparent reasoning.
