@@ -126,7 +126,14 @@ async function generateReplySuggestions({ contact, targetWindow = null, config =
       targetWindow: targetWindow && targetWindow.handle ? {
         handle: String(targetWindow.handle),
         pid: targetWindow.pid ? String(targetWindow.pid) : null,
-        processName: targetWindow.processName || null
+        processName: targetWindow.processName || null,
+        bounds: targetWindow.bounds ? {
+          left: Number(targetWindow.bounds.left),
+          top: Number(targetWindow.bounds.top),
+          right: Number(targetWindow.bounds.right),
+          bottom: Number(targetWindow.bounds.bottom)
+        } : null,
+        dpi: Number(targetWindow.dpi) || 0
       } : null,
       createdAt: new Date().toISOString(),
       expiresAt: Date.now() + expireMs

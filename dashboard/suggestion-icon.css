@@ -1,7 +1,9 @@
 html, body {
+  width: 48px;
+  height: 48px;
   margin: 0;
   padding: 0;
-  background: transparent;
+  background: transparent !important;
   overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
@@ -10,6 +12,7 @@ html, body {
 #icon {
   width: 48px;
   height: 48px;
+  box-sizing: border-box;
   border-radius: 50%;
   background: #3b82f6;
   color: #fff;
@@ -18,16 +21,9 @@ html, body {
   justify-content: center;
   font-size: 22px;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-  animation: breathe 2s ease-in-out infinite;
   transition: transform 0.15s ease;
 }
 
 #icon:hover {
   transform: scale(1.08);
-}
-
-@keyframes breathe {
-  0%, 100% { box-shadow: 0 4px 14px rgba(59, 130, 246, 0.25); }
-  50% { box-shadow: 0 4px 24px rgba(59, 130, 246, 0.55); }
 }

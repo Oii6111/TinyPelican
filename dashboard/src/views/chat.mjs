@@ -155,7 +155,20 @@ export function mount(container, ctx = {}) {
 
     try {
       const d = await api.chat.send(msg, session);
-      if (!d.ok || !d.taskId) {
+      if (!d.ok) {
+        appendAnswerEvents(answerCard, [], { running: false, done: true, error: d.error || 'DSH 启动失败' });
+        finishSend();
+        return;
+      }
+      // MainAgentSession 已同步返回最终回复（无 taskId/事件流）。
+      if (d.text) {
+        appendAnswerEvents(answerCard, d.agentEvents || [], { running: false, done: true, finalText: d.text });
+        loadConvs();
+        log.scrollTop = log.scrollHeight;
+        finishSend();
+        return;
+      }
+      if (!d.taskId) {
         appendAnswerEvents(answerCard, [], { running: false, done: true, error: d.error || 'DSH 启动失败' });
         finishSend();
         return;

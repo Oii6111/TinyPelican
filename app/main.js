@@ -7,6 +7,8 @@ const path = require('path');
 const net = require('net');
 const fs = require('fs');
 
+app.disableHardwareAcceleration();
+
 const isPackaged = app.isPackaged;
 const V3 = isPackaged ? path.join(process.resourcesPath, 'content') : path.resolve(__dirname, '..'); // v3
 const CORE = path.join(V3, 'core', 'index.js');
@@ -34,6 +36,8 @@ let win = null;
 let iconWin = null;
 let cardWin = null;
 let suggestionPollTimer = null;
+let currentAnchor = null;
+let lastSuggestionId = null;
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -74,18 +78,75 @@ function startCore(node) {
   return coreProc;
 }
 
-function positionFloatingWindows() {
-  if (!iconWin || !cardWin) return;
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(value, max));
+}
+
+function positionAtScreenCorner() {
+  if (!iconWin || !cardWin || iconWin.isDestroyed() || cardWin.isDestroyed()) return;
   const area = screen.getPrimaryDisplay().workArea;
-  const iconX = area.x + area.width - 68;
-  const iconY = area.y + area.height - 68;
-  iconWin.setPosition(iconX, iconY);
+  iconWin.setPosition(area.x + area.width - 68, area.y + area.height - 68);
   cardWin.setPosition(area.x + area.width - 340, area.y + area.height - 68 - 290);
 }
 
-function showCard() {
+function positionFloatingWindows(anchor = currentAnchor) {
+  if (!iconWin || !cardWin || iconWin.isDestroyed() || cardWin.isDestroyed()) return;
+
+  if (!anchor || !Number.isFinite(Number(anchor.x)) || !Number.isFinite(Number(anchor.y))) {
+    positionAtScreenCorner();
+    return;
+  }
+
+  const anchorX = Number(anchor.x);
+  const anchorY = Number(anchor.y);
+  const iconWidth = 48;
+  const iconHeight = 48;
+  const cardWidth = 340;
+  const cardHeight = 300;
+
+  // 用锚点找最近的显示器，并限制在该显示器工作区内，防止微信位于副屏/屏幕边缘时窗口越界。
+  const display = screen.getDisplayNearestPoint({ x: anchorX, y: anchorY });
+  const area = display.workArea;
+
+  const iconX = clamp(Math.round(anchorX - iconWidth / 2), area.x, area.x + area.width - iconWidth);
+  const iconY = clamp(Math.round(anchorY - iconHeight / 2), area.y, area.y + area.height - iconHeight);
+  const cardX = clamp(Math.round(anchorX - cardWidth + iconWidth / 2), area.x, area.x + area.width - cardWidth);
+  const cardY = clamp(Math.round(anchorY - cardHeight - 12), area.y, area.y + area.height - cardHeight);
+
+  iconWin.setPosition(iconX, iconY);
+  cardWin.setPosition(cardX, cardY);
+}
+
+async function refreshCurrentAnchor() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/reply-suggestions/current/refresh-position`, { method: 'POST' });
+    if (!res.ok) return 'error';
+    const data = await res.json();
+    const s = data && data.suggestion;
+    if (!s) return 'none';
+    const anchor = s.anchor && Number.isFinite(Number(s.anchor.x)) && Number.isFinite(Number(s.anchor.y))
+      ? { x: Number(s.anchor.x), y: Number(s.anchor.y) }
+      : null;
+    if (s.id !== lastSuggestionId) lastSuggestionId = s.id;
+    currentAnchor = anchor;
+    positionFloatingWindows(currentAnchor);
+    return 'ok';
+  } catch {
+    return 'error';
+  }
+}
+
+async function showCard() {
   if (!cardWin || cardWin.isDestroyed()) return;
-  positionFloatingWindows();
+  // 点击图标时按服务端保存的句柄重新读窗口矩形，窗口移动后卡片仍跟随微信。
+  const state = await refreshCurrentAnchor();
+  if (state === 'none') {
+    lastSuggestionId = null;
+    currentAnchor = null;
+    hideAllSuggestions();
+    return;
+  }
+  positionFloatingWindows(currentAnchor);
   if (!cardWin.isVisible()) cardWin.show();
   cardWin.webContents.send('suggestion:card-opened');
 }
@@ -108,6 +169,9 @@ function createFloatingWindows() {
     show: false,
     frame: false,
     transparent: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    roundedCorners: false,
     resizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -115,6 +179,8 @@ function createFloatingWindows() {
     webPreferences: { contextIsolation: true, nodeIntegration: false, preload }
   });
   iconWin.loadURL(`http://127.0.0.1:${PORT}/suggestion-icon.html`);
+  iconWin.setBackgroundColor('#00000000');
+  if (typeof iconWin.setHasShadow === 'function') iconWin.setHasShadow(false);
   iconWin.setAlwaysOnTop(true, 'screen-saver');
 
   cardWin = new BrowserWindow({
@@ -123,6 +189,9 @@ function createFloatingWindows() {
     show: false,
     frame: false,
     transparent: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    roundedCorners: false,
     resizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -130,6 +199,8 @@ function createFloatingWindows() {
     webPreferences: { contextIsolation: true, nodeIntegration: false, preload }
   });
   cardWin.loadURL(`http://127.0.0.1:${PORT}/suggestion-card.html`);
+  cardWin.setBackgroundColor('#00000000');
+  if (typeof cardWin.setHasShadow === 'function') cardWin.setHasShadow(false);
   cardWin.setAlwaysOnTop(true, 'screen-saver');
 
   positionFloatingWindows();
@@ -142,8 +213,19 @@ async function pollSuggestions() {
     const data = await res.json();
     const s = data && data.suggestion;
     if (s && iconWin && !iconWin.isDestroyed()) {
+      const anchor = s.anchor && Number.isFinite(Number(s.anchor.x)) && Number.isFinite(Number(s.anchor.y))
+        ? { x: Number(s.anchor.x), y: Number(s.anchor.y) }
+        : null;
+      // 只在建议 ID 变化时重新定位，避免每 800ms 重复 setPosition()。
+      if (s.id !== lastSuggestionId) {
+        lastSuggestionId = s.id;
+        currentAnchor = anchor;
+        positionFloatingWindows(currentAnchor);
+      }
       if (!iconWin.isVisible()) iconWin.showInactive();
     } else {
+      lastSuggestionId = null;
+      currentAnchor = null;
       hideAllSuggestions();
     }
   } catch {}

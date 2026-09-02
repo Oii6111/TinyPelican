@@ -1,5 +1,5 @@
 import { api } from '../api.mjs';
-import { el, esc, empty } from '../ui.mjs';
+import { el, empty } from '../ui.mjs';
 
 // 微信通道登录组件：状态 + 扫码登录 + 退出，供设置页与记忆输入页复用
 export function createWechatLogin() {
@@ -23,6 +23,39 @@ export function createWechatLogin() {
     } catch {}
   }
 
+  function renderQr(url) {
+    empty(qrBox);
+    if (!url || !/^https?:/.test(String(url))) {
+      qrBox.append(el('div', { class: 'hint' }, '未获取到二维码链接，请重试'));
+      return;
+    }
+    try {
+      if (typeof window.qrcode !== 'function') throw new Error('二维码组件未加载');
+      const qr = window.qrcode(0, 'M');
+      qr.addData(String(url));
+      qr.make();
+      qrBox.innerHTML = qr.createImgTag(5, 8);
+      const img = qrBox.querySelector('img');
+      if (img) {
+        img.style.width = '260px';
+        img.style.height = '260px';
+        img.style.border = '1px solid var(--border)';
+        img.style.borderRadius = '10px';
+        img.style.imageRendering = 'pixelated';
+      }
+      qrBox.append(el('div', { class: 'muted', style: 'margin-top:6px;text-align:center;' },
+        '若扫码无反应，',
+        el('a', { href: url, target: '_blank', text: '点击打开扫码页' })
+      ));
+    } catch (e) {
+      empty(qrBox);
+      qrBox.append(el('div', { class: 'hint' },
+        '二维码组件加载失败，请点击链接打开扫码页：',
+        el('a', { href: url, target: '_blank', text: url })
+      ));
+    }
+  }
+
   async function startLogin() {
     pollToken += 1;
     loginBtn.disabled = true;
@@ -31,7 +64,7 @@ export function createWechatLogin() {
     try {
       const d = await api.wechat.loginStart();
       if (d.qrcodeUrl && /^https?:/.test(d.qrcodeUrl)) {
-        qrBox.innerHTML = '<iframe src="' + esc(d.qrcodeUrl) + '" style="width:260px;height:260px;border:1px solid var(--border);border-radius:10px;"></iframe>';
+        renderQr(d.qrcodeUrl);
       } else {
         empty(qrBox);
         qrBox.append(el('div', { class: 'hint' },

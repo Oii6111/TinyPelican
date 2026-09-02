@@ -42,6 +42,25 @@ function getCurrent() {
   return current;
 }
 
+function computeAnchor(tw) {
+  if (!tw || !tw.bounds) return null;
+  const left = Number(tw.bounds.left);
+  const top = Number(tw.bounds.top);
+  const right = Number(tw.bounds.right);
+  const bottom = Number(tw.bounds.bottom);
+  if (!Number.isFinite(left) || !Number.isFinite(top) ||
+      !Number.isFinite(right) || !Number.isFinite(bottom) ||
+      right <= left || bottom <= top) return null;
+  const dpi = Number(tw.dpi) || 96;
+  const scale = dpi / 96;
+  if (!(scale > 0)) return null;
+  // Win32 物理坐标按 dpi/96 换算成 Electron DIP；70/135 为经验偏移（微信输入框发送按钮附近）。
+  return {
+    x: Math.round((right - 70 * scale) / scale),
+    y: Math.round((bottom - 135 * scale) / scale)
+  };
+}
+
 function sanitize(s) {
   if (!s) return null;
   return {
@@ -51,6 +70,7 @@ function sanitize(s) {
     sourceSpeaker: s.sourceSpeaker || '',
     sourceIsSelf: !!s.sourceIsSelf,
     canPaste: !!(s.targetWindow && s.targetWindow.handle),
+    anchor: computeAnchor(s.targetWindow),
     options: (s.options || []).map((o) => ({ tone: o.tone, text: o.text })),
     createdAt: s.createdAt
   };

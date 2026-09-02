@@ -1,8 +1,9 @@
 'use strict';
 
 const conversations = require('../../memory/stores/conversations');
-const { startReplyTask } = require('../../agent/dsh-reply');
-const { summarizeTask, sanitizeEventList, historyEventList } = require('../../agent/event-utils');
+const mainSession = require('../../agent/main-session');
+const { createTask } = require('../../agent/tasks');
+const { sanitizeEventList, historyEventList } = require('../../agent/event-utils');
 
 module.exports = (router, ctx) => {
   router.get('/api/history', (req, res, c, p, url) => {
@@ -35,25 +36,31 @@ module.exports = (router, ctx) => {
     const session = String(body.session || 'agent:main:webui:' + Date.now()).trim();
     if (!message) return ctx.json(res, 400, { ok: false, error: 'empty message' });
     conversations.append(session, { role: 'user', text: message });
-    const history = conversations.get(session).slice(-20);
-    const task = startReplyTask({
-      message,
-      history: history.slice(0, -1).map((e) => ({ role: e.role, text: e.text })),
-      channel: 'webui',
-      contact: session,
+
+    // WebUI 与微信统一走 MainAgentSession（DSH WebUI 常驻会话）。
+    // 用 createTask 包装成异步任务：DSH Web 事件实时进入 task.events，前端轮询展示。
+    const task = createTask(message, {
       config: ctx.config || undefined,
+      runner: async ({ onEvent }) => {
+        const r = await mainSession.sendStreaming({
+          sessionKey: session,
+          message,
+          onEvent: (ev) => onEvent({ ...ev })
+        });
+        if (!r.ok) throw new Error(r.error || 'DSH Web 回复失败');
+        return { ok: true, text: r.text };
+      },
       onFinish: (t) => {
         if (t.status === 'completed' && t.output) {
           conversations.append(session, {
             role: 'bot',
             text: t.output,
-            taskId: t.id,
-            agentEvents: historyEventList(t.events),
-            executionSummary: summarizeTask(t)
+            agentEvents: historyEventList(t.events || [])
           });
         }
       }
     });
+
     return ctx.json(res, 200, { ok: true, taskId: task.id, session, status: task.status });
   });
 };

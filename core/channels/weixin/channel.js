@@ -88,8 +88,8 @@ class WeChatChannel {
     const text = extractText(raw);
     if (!from || !text) return;
     if (ctx) setContext(this.client.accountId, from, ctx);
-    // 自己（bot 主人）发来的消息不需要归档
-    if (this.client.userId && from === this.client.userId) return;
+    // 主人（扫码绑定的微信）给 bot 发消息也要触发自动回复；
+    // 否则主人无法在微信里直接与 bot 对话。
     this.onMessage({
       channel: 'weixin',
       from,

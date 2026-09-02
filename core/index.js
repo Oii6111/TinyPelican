@@ -13,27 +13,16 @@ const { runIntentExtraction } = require('./engine/intent-runner');
 const { ClipboardWatcher } = require('./capture/clipboard');
 const { WeChatChannel } = require('./channels/weixin/channel');
 const { ingestMessages } = require('./ingest/pipeline');
-const { readContact } = require('./memory/stores/contacts');
-const { dshReply } = require('./agent/dsh-reply');
+const { answerWechatMessage } = require('./agent/wechat-reply');
+const { historyEventList } = require('./agent/event-utils');
+const mainSession = require('./agent/main-session');
+const conversations = require('./memory/stores/conversations');
 const { generateReplySuggestions } = require('./reply/suggestions');
 const agentQueue = require('./agent/queue');
 const { drainOnce } = require('./agent/queue-runner');
 
 const RESTART_EXIT_CODE = 42;
 const PORT = parseInt(process.env.V3_PORT || '18791', 10);
-
-function recentHistory(contact, max = 12) {
-  try {
-    const doc = readContact(contact);
-    const msgs = (doc.messages || []).slice(-max);
-    return msgs.map((m) => ({
-      role: 'user',
-      text: `${m.ts || ''} ${m.name || ''}: ${m.content || ''}`
-    }));
-  } catch {
-    return [];
-  }
-}
 
 async function main() {
   const cfg = loadConfig();
@@ -97,31 +86,64 @@ async function main() {
 
   scheduler.start();
 
+  // 确保 DSH WebUI（默认 3080）可用；不可用则由小鹈鹕自动拉起。
+  try {
+    const webStart = await mainSession.ensureReady();
+    log('info', 'agent', webStart && webStart.started
+      ? '已自动启动 DSH WebUI（3080）'
+      : 'DSH WebUI（3080）已就绪');
+  } catch (e) {
+    log('warn', 'agent', 'DSH WebUI 启动/探测失败：' + String((e && e.message) || e));
+  }
+
   let wechat = null;
   const handleChannelMessage = async (m) => {
     const replyCfg = (cfg.agent && cfg.agent.reply) || {};
-    const contact = m.name || m.from || 'inbox';
-    const history = recentHistory(contact, replyCfg.maxHistory || 12);
+    if (replyCfg.enabled === false || !m.content || !wechat) return;
 
-    const added = ingestMessages([m], m.name, { unread: true });
-    if (added) triggerIntent();
+    // 微信通道消息定位为「主对话」：长期保存在 conversations，
+    // 并拥有稳定 DSH Web 会话 agent:main:weixin:<user>；不写入联系人记忆归档。
+    const session = 'agent:main:weixin:' + (m.from || 'default');
+    conversations.append(session, { role: 'user', text: m.content });
+    const full = conversations.get(session);
+    const history = full.slice(-20, -1).map((e) => ({
+      role: e.role === 'bot' ? 'bot' : 'user',
+      text: e.text
+    }));
 
-    if (replyCfg.enabled === false || !m.content) return;
+    let r = null;
     try {
-      const r = await dshReply({
-        message: m.content,
-        history,
-        channel: m.channel || 'channel',
-        contact,
-        config: cfg
-      });
-      if (r.ok && r.text && wechat) {
-        await wechat.send({ to: m.from, text: r.text, contextToken: m.contextToken || '' });
-      } else if (!r.ok) {
-        log('warn', 'agent', `自动回复失败（${m.channel || 'unknown'}）：${r.error || ''}`);
-      }
+      // 优先走 DSH WebUI 常驻会话，微信拥有自己的长期主会话。
+      r = await mainSession.send({ sessionKey: session, message: m.content });
     } catch (e) {
-      log('error', 'agent', '自动回复异常：' + ((e && e.message) || e));
+      log('error', 'agent', '微信主会话发送异常：' + String((e && e.message) || e));
+    }
+
+    // DSH Web 不可用时降级：headless 或直连模型，保证微信仍能收到回复。
+    if (!r || !r.ok) {
+      try {
+        r = await answerWechatMessage({
+          message: m.content,
+          history,
+          userId: m.from || 'default',
+          config: cfg
+        });
+      } catch (e) {
+        log('error', 'agent', '微信回复降级异常：' + String((e && e.message) || e));
+      }
+    }
+
+    if (r && r.ok && r.text) {
+      const text = r.text;
+      conversations.append(session, {
+        role: 'bot',
+        text,
+        agentEvents: historyEventList((r && r.events) || [])
+      });
+      await wechat.send({ to: m.from, text, contextToken: m.contextToken || '' });
+      log('info', 'weixin', `微信 Agent 回复成功（${r.mode || 'unknown'}）`);
+    } else {
+      log('warn', 'agent', `微信 Agent 回复失败：${(r && r.error) || '未知错误'}`);
     }
   };
 
@@ -159,6 +181,7 @@ async function main() {
     watcher.stop();
     wechat.stop();
     scheduler.stop();
+    mainSession.stop();
     stopHeartbeat();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref();

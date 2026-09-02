@@ -26,6 +26,13 @@ test('剪贴板传感器新/旧格式解析', () => {
   assert.strictEqual(legacy.handle, null);
   assert.strictEqual(legacy.encoded, 'aGVsbG8=');
 
+  const rect = parseSensorLine('CHANGE 986432 999 WeChat 200 100 1400 900 144 aGVsbG8=');
+  assert.strictEqual(rect.handle, '986432');
+  assert.strictEqual(rect.processName, 'WeChat');
+  assert.deepStrictEqual(rect.bounds, { left: 200, top: 100, right: 1400, bottom: 900 });
+  assert.strictEqual(rect.dpi, 144);
+  assert.strictEqual(rect.encoded, 'aGVsbG8=');
+
   assert.strictEqual(parseSensorLine('CHANGE'), null);
 });
 
@@ -114,6 +121,28 @@ test('建议状态：过期/失效/锁定/消费/忽略', () => {
   assert.strictEqual(store.dismiss('reply_test_3'), true);
   assert.strictEqual(store.getCurrent(), null);
 });
+
+test('建议 sanitize 只暴露计算后的 anchor，不暴露窗口句柄', () => {
+  store.invalidate();
+  store.replaceSuggestion({
+    id: 'reply_anchor_1',
+    contact: '张三',
+    sourceMessage: '',
+    options: [],
+    targetWindow: {
+      handle: '986432',
+      bounds: { left: 200, top: 100, right: 1400, bottom: 900 },
+      dpi: 144
+    },
+    createdAt: new Date().toISOString(),
+    expiresAt: Date.now() + 100000
+  });
+  const out = store.sanitize(store.getCurrent());
+  assert.deepStrictEqual(out.anchor, { x: 863, y: 465 });
+  assert.strictEqual(out.targetWindow, undefined);
+  assert.strictEqual(out.canPaste, true);
+});
+
 
 test('生成序号乱序防护：invalidate 也会推进版本', () => {
   store.invalidate();

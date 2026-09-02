@@ -16,23 +16,38 @@ function msgKey(m) {
 }
 
 // 解析传感器输出：
-//   新格式 CHANGE <handle> <pid> <processName> <b64>
+//   新格式 CHANGE <handle> <pid> <processName> <left> <top> <right> <bottom> <dpi> <b64>
+//   兼容格式 CHANGE <handle> <pid> <processName> <b64>
 //   兼容格式 CHANGE <handle> <b64>
 //   旧格式 CHANGE <b64>
 function parseSensorLine(line) {
-  const full = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+(.+)$/);
+  const full = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(\d+)\s+(.+)$/);
   if (full) {
     return {
       handle: full[1] === '0' ? null : full[1],
       pid: full[2] === '0' ? null : full[2],
-      processName: full[3],
-      encoded: full[4]
+      processName: full[3] === '-' ? null : full[3],
+      bounds: {
+        left: Number(full[4]),
+        top: Number(full[5]),
+        right: Number(full[6]),
+        bottom: Number(full[7])
+      },
+      dpi: Number(full[8]) || 0,
+      encoded: full[9]
     };
   }
-  const current = line.match(/^CHANGE\s+(-?\d+)\s+(.+)$/);
+  const current = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+(.+)$/);
   if (current) {
-    return { handle: current[1] === '0' ? null : current[1], encoded: current[2] };
+    return {
+      handle: current[1] === '0' ? null : current[1],
+      pid: current[2] === '0' ? null : current[2],
+      processName: current[3] === '-' ? null : current[3],
+      encoded: current[4]
+    };
   }
+  const two = line.match(/^CHANGE\s+(-?\d+)\s+(.+)$/);
+  if (two) return { handle: two[1] === '0' ? null : two[1], encoded: two[2] };
   const legacy = line.match(/^CHANGE\s+(.+)$/);
   if (legacy) return { handle: null, encoded: legacy[1] };
   return null;
@@ -97,7 +112,9 @@ class ClipboardWatcher {
         this._handleClip(text, {
           handle: parsed.handle || null,
           pid: parsed.pid || null,
-          processName: parsed.processName || null
+          processName: parsed.processName || null,
+          bounds: parsed.bounds || null,
+          dpi: parsed.dpi || 0
         });
       } catch {}
     }
@@ -105,10 +122,29 @@ class ClipboardWatcher {
 
   _handleClip(text, targetWindow = null) {
     const msgs = parseChatText(text);
+    const isWeChat = !!(
+      targetWindow &&
+      typeof targetWindow.processName === 'string' &&
+      /^(wechat|weixin)(\.exe)?$/i.test(targetWindow.processName.trim())
+    );
+    const b = targetWindow && targetWindow.bounds;
+    const boundsValid = !!(
+      isWeChat && b &&
+      Number.isFinite(Number(b.left)) && Number.isFinite(Number(b.top)) &&
+      Number.isFinite(Number(b.right)) && Number.isFinite(Number(b.bottom)) &&
+      Number(b.right) > Number(b.left) && Number(b.bottom) > Number(b.top)
+    );
     const windowRef = targetWindow && targetWindow.handle ? {
       handle: String(targetWindow.handle),
       pid: targetWindow.pid ? String(targetWindow.pid) : null,
-      processName: targetWindow.processName || null
+      processName: targetWindow.processName || null,
+      bounds: boundsValid ? {
+        left: Number(b.left),
+        top: Number(b.top),
+        right: Number(b.right),
+        bottom: Number(b.bottom)
+      } : null,
+      dpi: boundsValid ? (Number(targetWindow.dpi) || 0) : 0
     } : null;
     // 不是聊天记录：若存在待回填语音，则把这段文本当作语音转写内容回填
     if (msgs.length === 0 && voice.list().length) {
