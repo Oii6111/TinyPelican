@@ -45,8 +45,9 @@ async function rpc(method, payload = {}, base = DEFAULT_BASE) {
     : { ok: false, error: (data.result && data.result.error && (data.result.error.message || JSON.stringify(data.result.error))) || 'DSH Web API 业务失败' };
 }
 
-function sessionIdForUser(userId, prefix = 'xiaotihu-wechat') {
-  const safe = crypto.createHash('sha1').update(String(userId || 'default')).digest('hex').slice(0, 12);
+function sessionIdForUser(userId, prefix = 'xiaotihu-wechat', salt = '') {
+  const material = `${salt || ''}\n${String(userId || 'default')}`;
+  const safe = crypto.createHash('sha1').update(material).digest('hex').slice(0, 12);
   return `session-${prefix}-${safe}`;
 }
 
@@ -101,13 +102,22 @@ function assistantText(entry) {
   return parts.length ? parts.join('\n').trim() : null;
 }
 
+function historyHasUserMessage(result) {
+  if (!result || !result.ok || !result.value || !Array.isArray(result.value.events)) return false;
+  return result.value.events.some((entry) => {
+    const ev = entry && entry.event ? entry.event : entry;
+    return !!ev && ev.type === 'user/message';
+  });
+}
+
 async function promptAndWait({
   sessionId,
   text,
   cwd = PROJECT_ROOT,
   timeoutMs = 180000,
   pollMs = 600,
-  base = DEFAULT_BASE
+  base = DEFAULT_BASE,
+  initialPrompt = ''
 } = {}) {
   const ensured = await ensureSession({ sessionId, cwd, base });
   if (!ensured.ok) return { ok: false, error: `DSH Web 会话不可用：${ensured.error || ''}` };
@@ -122,7 +132,10 @@ async function promptAndWait({
     }
   }
 
-  const promptText = String(text || '').trim();
+  // 新会话第一次发言时把「小鹈鹕人设 + 上下文」作为完整 prompt 注入；
+  // 之后该 DSH Web 会话已有历史，只发送用户原话，避免重复膨胀。
+  const hasUser = historyHasUserMessage(before);
+  const promptText = String((initialPrompt && !hasUser ? initialPrompt : text) || '').trim();
   if (!promptText) return { ok: false, error: 'DSH Web 空消息' };
 
   const sent = await rpc('session.prompt', {
@@ -168,7 +181,8 @@ async function promptStreaming({
   timeoutMs = 180000,
   pollMs = 400,
   base = DEFAULT_BASE,
-  onEvent = () => {}
+  onEvent = () => {},
+  initialPrompt = ''
 } = {}) {
   const ensured = await ensureSession({ sessionId, cwd, base });
   if (!ensured.ok) return { ok: false, error: `DSH Web 会话不可用：${ensured.error || ''}` };
@@ -182,7 +196,8 @@ async function promptStreaming({
     }
   }
 
-  const promptText = String(text || '').trim();
+  const hasUser = historyHasUserMessage(before);
+  const promptText = String((initialPrompt && !hasUser ? initialPrompt : text) || '').trim();
   if (!promptText) return { ok: false, error: 'DSH Web 空消息' };
 
   const sent = await rpc('session.prompt', {
@@ -217,9 +232,9 @@ async function promptStreaming({
 }
 
 // 微信/任务统一入口：userId 用来派生稳定会话；cwd 默认项目工作区。
-async function ask({ userId, text, cwd = PROJECT_ROOT, timeoutMs = 180000, base = DEFAULT_BASE } = {}) {
-  const sessionId = sessionIdForUser(userId, 'xiaotihu-wechat');
-  return promptAndWait({ sessionId, text, cwd, timeoutMs, base });
+async function ask({ userId, text, cwd = PROJECT_ROOT, timeoutMs = 180000, base = DEFAULT_BASE, initialPrompt = '' } = {}) {
+  const sessionId = sessionIdForUser(userId, 'xiaotihu-wechat', cwd);
+  return promptAndWait({ sessionId, text, cwd, timeoutMs, base, initialPrompt });
 }
 
 let webChild = null;

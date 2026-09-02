@@ -114,7 +114,7 @@ async function main() {
     let r = null;
     try {
       // 优先走 DSH WebUI 常驻会话，微信拥有自己的长期主会话。
-      r = await mainSession.send({ sessionKey: session, message: m.content });
+      r = await mainSession.send({ sessionKey: session, message: m.content, history });
     } catch (e) {
       log('error', 'agent', '微信主会话发送异常：' + String((e && e.message) || e));
     }

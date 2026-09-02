@@ -57,7 +57,14 @@ async function answerWechatMessage({ message, history = [], userId = 'default', 
   }
 
   // 优先走 DSH WebUI 常驻进程：不新拉 headless，速度快。
-  const web = await dshWeb.ask({ userId, text: msg });
+  const initialPrompt = buildReplyPrompt({
+    message: msg,
+    history,
+    channel: 'weixin',
+    contact: '',
+    context: ''
+  });
+  const web = await dshWeb.ask({ userId, text: msg, initialPrompt });
   if (web.ok) return { ok: true, text: web.text, mode: 'dsh-web' };
 
   // 3080 不可用时回退到一次性 headless，保证功能不中断。

@@ -37,6 +37,12 @@ module.exports = (router, ctx) => {
     if (!message) return ctx.json(res, 400, { ok: false, error: 'empty message' });
     conversations.append(session, { role: 'user', text: message });
 
+    const full = conversations.get(session);
+    const history = full.slice(-20, -1).map((e) => ({
+      role: e.role === 'bot' ? 'bot' : 'user',
+      text: e.text
+    }));
+
     // WebUI 与微信统一走 MainAgentSession（DSH WebUI 常驻会话）。
     // 用 createTask 包装成异步任务：DSH Web 事件实时进入 task.events，前端轮询展示。
     const task = createTask(message, {
@@ -45,6 +51,7 @@ module.exports = (router, ctx) => {
         const r = await mainSession.sendStreaming({
           sessionKey: session,
           message,
+          history,
           onEvent: (ev) => onEvent({ ...ev })
         });
         if (!r.ok) throw new Error(r.error || 'DSH Web 回复失败');
