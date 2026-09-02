@@ -98,7 +98,7 @@ npm install
 POST /api/agent/tasks
 Content-Type: application/json
 
-{ "task": "帮我扫描 contacts 目录并生成报告", "cwd": "agent-workspace" }
+{ "task": "帮我扫描 contacts 目录并生成报告" }
 ```
 
 ```http
@@ -129,7 +129,7 @@ GET /api/agent/tasks/:id
 
 ### `spawn EPERM`
 
-某些受限环境禁止 Node 子进程管道通信。`dsh-client.js` 已自动降级：改用文件描述符继承输出，不再依赖管道。如果仍遇到，请确认 `agent-workspace` 可写。
+某些受限环境禁止 Node 子进程管道通信。`dsh-client.js` 已自动降级：改用文件描述符继承输出，不再依赖管道。如果仍遇到，请确认 Agent 工作目录（默认项目根目录）可写。
 
 ### `MISSING_CREDENTIAL`
 

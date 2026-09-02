@@ -8,10 +8,6 @@ release/
 # DSH 本地运行目录（会话/凭据/生成 profile 不入库）
 agent/dsh-home/
 
-# Agent 工作区只保留目录占位，实际产物不入库
-agent-workspace/*
-!agent-workspace/.gitkeep
-
 # 本地数据（聊天内容/隐私，不入库）
 contacts/*.json
 contacts/_legacy/

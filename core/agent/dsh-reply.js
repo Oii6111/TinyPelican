@@ -15,7 +15,6 @@ function buildReplyPrompt({ message, history = [], channel = 'webui', contact = 
   lines.push('- 全量聊天流水：inbox.jsonl');
   lines.push('- 意图/待办：intents.json');
   lines.push('- 批次归档：batches/');
-  lines.push('- 业务工作区：agent-workspace/');
   lines.push('搜索规则：');
   lines.push('- 禁止用 glob("**/*") 扫描整个项目根目录，禁止把 node_modules、.git、dist、logs、app、二进制/图片/视频文件作为搜索结果。');
   lines.push('- 搜索文件列表最多返回 100 条；结果很多时先做目录/类型/关键词过滤再展示。');
