@@ -80,22 +80,6 @@ Dashboard: streaming thoughts, tool calls, execution, final answer
 
 ---
 
-## Why It Is More Than a Demo
-
-### Persistent Agent, not one-off answers
-TinyPelican runs a **DSH Web resident session** shared by the WebUI and WeChat. The Agent keeps context, streams its reasoning, and executes real tools — file reads, searches, commands, and more.
-
-### Safe by design
-- Real chat records and credentials are excluded from Git by default.
-- Data lives in a local directory; packaged builds use a per-user data directory.
-- Clipboard monitoring only accepts recognized chat formats; other clipboard content is discarded.
-- Agent tool results are truncated by default; only final answers and execution summaries are kept in history.
-
-### Portable codebase
-Runtime paths are resolved relative to the project or through environment variables — no hardcoded personal paths, no “works only on my machine” trap. DSH sessions are scoped by project directory, so moving the repository does not corrupt or collide with historical sessions.
-
----
-
 ## Quick Start
 
 ### Requirements
