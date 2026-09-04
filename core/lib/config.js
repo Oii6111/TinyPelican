@@ -91,7 +91,7 @@ const DEFAULTS = {
       subtitle: '',
       level: 'active', // active | timeSensitive | passive | critical
       sound: '',
-      icon: '',
+      icon: 'https://cdn.jsdelivr.net/gh/Oii6111/TinyPelican@main/logo2.png',
       badge: 0,
       url: '',
       copy: '',
