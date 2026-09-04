@@ -153,6 +153,7 @@ const hbLast = document.getElementById('hb-last');
 const hbLevel = document.getElementById('hb-level');
 const unreadCount = document.getElementById('unread-count');
 const unreadBtn = document.getElementById('unread-btn');
+const pushStatusEl = document.getElementById('push-status');
 unreadBtn.onclick = () => show('chat');
 
 async function refreshStatus() {
@@ -168,6 +169,26 @@ async function refreshStatus() {
     const n = (s.unread && s.unread.count) || 0;
     unreadCount.textContent = n;
     unreadBtn.classList.toggle('has', n > 0);
+
+    const wp = s.weixin && s.weixin.push;
+    if (!wp || !wp.configured) {
+      pushStatusEl.style.display = 'none';
+      pushStatusEl.classList.remove('push-ok', 'push-warn');
+    } else if (wp.ready) {
+      pushStatusEl.style.display = '';
+      pushStatusEl.textContent = '微信推送 可用';
+      pushStatusEl.title = wp.updatedAt
+        ? '最近激活：' + new Date(wp.updatedAt).toLocaleString('zh-CN', { hour12: false })
+        : '微信主动推送可用';
+      pushStatusEl.classList.remove('push-warn');
+      pushStatusEl.classList.add('push-ok');
+    } else {
+      pushStatusEl.style.display = '';
+      pushStatusEl.textContent = '微信推送 需激活';
+      pushStatusEl.title = wp.reason || '请给 bot 发一条消息重新激活';
+      pushStatusEl.classList.remove('push-ok');
+      pushStatusEl.classList.add('push-warn');
+    }
   } catch {}
 }
 

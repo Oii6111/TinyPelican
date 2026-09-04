@@ -140,7 +140,10 @@ class WeChatClient {
     if (!r.ok) return r;
     const d = r.data;
     if (d.ret !== undefined && d.ret !== 0) {
-      return { ok: false, error: `sendmessage ret=${d.ret} errmsg=${d.errmsg || ''}`, staleToken: d.ret === -14, data: d };
+      // -14 是登录态失效；ret=-2 + prepare failed 在 iLink 中通常代表 context_token
+      // 过期/不可用（不是限流），需要用户重新给 bot 发消息刷新。
+      const stale = d.ret === -14 || (d.ret === -2 && /prepare failed/i.test(String(d.errmsg || '')));
+      return { ok: false, error: `sendmessage ret=${d.ret} errmsg=${d.errmsg || ''}`, staleToken: stale, data: d };
     }
     return { ok: true, data: d };
   }

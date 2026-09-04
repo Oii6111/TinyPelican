@@ -5,7 +5,7 @@
 const { log } = require('../../lib/log');
 const { WeChatClient } = require('./client');
 const { readCredentials } = require('./login');
-const { getContext, setContext } = require('./context');
+const { getContext, setContext, clearContext } = require('./context');
 
 function extractText(raw) {
   const items = (raw && Array.isArray(raw.item_list)) ? raw.item_list : [];
@@ -105,7 +105,9 @@ class WeChatChannel {
     if (!this.client) return { ok: false, error: '微信通道未连接' };
     const ctx = contextToken || getContext(this.client.accountId, to);
     if (!ctx) return { ok: false, error: '缺少 context_token（对方尚未与 bot 建立会话，无法主动发送）' };
-    return this.client.sendText(to, text, ctx);
+    const r = await this.client.sendText(to, text, ctx);
+    if (!r.ok && r.staleToken) clearContext(this.client.accountId, to);
+    return r;
   }
 
   _stop(reason) {

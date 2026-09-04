@@ -80,6 +80,8 @@ body {
 .pill.unread { cursor: pointer; }
 .pill.unread:hover { border-color: var(--accent); color: var(--accent-text); }
 .pill.unread.has { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.pill.push-ok { background: var(--green-soft); border-color: var(--green); color: var(--green-text); }
+.pill.push-warn { background: var(--red-soft); border-color: var(--red); color: var(--red-text); font-weight: 600; }
 
 .main { flex: 1; display: flex; min-height: 0; }
 

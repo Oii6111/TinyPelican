@@ -1,8 +1,9 @@
-// 小鹈鹕核心 — 全局状态（心跳 / 主动级别 / 未读数）
+// 小鹈鹕核心 — 全局状态（心跳 / 主动级别 / 未读数 / 微信主动推送）
 // 供顶部状态栏与 /api/status 使用。
 'use strict';
 
 const { getUnread } = require('./memory/stores/unread');
+const { pushStatus } = require('./channels/weixin/push');
 
 const state = {
   startedAt: null,
@@ -50,7 +51,10 @@ function getStatus(cfg) {
     proactivity: {
       level: (c.proactivity && c.proactivity.level) || 'L2'
     },
-    unread: getUnread()
+    unread: getUnread(),
+    weixin: {
+      push: pushStatus()
+    }
   };
 }
 

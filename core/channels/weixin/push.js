@@ -4,7 +4,7 @@
 const { log } = require('../../lib/log');
 const { WeChatClient } = require('./client');
 const { readCredentials } = require('./login');
-const { getContext } = require('./context');
+const { getContext, getContextInfo, clearContext } = require('./context');
 
 async function pushToUser(message, opts = {}) {
   const creds = readCredentials();
@@ -25,11 +25,44 @@ async function pushToUser(message, opts = {}) {
   }
   const r = await client.sendText(target, message, ctx);
   if (!r.ok) {
-    log('error', 'weixin', '推送失败：' + r.error);
+    if (r.staleToken) {
+      clearContext(client.accountId, target);
+      log('warn', 'weixin', 'context_token 已失效，已清除本地 token；需要用户给 bot 发一条消息后重新激活主动推送');
+    } else {
+      log('error', 'weixin', '推送失败：' + r.error);
+    }
     return false;
   }
   log('info', 'weixin', '已推送微信：' + String(message).slice(0, 40));
   return true;
 }
 
-module.exports = { pushToUser };
+// 看板状态：是否具备“主动推送”能力。iLink 的 context_token 只能由用户入站消息刷新。
+function pushStatus() {
+  const creds = readCredentials();
+  if (!creds) {
+    return { configured: false, ready: false, reason: '微信通道未登录', updatedAt: null };
+  }
+  const target = creds.user_id;
+  if (!target) {
+    return { configured: false, ready: false, reason: '缺少扫码用户 ID', updatedAt: null };
+  }
+  const client = new WeChatClient(creds);
+  const info = getContextInfo(client.accountId, target);
+  if (!info.token) {
+    return {
+      configured: true,
+      ready: false,
+      reason: '主动推送已失效：请在微信里给 bot 发一条消息重新激活',
+      updatedAt: info.updatedAt
+    };
+  }
+  return {
+    configured: true,
+    ready: true,
+    reason: '',
+    updatedAt: info.updatedAt
+  };
+}
+
+module.exports = { pushToUser, pushStatus };
