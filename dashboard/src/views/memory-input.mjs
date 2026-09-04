@@ -57,12 +57,12 @@ export function mount(container) {
 
   const intentCard = el('div', { class: 'card' },
     el('h2', { text: '🧠 意图提取' }),
-    el('div', { class: 'desc', text: '新消息归档后自动提取任务 / DDL / 日程 / 事项提醒 / 等待回复，并进入「主动 → 待确认行动」。' }),
+    el('div', { class: 'desc', text: '新消息归档后自动提取任务 / DDL / 日程 / 事项提醒 / 等待回复，只作为「主动 → 待确认意图」，不会自动创建正式任务。' }),
     el('div', { class: 'source-item' },
       el('span', { class: 'src-icon', text: '🧠' }),
       el('div', {},
         el('div', { class: 'src-name', text: '自动提取' }),
-        el('div', { class: 'src-desc', text: '高置信度自动添加，中低置信度进入待确认' })
+        el('div', { class: 'src-desc', text: '识别结果只进入待确认，用户确认后转为正式任务' })
       ),
       el('span', { class: 'src-state' }, el('span', { class: 'badge info', text: '随消息自动运行' }))
     )

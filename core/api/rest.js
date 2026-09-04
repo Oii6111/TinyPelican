@@ -64,6 +64,7 @@ function createRestServer({ config = null, onRestart = null } = {}) {
   require('./routes/contacts')(router, ctx);
   require('./routes/search')(router, ctx);
   require('./routes/intents')(router, ctx);
+  require('./routes/tasks')(router, ctx);
   require('./routes/voice')(router, ctx);
   require('./routes/logs')(router, ctx);
   require('./routes/settings')(router, ctx);

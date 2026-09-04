@@ -46,6 +46,14 @@ export const api = {
     update: (id, patch) => post('/api/intents/' + encodeURIComponent(id), patch)
   },
 
+  tasks: {
+    list: (status = '') => get('/api/tasks' + (status ? '?status=' + encodeURIComponent(status) : '')),
+    create: (task) => post('/api/tasks', task),
+    update: (id, patch) => post('/api/tasks/' + encodeURIComponent(id), patch),
+    complete: (id) => post('/api/tasks/' + encodeURIComponent(id) + '/complete'),
+    remove: (id) => del('/api/tasks/' + encodeURIComponent(id))
+  },
+
   voice: {
     list: () => get('/api/voice-pending'),
     skip: (index) => del('/api/voice-pending?index=' + index)

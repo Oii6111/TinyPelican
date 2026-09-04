@@ -33,6 +33,7 @@ function getPaths() {
     voicePending: path.join(b, 'voice-pending.json'),
     intentState: path.join(b, 'intent-state.json'),
     intents: path.join(b, 'intents.json'),
+    tasks: path.join(b, 'tasks.json'),
     relationPushed: path.join(b, 'relation-pushed.json'),
     conversations: path.join(b, 'conversations.json'),
     agentQueue: path.join(b, 'agent-tasks.jsonl'),

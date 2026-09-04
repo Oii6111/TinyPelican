@@ -1,82 +1,66 @@
-// 小鹈鹕核心 — 主动提醒执行器
-// 消费 intents.json，对已确认/自动添加且带 dueAt 的意图做 DDL/日程/事项提醒。
+// 小鹈鹕核心 — 主动提醒执行器（正式任务）
+// 意图识别只负责建议；提醒统一消费「任务」：
+//   once  一次性任务：dueAt 到期提醒
+//   cron  周期任务：nextAt 到期提醒，提醒后自动推进到下一次
 'use strict';
 
-const { getPaths } = require('../lib/paths');
 const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
-const { readIntents, saveIntents } = require('../memory/stores/intents');
-const { runTask } = require('../engine/client');
-const { isInDoNotDisturb, typeLabel, getReminderPoints } = require('../lib/reminder-rules');
+const { isInDoNotDisturb } = require('../lib/reminder-rules');
 const { notifyUser } = require('../notify');
+const tasks = require('../memory/stores/tasks');
 
-const P = getPaths();
+function taskTimeText(task) {
+  const iso = task.kind === 'cron' ? task.nextAt : task.dueAt;
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
 
-async function generateReminderMessage(intent, cfg) {
-  const r = await runTask('reminder_text', { intent }, { config: cfg });
-  if (r.ok && r.text && r.text.trim()) return r.text.trim();
-  return `⏰ ${typeLabel(intent.type)}提醒：${intent.summary}${intent.dueText ? '（' + intent.dueText + '）' : ''}`;
+function buildTaskMessage(task) {
+  const lines = [];
+  lines.push(`📌 任务提醒：${task.title || '未命名任务'}`);
+  if (task.detail) lines.push(task.detail);
+  const time = taskTimeText(task);
+  if (time) lines.push(`⏰ ${task.kind === 'cron' ? '本次时间' : '截止时间'}：${time}`);
+  return lines.join('\n');
 }
 
 async function runReminders(opts = {}) {
   const cfg = opts.config || loadConfig();
-  const reminderCfg = cfg.reminder || {};
   const dndCfg = cfg.doNotDisturb || {};
-  const intents = readIntents();
-  if (!intents.length) {
-    log('info', 'remind', '无意图，跳过');
-    return { checked: 0, pushed: 0 };
-  }
-
-  let changed = false;
+  const items = tasks.listTasks({ status: 'open' });
   let pushedCount = 0;
   const now = Date.now();
 
-  for (const intent of intents) {
-    if (!['auto_added', 'confirmed'].includes(intent.status)) continue;
-    if (!intent.dueAt) continue;
-    const due = new Date(intent.dueAt).getTime();
-    if (isNaN(due)) continue;
-    if (!Array.isArray(intent.reminders)) intent.reminders = [];
+  for (const task of items) {
+    const dueIso = task.kind === 'cron' ? task.nextAt : task.dueAt;
+    if (!dueIso) continue;
+    const due = new Date(dueIso).getTime();
+    if (isNaN(due) || now < due) continue;
+    if (task.lastNotifiedAt === dueIso) continue;
 
-    const points = getReminderPoints(intent, reminderCfg);
-    const passed = points
-      .filter((p) => now >= due - p.minutes * 60000 && !intent.reminders.includes(String(p.minutes)))
-      .sort((a, b) => a.minutes - b.minutes);
-    if (!passed.length) continue;
-
-    // 只推送"最接近当前时间"的已到达提醒点，避免一次性全推
-    const point = passed[0];
-
-    // 免打扰时段不推送，也不标记已提醒，等结束后的下一轮再补推
     if (isInDoNotDisturb(new Date(), dndCfg)) {
-      console.log(`[remind] ${intent.id} 处于免打扰时段，延后提醒 ${point.label}`);
-      log('warn', 'remind', `${intent.id} 处于免打扰时段，延后提醒 ${point.label}`);
+      log('warn', 'remind', `任务 ${task.id} 处于免打扰时段，延后提醒`);
       continue;
     }
 
-    const msg = await generateReminderMessage(intent, cfg);
+    const msg = buildTaskMessage(task);
     const notifyResult = opts.dryRun
       ? (console.log('[remind][dry-run]', msg), { ok: true })
       : await notifyUser({ title: '⏰ 小鹈鹕提醒', message: msg, config: cfg });
-    const ok = !!(notifyResult && notifyResult.ok);
-    if (ok) {
-      intent.reminders.push(String(point.minutes));
-      intent.updatedAt = new Date().toISOString();
-      changed = true;
+    if (notifyResult && notifyResult.ok) {
+      // 对 cron 任务，updateTask 会把 nextAt 自动推进到下一次
+      tasks.updateTask(task.id, { lastNotifiedAt: dueIso });
       pushedCount++;
-      console.log(`[remind] 已提醒 ${intent.id} ${point.label}`);
-      log('info', 'remind', `已提醒 ${intent.id} ${point.label}`);
+      log('info', 'remind', `已提醒任务 ${task.id} ${task.title}`);
     } else {
-      console.log(`[remind] 推送失败 ${intent.id} ${point.label}`);
-      log('error', 'remind', `推送失败 ${intent.id} ${point.label}`);
+      log('error', 'remind', `任务提醒推送失败 ${task.id} ${task.title}`);
     }
   }
 
-  if (changed) saveIntents(intents);
-  console.log('[remind] 完成');
-  log('info', 'remind', '完成');
-  return { checked: intents.length, pushed: pushedCount };
+  return { checked: items.length, pushed: pushedCount };
 }
 
-module.exports = { runReminders, generateReminderMessage };
+module.exports = { runReminders, buildTaskMessage };

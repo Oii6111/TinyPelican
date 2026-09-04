@@ -18,6 +18,7 @@ voice-pending.json
 intents.json
 intent-state.json
 intent-last-run.json
+tasks.json
 remark-pending.json
 relation-pushed.json
 agent-tasks.jsonl

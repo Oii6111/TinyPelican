@@ -12,7 +12,6 @@ const { runTask } = require('./client');
 const { parseDeadline } = require('../lib/deadline');
 const { typeLabel } = require('../lib/reminder-rules');
 const { notifyUser } = require('../notify');
-const agentQueue = require('../agent/queue');
 
 const P = getPaths();
 
@@ -42,7 +41,7 @@ function buildIntent(item, contact, newMsgs) {
       ts: sourceTs,
       content: sourceContent
     },
-    status: conf >= 0.85 ? 'auto_added' : 'pending_confirm',
+    status: 'pending_confirm',
     notified: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -66,29 +65,17 @@ async function notifyNewIntents(intents, cfg) {
   let changed = false;
   for (const intent of intents) {
     if (intent.notified) continue;
-    if (intent.status === 'auto_added') {
-      const msg = `✅ 已添加${typeLabel(intent.type)}：${intent.summary}（来自 ${intent.source.contact || '未知'}${intent.dueText ? '，' + intent.dueText : ''}）`;
-      const notifyResult = await notifyUser({ title: '✅ 小鹈鹕已添加待办', message: msg, config: cfg });
-      const ok = !!(notifyResult && notifyResult.ok);
-      if (ok) {
-        intent.notified = true;
-        intent.updatedAt = new Date().toISOString();
-        changed = true;
-        log('info', 'weixin', `已推送意图通知：${intent.summary}`);
-      } else {
-        log('warn', 'weixin', `意图通知未推送（微信通道未就绪）：${intent.summary}`);
-      }
-    } else if (intent.status === 'pending_confirm' && intent.confidence >= MEDIUM_CONF) {
-      const msg = `🔍 发现疑似${typeLabel(intent.type)}：${intent.summary}（来自 ${intent.source.contact || '未知'}）。请在 Dashboard「意图」页确认或忽略。`;
+    if (intent.status === 'pending_confirm' && intent.confidence >= MEDIUM_CONF) {
+      const msg = `🔍 发现疑似${typeLabel(intent.type)}：${intent.summary}（来自 ${intent.source.contact || '未知'}）。请在 Dashboard「待确认意图」中确认转为任务，或忽略。`;
       const notifyResult = await notifyUser({ title: '🔍 小鹈鹕发现待确认事项', message: msg, config: cfg });
       const ok = !!(notifyResult && notifyResult.ok);
       if (ok) {
         intent.notified = true;
         intent.updatedAt = new Date().toISOString();
         changed = true;
-        log('info', 'weixin', `已推送待确认意图：${intent.summary}`);
+        log('info', 'intent', `已推送待确认意图：${intent.summary}`);
       } else {
-        log('warn', 'weixin', `待确认意图未推送（微信通道未就绪）：${intent.summary}`);
+        log('warn', 'intent', `待确认意图未推送：${intent.summary}`);
       }
     }
   }
@@ -98,7 +85,6 @@ async function notifyNewIntents(intents, cfg) {
 async function runIntentExtraction(opts = {}) {
   const cfg = opts.config || loadConfig();
   const intentCfg = cfg.intent || {};
-  const HIGH_CONF = intentCfg.highConfidence !== undefined ? intentCfg.highConfidence : 0.85;
   const MAX_MSGS = intentCfg.maxMessagesPerBatch || 50;
 
   if (!fs.existsSync(P.contacts)) {
@@ -157,16 +143,8 @@ async function runIntentExtraction(opts = {}) {
           intents.push(intent);
           added++;
           totalNew++;
-          // 具体任务型意图交给 DSH 大模型 Worker 执行
-          const queueCfg = (cfg.agent && cfg.agent.queue) || {};
-          if (intent.type === 'task' && queueCfg.enabled !== false) {
-            agentQueue.enqueueTask({
-              type: 'task',
-              summary: intent.summary,
-              detail: intent.detail,
-              source: intent.source
-            });
-          }
+          // 意图识别只生成“待确认建议”，不自动创建正式任务，也不自动入 DSH 执行队列。
+          // 用户确认后由「任务」页/待确认页手动转为正式任务。
         }
       }
       console.log(`[intent] ${key} 新增 ${added} 条意图`);

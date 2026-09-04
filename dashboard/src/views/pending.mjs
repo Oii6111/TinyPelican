@@ -2,9 +2,9 @@ import { api } from '../api.mjs';
 import { el, empty, fmtTime } from '../ui.mjs';
 
 const TYPE_MAP = { task: '📌 任务', deadline: '⏰ DDL', schedule: '📅 日程', reminder: '🔔 事项提醒', waiting_reply: '💬 等待回复' };
-const STATUS_MAP = { auto_added: '✅ 已添加', pending_confirm: '🔍 待确认', confirmed: '👍 已确认', ignored: '🚫 已忽略' };
+const STATUS_MAP = { pending_confirm: '🔍 待确认', confirmed: '👍 已转为任务', ignored: '🚫 已忽略' };
 
-// 待确认行动：AI 主动生成、尚未自动执行、需要用户确认的动作
+// 待确认意图：AI 只负责“看懂聊天”，不自动创建任务；用户确认后才转为正式任务。
 export function mount(container) {
   empty(container);
   container.className = 'view';
@@ -12,7 +12,7 @@ export function mount(container) {
 
   const list = el('div');
   const chips = el('div', { class: 'chips' });
-  for (const [val, label] of [['pending_confirm', '待确认'], ['auto_added', '已自动添加'], ['', '全部']]) {
+  for (const [val, label] of [['pending_confirm', '待确认'], ['confirmed', '已转为任务'], ['', '全部']]) {
     const chip = el('button', { class: 'chip' + (val === filter ? ' active' : ''), text: label });
     chip.onclick = () => {
       filter = val;
@@ -25,8 +25,8 @@ export function mount(container) {
 
   container.append(
     el('div', { class: 'card' },
-      el('h2', { text: '待确认行动' }),
-      el('div', { class: 'desc', text: 'AI 主动生成、尚未自动执行、需要你确认的行动。确认后进入正式事项并按策略触发提醒；忽略会记入学习反馈。' }),
+      el('h2', { text: '待确认意图' }),
+      el('div', { class: 'desc', text: '意图识别只负责从聊天中“看懂事项”，不会自动创建任务。确认后转为正式任务，可在「主动 → 任务」里编辑内容、时间或设为周期任务。' }),
       chips,
       list
     )
@@ -45,7 +45,7 @@ export function mount(container) {
       const conf = Math.round((it.confidence || 0) * 100);
       const actions = el('div', { class: 'actions' });
       if (it.status === 'pending_confirm') {
-        actions.append(el('button', { class: 'btn btn-confirm btn-sm', text: '👍 确认执行', onclick: () => update(it.id, { status: 'confirmed' }) }));
+        actions.append(el('button', { class: 'btn btn-confirm btn-sm', text: '📌 转为任务', onclick: () => convertToTask(it) }));
       }
       actions.append(el('button', { class: 'btn btn-danger btn-sm', text: '👎 忽略', onclick: () => update(it.id, { status: 'ignored' }) }));
       actions.append(el('button', { class: 'btn btn-edit btn-sm', text: '修改', onclick: () => edit(it) }));
@@ -69,6 +69,22 @@ export function mount(container) {
   async function update(id, patch) {
     try { await api.intents.update(id, patch); } catch {}
     load();
+  }
+
+  async function convertToTask(it) {
+    try {
+      await api.tasks.create({
+        title: it.summary,
+        detail: it.detail || '',
+        kind: 'once',
+        dueAt: it.dueAt || null,
+        sourceIntentId: it.id,
+        source: it.source || null
+      });
+      await update(it.id, { status: 'confirmed' });
+    } catch (e) {
+      alert('转为任务失败：' + ((e && e.message) || e));
+    }
   }
 
   async function edit(it) {

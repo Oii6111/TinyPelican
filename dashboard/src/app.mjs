@@ -8,6 +8,7 @@ import { mount as knowledge } from './views/knowledge.mjs';
 import { mount as memoryInput } from './views/memory-input.mjs';
 import { mount as proactive } from './views/proactive.mjs';
 import { mount as pending } from './views/pending.mjs';
+import { mount as tasks } from './views/tasks.mjs';
 import { mount as records } from './views/records.mjs';
 import { mount as strategy } from './views/strategy.mjs';
 import { mount as mcp } from './views/mcp.mjs';
@@ -35,7 +36,8 @@ const NAV = [
     id: 'pro', group: '主动', icon: '🔥',
     items: [
       { id: 'proactive', label: '主动仪表盘', mount: proactive },
-      { id: 'pending', label: '待确认行动', mount: pending },
+      { id: 'tasks', label: '任务', mount: tasks },
+      { id: 'pending', label: '待确认意图', mount: pending },
       { id: 'records', label: '思考和行动记录', mount: records },
       { id: 'strategy', label: '策略配置', mount: strategy }
     ]

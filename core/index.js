@@ -43,7 +43,7 @@ async function main() {
   const scheduler = new Scheduler();
   scheduler.register({
     name: 'remind',
-    intervalMs: 15 * 60 * 1000,
+    intervalMs: 60 * 1000,
     run: () => runReminders({ config: cfg }),
     immediate: true
   });
