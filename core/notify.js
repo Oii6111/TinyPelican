@@ -9,17 +9,47 @@
 const { loadConfig } = require('./lib/config');
 const { pushToUser } = require('./channels/weixin/push');
 
+function pick(v) {
+  return v === undefined || v === null || v === '' ? undefined : v;
+}
+
 async function sendBark({ title = '小鹈鹕', message = '', config = null } = {}) {
   const cfg = config || loadConfig();
   const bark = (cfg.notify && cfg.notify.bark) || {};
   const key = String(bark.key || '').trim();
   if (!key) return { ok: false, error: '未配置 Bark Key', channel: 'bark' };
   const server = String(bark.server || 'https://api.day.app').replace(/\/+$/, '');
-  const url = `${server}/${encodeURIComponent(key)}/${encodeURIComponent(title)}/${encodeURIComponent(String(message || ''))}`;
+
+  const payload = {
+    device_key: key,
+    title,
+    body: String(message || ''),
+    subtitle: pick(bark.subtitle),
+    level: pick(bark.level),
+    sound: pick(bark.sound),
+    icon: pick(bark.icon),
+    group: pick(bark.group),
+    url: pick(bark.url),
+    copy: pick(bark.copy),
+    autoCopy: bark.autoCopy ? '1' : undefined,
+    call: bark.call ? '1' : undefined,
+    isArchive: bark.isArchive ? '1' : undefined
+  };
+  const badge = parseInt(bark.badge, 10);
+  if (Number.isFinite(badge) && badge > 0) payload.badge = badge;
+  for (const k of Object.keys(payload)) {
+    if (payload[k] === undefined) delete payload[k];
+  }
+
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10000);
   try {
-    const res = await fetch(url, { method: 'GET', signal: ctrl.signal });
+    const res = await fetch(`${server}/push`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || (data.code !== undefined && data.code !== 200)) {
       return { ok: false, error: `Bark HTTP ${res.status} code=${data.code || ''} ${data.message || ''}`, channel: 'bark' };

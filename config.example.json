@@ -87,7 +87,18 @@
     "mode": "weixin",
     "bark": {
       "server": "https://api.day.app",
-      "key": ""
+      "key": "",
+      "group": "小鹈鹕",
+      "subtitle": "",
+      "level": "active",
+      "sound": "",
+      "icon": "",
+      "badge": 0,
+      "url": "",
+      "copy": "",
+      "autoCopy": false,
+      "call": false,
+      "isArchive": true
     }
   }
 }

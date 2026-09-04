@@ -26,6 +26,23 @@ export function mount(container) {
   const notifyModeSel = el('select', { class: 'select' }, ...NOTIFY_MODES.map(([v, l]) => el('option', { value: v, text: l })));
   const barkServerInput = el('input', { class: 'input', placeholder: 'https://api.day.app' });
   const barkKeyInput = el('input', { class: 'input', type: 'password', autocomplete: 'off', placeholder: 'Bark Key' });
+  const barkGroupInput = el('input', { class: 'input', placeholder: '小鹈鹕' });
+  const barkSubtitleInput = el('input', { class: 'input', placeholder: '通知副标题（可选）' });
+  const BARK_LEVELS = [
+    ['active', 'active · 普通'],
+    ['timeSensitive', 'timeSensitive · 时效性'],
+    ['passive', 'passive · 静默'],
+    ['critical', 'critical · 强提醒（慎用）']
+  ];
+  const barkLevelSel = el('select', { class: 'select' }, ...BARK_LEVELS.map(([v, l]) => el('option', { value: v, text: l })));
+  const barkSoundInput = el('input', { class: 'input', placeholder: '默认 / minuet / alarm 等' });
+  const barkIconInput = el('input', { class: 'input', placeholder: 'https://.../icon.png（可选）' });
+  const barkBadgeInput = el('input', { class: 'input', type: 'number', min: '0', placeholder: '0' });
+  const barkUrlInput = el('input', { class: 'input', placeholder: '点击通知跳转 URL（可选）' });
+  const barkCopyInput = el('input', { class: 'input', placeholder: '长按复制的文本（可选）' });
+  const barkAutoCopyChk = el('input', { type: 'checkbox' });
+  const barkCallChk = el('input', { type: 'checkbox' });
+  const barkArchiveChk = el('input', { type: 'checkbox' });
   const notifyMsg = el('span', { class: 'muted' });
   const notifySaveBtn = el('button', { class: 'btn btn-primary', text: '保存通知设置' });
   const notifyTestBtn = el('button', { class: 'btn btn-edit', text: '发送测试通知' });
@@ -81,6 +98,17 @@ export function mount(container) {
         field('主动通知模式', notifyModeSel),
         field('Bark Server', barkServerInput),
         field('Bark Key', barkKeyInput, '只保存在本地 config.json，不回显完整密钥。'),
+        field('分组（group）', barkGroupInput, '通知在手机上的分组名。'),
+        field('副标题（subtitle）', barkSubtitleInput),
+        field('提醒级别（level）', barkLevelSel, 'critical 会强制响铃，请谨慎使用。'),
+        field('铃声（sound）', barkSoundInput, '留空为系统默认；可选 minuet、alarm、anticipate 等。'),
+        field('图标 URL（icon）', barkIconInput, '仅 iOS 15+ 支持。'),
+        field('角标数（badge）', barkBadgeInput),
+        field('点击跳转 URL', barkUrlInput),
+        field('长按复制内容（copy）', barkCopyInput),
+        switchField('自动复制（autoCopy）', barkAutoCopyChk, '收到通知后自动把 copy 内容写入剪贴板。'),
+        switchField('持续响铃 30 秒（call）', barkCallChk),
+        switchField('保存到通知历史（isArchive）', barkArchiveChk, '默认开启，可在 Bark App 里回看。'),
         el('div', { class: 'field' }, notifyTestBtn, ' ', notifySaveBtn, ' ', notifyMsg)
       ),
       el('div', { class: 'card' },
@@ -141,6 +169,17 @@ export function mount(container) {
       const bark = nt.bark || {};
       barkServerInput.value = bark.server || 'https://api.day.app';
       barkKeyInput.value = bark.key || '';
+      barkGroupInput.value = bark.group || '小鹈鹕';
+      barkSubtitleInput.value = bark.subtitle || '';
+      barkLevelSel.value = bark.level || 'active';
+      barkSoundInput.value = bark.sound || '';
+      barkIconInput.value = bark.icon || '';
+      barkBadgeInput.value = bark.badge || '';
+      barkUrlInput.value = bark.url || '';
+      barkCopyInput.value = bark.copy || '';
+      barkAutoCopyChk.checked = !!bark.autoCopy;
+      barkCallChk.checked = !!bark.call;
+      barkArchiveChk.checked = bark.isArchive !== false;
     } catch {}
     wxLogin.refresh();
   }
@@ -178,7 +217,18 @@ export function mount(container) {
           mode: notifyModeSel.value,
           bark: {
             server: barkServerInput.value.trim() || 'https://api.day.app',
-            key: barkKeyInput.value.trim()
+            key: barkKeyInput.value.trim(),
+            group: barkGroupInput.value.trim(),
+            subtitle: barkSubtitleInput.value.trim(),
+            level: barkLevelSel.value,
+            sound: barkSoundInput.value.trim(),
+            icon: barkIconInput.value.trim(),
+            badge: parseInt(barkBadgeInput.value, 10) || 0,
+            url: barkUrlInput.value.trim(),
+            copy: barkCopyInput.value.trim(),
+            autoCopy: barkAutoCopyChk.checked,
+            call: barkCallChk.checked,
+            isArchive: barkArchiveChk.checked
           }
         }
       });

@@ -86,7 +86,18 @@ const DEFAULTS = {
     mode: 'weixin', // weixin | weixin-then-bark | bark | off
     bark: {
       server: 'https://api.day.app',
-      key: ''
+      key: '',
+      group: '小鹈鹕',
+      subtitle: '',
+      level: 'active', // active | timeSensitive | passive | critical
+      sound: '',
+      icon: '',
+      badge: 0,
+      url: '',
+      copy: '',
+      autoCopy: false,
+      call: false,
+      isArchive: true
     }
   }
 };
