@@ -7,7 +7,7 @@ const fs = require('fs');
 const { log } = require('../lib/log');
 const { getPaths } = require('../lib/paths');
 const { readJson, writeJson } = require('../lib/store');
-const { pushToUser } = require('../channels/weixin/push');
+const { notifyUser } = require('../notify');
 const { runTaskAndWait } = require('./tasks');
 const queue = require('./queue');
 
@@ -34,7 +34,8 @@ async function pushRelationResult(item, output, config) {
   const label = (item.payload && (item.payload.remark || item.payload.contact)) || item.source.contact || '联系人';
   const days = (item.payload && item.payload.days) || '';
   const msg = '🦩 关系维护提醒\n你和「' + label + '」已经 ' + days + ' 天没联系了。\n\n💬 DSH 建议：' + String(output || '').trim();
-  const ok = await pushToUser(msg, { config });
+  const notifyResult = await notifyUser({ title: '🦩 关系维护提醒', message: msg, config });
+  const ok = !!(notifyResult && notifyResult.ok);
   if (ok && item.payload && item.payload.contact) {
     let pushed = {};
     if (fs.existsSync(P.relationPushed)) pushed = readJson(P.relationPushed, {}) || {};

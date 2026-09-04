@@ -16,6 +16,20 @@ export function mount(container) {
   let lastProviders = {};
   const wxLogin = createWechatLogin();
 
+  // 通知渠道
+  const NOTIFY_MODES = [
+    ['weixin', '微信推送（默认）'],
+    ['weixin-then-bark', '微信优先，不可用时 Bark 备用'],
+    ['bark', '仅 Bark'],
+    ['off', '关闭主动通知']
+  ];
+  const notifyModeSel = el('select', { class: 'select' }, ...NOTIFY_MODES.map(([v, l]) => el('option', { value: v, text: l })));
+  const barkServerInput = el('input', { class: 'input', placeholder: 'https://api.day.app' });
+  const barkKeyInput = el('input', { class: 'input', type: 'password', autocomplete: 'off', placeholder: 'Bark Key' });
+  const notifyMsg = el('span', { class: 'muted' });
+  const notifySaveBtn = el('button', { class: 'btn btn-primary', text: '保存通知设置' });
+  const notifyTestBtn = el('button', { class: 'btn btn-edit', text: '发送测试通知' });
+
   // 模型服务
   const providerSel = el('select', { class: 'select' }, ...PROVIDERS.map(([v, l]) => el('option', { value: v, text: l })));
   const baseUrlInput = el('input', { class: 'input', placeholder: 'https://api.siliconflow.cn/v1' });
@@ -60,6 +74,14 @@ export function mount(container) {
         el('h2', { text: '微信通道（iLink 扫码登录）' }),
         el('div', { class: 'desc', text: '提醒与消息收发走微信官方 iLink 协议。扫码后凭据写入本地 config.toml，核心会自动重启。' }),
         wxLogin.el
+      ),
+      el('div', { class: 'card' },
+        el('h2', { text: '通知渠道（主动提醒 / 备用推送）' }),
+        el('div', { class: 'desc', text: '微信 iLink 的 context_token 需要用户入站消息刷新。选择“微信优先 + Bark 备用”后，微信不可用时重要提醒会转投 Bark。' }),
+        field('主动通知模式', notifyModeSel),
+        field('Bark Server', barkServerInput),
+        field('Bark Key', barkKeyInput, '只保存在本地 config.json，不回显完整密钥。'),
+        el('div', { class: 'field' }, notifyTestBtn, ' ', notifySaveBtn, ' ', notifyMsg)
       ),
       el('div', { class: 'card' },
         el('h2', { text: '旧版微信推送（已弃用）' }),
@@ -114,6 +136,11 @@ export function mount(container) {
       lastProviders = (s.engine && s.engine.providers) || {};
       providerSel.value = (s.engine && s.engine.provider) || 'siliconflow';
       fillProvider(lastProviders[providerSel.value] || {});
+      const nt = s.notify || {};
+      notifyModeSel.value = nt.mode || 'weixin';
+      const bark = nt.bark || {};
+      barkServerInput.value = bark.server || 'https://api.day.app';
+      barkKeyInput.value = bark.key || '';
     } catch {}
     wxLogin.refresh();
   }
@@ -142,6 +169,47 @@ export function mount(container) {
       saveMsg.textContent = '保存失败：' + e.message;
     }
   }
+
+  async function saveNotify(showMsg = true) {
+    try {
+      const cur = await api.settings.get();
+      const r = await api.settings.save({
+        notify: {
+          mode: notifyModeSel.value,
+          bark: {
+            server: barkServerInput.value.trim() || 'https://api.day.app',
+            key: barkKeyInput.value.trim()
+          }
+        }
+      });
+      if (showMsg) {
+        notifyMsg.textContent = r && r.restarting ? '已保存 ✓，服务即将自动重启' : '已保存 ✓';
+        setTimeout(() => { notifyMsg.textContent = ''; }, 2500);
+      }
+      return r;
+    } catch (e) {
+      notifyMsg.textContent = '保存失败：' + e.message;
+      return null;
+    }
+  }
+
+  async function testNotify() {
+    notifyMsg.textContent = '保存并发送测试…';
+    const r = await saveNotify(false);
+    if (!r) return;
+    try {
+      const d = await api.notify.test();
+      notifyMsg.textContent = d.ok
+        ? '测试通知已发送（' + d.channel + '）✓'
+        : '测试失败：' + (d.error || '未知');
+      setTimeout(() => { notifyMsg.textContent = ''; }, 5000);
+    } catch (e) {
+      notifyMsg.textContent = '测试失败：' + e.message;
+    }
+  }
+
+  notifySaveBtn.onclick = () => saveNotify(true);
+  notifyTestBtn.onclick = testNotify;
 
   engineSaveBtn.onclick = saveEngine;
   testBtn.onclick = async () => {

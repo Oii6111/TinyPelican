@@ -64,6 +64,10 @@ export const api = {
     test: (engine) => post('/api/engine/test', { engine })
   },
 
+  notify: {
+    test: () => post('/api/notify/test')
+  },
+
   chat: {
     conversations: () => get('/api/conversations'),
     create: () => post('/api/conversations'),

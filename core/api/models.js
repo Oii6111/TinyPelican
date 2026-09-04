@@ -16,20 +16,29 @@ function maskConfig(cur) {
       if (provs[k] && provs[k].apiKey) provs[k].apiKey = maskKey(provs[k].apiKey);
     }
   }
+  const bark = out.notify && out.notify.bark;
+  if (bark && bark.key) bark.key = maskKey(bark.key);
   return out;
 }
 
 // POST 设置时，打码后的 Key 不回写（保留原值）
 function restoreMaskedKeys(cur, patch) {
   const provs = patch.engine && patch.engine.providers;
-  if (!provs || typeof provs !== 'object') return;
-  const curProvs = cur.engine && cur.engine.providers;
-  for (const k of Object.keys(provs)) {
-    const pv = provs[k];
-    if (pv && typeof pv === 'object' && typeof pv.apiKey === 'string' && pv.apiKey.includes('****')) {
-      if (curProvs && curProvs[k]) pv.apiKey = curProvs[k].apiKey;
-      else delete pv.apiKey;
+  if (provs && typeof provs === 'object') {
+    const curProvs = cur.engine && cur.engine.providers;
+    for (const k of Object.keys(provs)) {
+      const pv = provs[k];
+      if (pv && typeof pv === 'object' && typeof pv.apiKey === 'string' && pv.apiKey.includes('****')) {
+        if (curProvs && curProvs[k]) pv.apiKey = curProvs[k].apiKey;
+        else delete pv.apiKey;
+      }
     }
+  }
+  const bark = patch.notify && patch.notify.bark;
+  if (bark && typeof bark.key === 'string' && bark.key.includes('****')) {
+    const curBark = cur.notify && cur.notify.bark;
+    if (curBark && curBark.key) bark.key = curBark.key;
+    else delete bark.key;
   }
 }
 

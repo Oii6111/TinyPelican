@@ -11,7 +11,7 @@ const { readIntents, saveIntents, loadState, saveState } = require('../memory/st
 const { runTask } = require('./client');
 const { parseDeadline } = require('../lib/deadline');
 const { typeLabel } = require('../lib/reminder-rules');
-const { pushToUser } = require('../channels/weixin/push');
+const { notifyUser } = require('../notify');
 const agentQueue = require('../agent/queue');
 
 const P = getPaths();
@@ -68,7 +68,8 @@ async function notifyNewIntents(intents, cfg) {
     if (intent.notified) continue;
     if (intent.status === 'auto_added') {
       const msg = `✅ 已添加${typeLabel(intent.type)}：${intent.summary}（来自 ${intent.source.contact || '未知'}${intent.dueText ? '，' + intent.dueText : ''}）`;
-      const ok = await pushToUser(msg, { config: cfg });
+      const notifyResult = await notifyUser({ title: '✅ 小鹈鹕已添加待办', message: msg, config: cfg });
+      const ok = !!(notifyResult && notifyResult.ok);
       if (ok) {
         intent.notified = true;
         intent.updatedAt = new Date().toISOString();
@@ -79,7 +80,8 @@ async function notifyNewIntents(intents, cfg) {
       }
     } else if (intent.status === 'pending_confirm' && intent.confidence >= MEDIUM_CONF) {
       const msg = `🔍 发现疑似${typeLabel(intent.type)}：${intent.summary}（来自 ${intent.source.contact || '未知'}）。请在 Dashboard「意图」页确认或忽略。`;
-      const ok = await pushToUser(msg, { config: cfg });
+      const notifyResult = await notifyUser({ title: '🔍 小鹈鹕发现待确认事项', message: msg, config: cfg });
+      const ok = !!(notifyResult && notifyResult.ok);
       if (ok) {
         intent.notified = true;
         intent.updatedAt = new Date().toISOString();

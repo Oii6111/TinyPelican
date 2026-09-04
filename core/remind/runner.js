@@ -8,7 +8,7 @@ const { log } = require('../lib/log');
 const { readIntents, saveIntents } = require('../memory/stores/intents');
 const { runTask } = require('../engine/client');
 const { isInDoNotDisturb, typeLabel, getReminderPoints } = require('../lib/reminder-rules');
-const { pushToUser } = require('../channels/weixin/push');
+const { notifyUser } = require('../notify');
 
 const P = getPaths();
 
@@ -56,9 +56,10 @@ async function runReminders(opts = {}) {
     }
 
     const msg = await generateReminderMessage(intent, cfg);
-    const ok = opts.dryRun
-      ? (console.log('[remind][dry-run]', msg), true)
-      : await pushToUser(msg, { config: cfg });
+    const notifyResult = opts.dryRun
+      ? (console.log('[remind][dry-run]', msg), { ok: true })
+      : await notifyUser({ title: '⏰ 小鹈鹕提醒', message: msg, config: cfg });
+    const ok = !!(notifyResult && notifyResult.ok);
     if (ok) {
       intent.reminders.push(String(point.minutes));
       intent.updatedAt = new Date().toISOString();

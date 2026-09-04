@@ -67,6 +67,7 @@ function createRestServer({ config = null, onRestart = null } = {}) {
   require('./routes/voice')(router, ctx);
   require('./routes/logs')(router, ctx);
   require('./routes/settings')(router, ctx);
+  require('./routes/notify')(router, ctx);
   require('./routes/engine')(router, ctx);
   require('./routes/wechat')(router, ctx);
   require('./routes/chat')(router, ctx);

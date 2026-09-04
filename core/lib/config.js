@@ -81,6 +81,13 @@ const DEFAULTS = {
   },
   heartbeat: {
     intervalSec: 30
+  },
+  notify: {
+    mode: 'weixin', // weixin | weixin-then-bark | bark | off
+    bark: {
+      server: 'https://api.day.app',
+      key: ''
+    }
   }
 };
 

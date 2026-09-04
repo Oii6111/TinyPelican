@@ -82,5 +82,12 @@
   },
   "heartbeat": {
     "intervalSec": 30
+  },
+  "notify": {
+    "mode": "weixin",
+    "bark": {
+      "server": "https://api.day.app",
+      "key": ""
+    }
   }
 }
