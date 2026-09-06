@@ -34,6 +34,7 @@ function getPaths() {
     intentState: path.join(b, 'intent-state.json'),
     intents: path.join(b, 'intents.json'),
     tasks: path.join(b, 'tasks.json'),
+    schedules: path.join(b, 'schedules.json'),
     relationPushed: path.join(b, 'relation-pushed.json'),
     conversations: path.join(b, 'conversations.json'),
     agentQueue: path.join(b, 'agent-tasks.jsonl'),

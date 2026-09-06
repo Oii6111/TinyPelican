@@ -10,7 +10,7 @@ const fs = require('fs');
 const STREAM_MARKER = '@@DSH_EVENT@@';
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_DSH_HOME = path.join(PROJECT_ROOT, 'agent', 'dsh-home');
-const DEFAULT_PROFILE = 'xiaotihu';
+const DEFAULT_PROFILE = 'tinypelican';
 // Agent 默认工作区 = 项目根目录（后续记忆/文件全部落在这个文件夹里）
 const DEFAULT_WORKSPACE = PROJECT_ROOT;
 
@@ -76,6 +76,56 @@ function writeGeneratedDshSettings(dshHome, config) {
     fs.mkdirSync(dshHome, { recursive: true });
     fs.writeFileSync(path.join(dshHome, 'settings.yaml'), lines.join('\n') + '\n', 'utf8');
   } catch {}
+}
+
+function ensureLocalProfileDependencies({ dshHome = DEFAULT_DSH_HOME, profile = DEFAULT_PROFILE } = {}) {
+  const profileDir = path.join(dshHome, 'profiles', profile);
+  const manifestPath = path.join(profileDir, 'package.json');
+  if (!fs.existsSync(manifestPath)) return { ok: false, repaired: [] };
+
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return { ok: false, repaired: [] };
+  }
+
+  const dependencies = {
+    ...(manifest.dependencies || {}),
+    ...(manifest.optionalDependencies || {})
+  };
+  const repaired = [];
+
+  for (const [packageName, spec] of Object.entries(dependencies)) {
+    if (typeof spec !== 'string') continue;
+    const prefix = spec.startsWith('link:') ? 'link:' : (spec.startsWith('file:') ? 'file:' : null);
+    if (!prefix) continue;
+
+    const target = path.resolve(profileDir, spec.slice(prefix.length));
+    if (!fs.existsSync(target)) continue;
+
+    const packagePath = path.join(profileDir, 'node_modules', packageName);
+    let existing = null;
+    try { existing = fs.lstatSync(packagePath); } catch {}
+
+    if (existing) {
+      if (!existing.isSymbolicLink()) continue;
+      let resolved = null;
+      try { resolved = fs.realpathSync(packagePath); } catch {}
+      const sameTarget = resolved && path.normalize(resolved).toLowerCase() === path.normalize(target).toLowerCase();
+      if (sameTarget) continue;
+      try { fs.unlinkSync(packagePath); } catch { continue; }
+    }
+
+    try {
+      fs.mkdirSync(path.dirname(packagePath), { recursive: true });
+      const linkTarget = path.relative(path.dirname(packagePath), target) || '.';
+      fs.symlinkSync(linkTarget, packagePath, process.platform === 'win32' ? 'junction' : 'dir');
+      repaired.push(packageName);
+    } catch {}
+  }
+
+  return { ok: true, repaired };
 }
 
 // 构造 DSH 子进程环境变量；同时把本机 DSH 配置同步到项目 DSH_HOME。
@@ -174,6 +224,7 @@ function runDshTaskWithPipes({
   return new Promise((resolve, reject) => {
     const bin = findDshBin();
     const workdir = ensureWorkspace(cwd);
+    ensureLocalProfileDependencies({ dshHome, profile });
 
     if (!task || !String(task).trim()) {
       return reject(new Error('任务文本不能为空'));
@@ -263,6 +314,7 @@ function runDshTaskWithFiles({
   return new Promise((resolve, reject) => {
     const bin = findDshBin();
     const workdir = ensureWorkspace(cwd);
+    ensureLocalProfileDependencies({ dshHome, profile });
 
     if (!task || !String(task).trim()) {
       return reject(new Error('任务文本不能为空'));
@@ -370,4 +422,12 @@ async function runDshTask(opts) {
   }
 }
 
-module.exports = { runDshTask, findDshBin, parseEventLine, DEFAULT_DSH_HOME, DEFAULT_PROFILE, DEFAULT_WORKSPACE };
+module.exports = {
+  runDshTask,
+  findDshBin,
+  parseEventLine,
+  ensureLocalProfileDependencies,
+  DEFAULT_DSH_HOME,
+  DEFAULT_PROFILE,
+  DEFAULT_WORKSPACE
+};

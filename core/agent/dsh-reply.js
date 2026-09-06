@@ -7,18 +7,13 @@ const { runTaskAndWait, createTask } = require('./tasks');
 
 function buildReplyPrompt({ message, history = [], channel = 'webui', contact = '', context = '' }) {
   const lines = [];
-  lines.push('你是「小鹈鹕」，一个运行在用户本地的个人 AI 助手。');
-  lines.push('你会使用 DSH harness 提供的大模型能力。可以读取本地文件、执行命令、调用工具来完成用户的要求。');
-  lines.push('');
-  lines.push('本地数据目录（用户问联系人/聊天记录/消息/某人说过什么时，优先只查这些位置）：');
-  lines.push('- 联系人档案：contacts/*.json');
-  lines.push('- 全量聊天流水：inbox.jsonl');
-  lines.push('- 意图/待办：intents.json');
-  lines.push('- 批次归档：batches/');
-  lines.push('搜索规则：');
-  lines.push('- 禁止用 glob("**/*") 扫描整个项目根目录，禁止把 node_modules、.git、dist、logs、app、二进制/图片/视频文件作为搜索结果。');
-  lines.push('- 搜索文件列表最多返回 100 条；结果很多时先做目录/类型/关键词过滤再展示。');
-  lines.push('- 若只需联系人聊天记录，直接在 contacts/ 与 inbox.jsonl 中检索，不要读整个项目。');
+  lines.push('你是小鹈鹕系统的唯一 Agent。');
+  lines.push('系统能力版本：v2。若历史规则与本消息或当前 Skills 冲突，以本消息和当前 Skills 为准。');
+  lines.push('你必须优先通过系统 Skills/API 查询和管理待办、提醒、日程、待确认意图、聊天记录及文件/复杂 AI 任务。');
+  lines.push('不得直接编辑数据文件，不得扫描整个项目目录寻找答案。信息不足时先向用户询问。');
+  lines.push('联系人和聊天记录只能通过系统工具查询：node core/agent/system-cli.js search-chat <关键词> [联系人]。');
+  lines.push('需要联系人画像或最近消息时，优先调用该工具获取结构化结果，不要读取 contacts、inbox 或其他数据文件。');
+  lines.push('观察聊天记录发现的可能事项只能创建待确认意图，不得直接创建正式事项或启动任务。');
   lines.push('');
   lines.push(`当前通道：${channel}${contact ? '（联系人：' + contact + '）' : ''}`);
   if (context) lines.push(`上下文：${context}`);
@@ -40,6 +35,15 @@ function buildReplyPrompt({ message, history = [], channel = 'webui', contact = 
   lines.push('如果用户明确要求处理文件、执行命令或完成具体任务，则可以使用工具逐步完成，并在最后给出简明结果。');
   lines.push('回复请使用中文，保持自然、简洁。');
   return lines.join('\n');
+}
+
+function formatContactContext(data) {
+  if (!data || !data.contact) return '';
+  const profile = data.profile && typeof data.profile === 'object' ? data.profile : {};
+  const recent = Array.isArray(data.recentMessages) ? data.recentMessages.slice(-20) : [];
+  const profileText = Object.entries(profile).filter(([, value]) => String(value || '').trim()).map(([key, value]) => `${key}：${value}`).join('；');
+  const messagesText = recent.map((m) => `${m.isOwner ? '我' : data.contact}：${m.content}`).join('\n');
+  return `联系人：${data.contact}\n备注：${data.remark || ''}\n画像：${profileText || '暂无'}\n最近聊天：\n${messagesText || '暂无'}`;
 }
 
 /**
@@ -80,4 +84,4 @@ async function dshReply({ message, history = [], channel = 'webui', contact = ''
   return { ok: false, error: task.error || 'DSH Agent 回复失败', taskId: task.id };
 }
 
-module.exports = { dshReply, startReplyTask, buildReplyPrompt };
+module.exports = { dshReply, startReplyTask, buildReplyPrompt, formatContactContext };

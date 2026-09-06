@@ -29,6 +29,11 @@ module.exports = (router, ctx) => {
     return ctx.json(res, 200, { ok: true, task });
   });
 
+  router.post('/api/tasks/:id/start', (req, res, c, params) => {
+    const result = tasks.startTask(params.id);
+    return ctx.json(res, result.status || 200, result.ok ? result : { ok: false, error: result.error });
+  });
+
   router.delete('/api/tasks/:id', (req, res, c, params) => {
     const ok = tasks.deleteTask(params.id);
     if (!ok) return ctx.json(res, 404, { ok: false, error: '任务不存在' });

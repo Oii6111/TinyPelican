@@ -11,22 +11,29 @@ export function mount(container, ctx = {}) {
   empty(container);
   container.className = 'view padless';
 
-  const convList = el('div', { class: 'conv-list' });
-  const title = el('span', { class: 'muted' });
-  const log = el('div', { class: 'chat-log' });
-  const input = el('input', { class: 'input', placeholder: '和小鹈鹕说点什么…（Enter 发送）' });
-  const sendBtn = el('button', { class: 'btn btn-primary', text: '发送' });
+  const convList = el('div', { class: 'wechat-contact-list' });
+  const convSearch = el('input', { class: 'wechat-search', placeholder: '⌕  搜索会话' });
+  const title = el('strong', { class: 'wechat-chat-title-name', text: '小鹈鹕' });
+  const log = el('div', { class: 'wechat-chat-log agent-chat-log' });
+  const input = el('textarea', { class: 'wechat-compose-input', placeholder: '和小鹈鹕说点什么…（Enter 发送）', rows: 1 });
+  const sendBtn = el('button', { class: 'wechat-send-btn', text: '发送' });
 
   container.append(
-    el('div', { class: 'chat-layout' },
-      el('aside', { class: 'chat-convs' },
-        el('button', { class: 'btn btn-ghost btn-sm btn-block', text: '＋ 新对话', onclick: newConversation }),
+    el('div', { class: 'wechat-contacts-layout agent-chat-layout' },
+      el('aside', { class: 'wechat-sidebar agent-chat-sidebar' },
+        el('div', { class: 'wechat-search-wrap agent-search-wrap' },
+          convSearch,
+          el('button', { class: 'wechat-new-chat-btn', title: '新对话', text: '＋', onclick: newConversation })
+        ),
         convList
       ),
-      el('section', { class: 'chat-main' },
-        el('div', { class: 'chat-head' }, title),
+      el('section', { class: 'wechat-chat-main' },
+        el('header', { class: 'wechat-chat-head' },
+          el('div', { class: 'wechat-chat-title' }, title, el('small', { text: '与小鹈鹕的对话' })),
+          el('div', { class: 'wechat-head-actions' }, el('button', { class: 'wechat-head-icon', text: '⋯', title: '会话选项' }))
+        ),
         log,
-        el('div', { class: 'chat-input' }, input, sendBtn)
+        el('div', { class: 'wechat-composer agent-composer' }, input, sendBtn)
       )
     )
   );
@@ -57,14 +64,18 @@ export function mount(container, ctx = {}) {
     let convs = [];
     try { convs = await api.chat.conversations(); } catch {}
     empty(convList);
-    if (!convs.length) {
+    const query = convSearch.value.trim().toLowerCase();
+    const filteredConvs = query ? convs.filter((c) => String(c.title || '').toLowerCase().includes(query)) : convs;
+    if (!filteredConvs.length) {
       convList.append(el('div', { class: 'empty', text: '暂无会话' }));
     } else {
-      for (const c of convs) {
-        const item = el('div', { class: 'conv-item' + (c.key === session ? ' active' : '') },
-          el('div', { class: 't', text: c.title }),
-          el('div', { class: 's', text: c.count + ' 条' }),
-          el('button', { class: 'del', text: '🗑', onclick: (e) => { e.stopPropagation(); removeConv(c.key); } })
+      for (const c of filteredConvs) {
+        const item = el('div', { class: 'wechat-contact-item' + (c.key === session ? ' active' : ''), role: 'button', tabindex: '0' },
+          el('span', { class: 'wechat-contact-copy' },
+            el('strong', { text: c.title || '新对话' }),
+            el('small', { text: c.count + ' 条消息' })
+          ),
+          el('button', { class: 'agent-conv-delete', title: '删除会话', text: '×', onclick: (e) => { e.stopPropagation(); removeConv(c.key); } })
         );
         item.onclick = () => { stopPoll(); session = c.key; loadConvs(); loadHistory(); };
         convList.append(item);
@@ -77,29 +88,31 @@ export function mount(container, ctx = {}) {
   async function loadHistory() {
     empty(log);
     if (!session) {
-      log.append(el('div', { class: 'bubble bot', text: '新的对话，说点什么吧～' }));
+      log.append(el('div', { class: 'wechat-msg-row incoming' }, el('div', { class: 'wechat-msg-body' }, el('div', { class: 'wechat-bubble' , text: '新的对话，说点什么吧～' }))));
       return;
     }
     let msgs = [];
     try { msgs = await api.chat.history(session); } catch {}
     if (!msgs.length) {
-      log.append(el('div', { class: 'bubble bot', text: '新的对话，说点什么吧～' }));
+      log.append(el('div', { class: 'wechat-msg-row incoming' }, el('div', { class: 'wechat-msg-body' }, el('div', { class: 'wechat-bubble', text: '新的对话，说点什么吧～' }))));
     } else {
       for (const m of msgs) {
         if (m.role === 'user') {
-          log.append(el('div', { class: 'bubble user', text: m.text }));
+          log.append(el('div', { class: 'wechat-msg-row outgoing' }, el('div', { class: 'wechat-msg-body' }, el('div', { class: 'wechat-bubble', text: m.text }))));
         } else if (m.role === 'bot' && Array.isArray(m.agentEvents) && m.agentEvents.length) {
           try {
             log.append(createHistoryAnswerCard({ text: m.text, events: m.agentEvents }));
           } catch {
-            log.append(el('div', { class: 'bubble bot', text: m.text }));
+            log.append(el('div', { class: 'wechat-msg-row incoming' }, el('div', { class: 'wechat-msg-body' }, el('div', { class: 'wechat-bubble', text: m.text }))));
           }
         } else if (m.role === 'bot' && m.executionSummary) {
-          log.append(createSummaryAnswerCard({ text: m.text, summary: m.executionSummary }));
+          const card = createSummaryAnswerCard({ text: m.text, summary: m.executionSummary }); card.classList.add('agent-answer-incoming'); log.append(card);
         } else {
-          const answer = el('div', { class: 'bubble bot' });
-          renderRichText(answer, m.text);
-          log.append(answer);
+          const answer = el('div', { class: 'wechat-msg-row incoming' });
+          const body = el('div', { class: 'wechat-msg-body' });
+          const bubble = el('div', { class: 'wechat-bubble' });
+          renderRichText(bubble, m.text);
+          body.append(bubble); answer.append(body); log.append(answer);
         }
       }
     }
@@ -124,7 +137,7 @@ export function mount(container, ctx = {}) {
       session = null;
       await ensureSession();
       empty(log);
-      log.append(el('div', { class: 'bubble bot', text: '新的对话，说点什么吧～' }));
+      log.append(el('div', { class: 'wechat-msg-row incoming' }, el('div', { class: 'wechat-msg-body' }, el('div', { class: 'wechat-bubble', text: '新的对话，说点什么吧～' }))));
     }
     loadConvs();
     loadHistory();
@@ -134,7 +147,7 @@ export function mount(container, ctx = {}) {
     const msg = input.value.trim();
     if (!msg || sending) return;
     input.value = '';
-    log.append(el('div', { class: 'bubble user', text: msg }));
+    log.append(el('div', { class: 'wechat-msg-row outgoing' }, el('div', { class: 'wechat-msg-body' }, el('div', { class: 'wechat-bubble', text: msg }))));
     sending = true;
     sendBtn.disabled = true;
 
@@ -203,6 +216,7 @@ export function mount(container, ctx = {}) {
   }
 
   sendBtn.onclick = send;
+  convSearch.addEventListener('input', () => loadConvs());
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });

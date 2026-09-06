@@ -12,6 +12,11 @@ process.env.XIAOTIHU_DATA_DIR = tmp;
 const queue = require('../core/agent/queue');
 const { buildReplyPrompt } = require('../core/agent/dsh-reply');
 const { buildQueueTaskPrompt } = require('../core/agent/queue-runner');
+const { recurrenceForIntent } = require('../core/engine/intent-actions');
+const { confirmIntent } = require('../core/engine/intent-actions');
+const { isDataQuery, classifyDataQuery } = require('../core/engine/chat-intent');
+const { readIntents, saveIntents } = require('../core/memory/stores/intents');
+const taskStore = require('../core/memory/stores/tasks');
 const { buildRelationDetail } = require('../core/memory/relations');
 
 test('队列：入队/列出/认领/完成', () => {
@@ -88,4 +93,99 @@ test('回复/队列任务提示词包含关键信息', () => {
   assert.ok(detail.includes('8 天'));
   assert.ok(detail.includes('重要客户'));
   assert.ok(detail.includes('下次一起吃饭'));
+});
+
+test('周期提醒：从结构化输入识别工作日 cron', () => {
+  const recurrence = recurrenceForIntent({
+    type: 'reminder',
+    summary: '工作日每天下午4点提醒打卡签退',
+    action: { inputs: { repeat: '工作日', reminder_time: '16:00' } }
+  });
+  assert.deepStrictEqual(recurrence, { cron: '0 16 * * 1-5', label: '工作日' });
+});
+
+test('周期提醒：优先使用模型返回的合法 cron', () => {
+  const recurrence = recurrenceForIntent({
+    type: 'reminder',
+    summary: '工作日提醒',
+    recurrence: { cron: '15 17 * * 1-5', label: '工作日17:15' }
+  });
+  assert.deepStrictEqual(recurrence, { cron: '15 17 * * 1-5', label: '工作日17:15' });
+});
+
+test('确认周期提醒：直接创建 cron，不派发 DSH 队列', () => {
+  const id = 'intent_test_periodic_' + Date.now();
+  const before = readIntents();
+  saveIntents([...before, {
+    id,
+    type: 'reminder',
+    summary: '工作日 16:00 打卡提醒',
+    detail: '提醒我打卡签退',
+    action: { inputs: { repeat: '工作日', reminder_time: '16:00' } },
+    dueAt: null,
+    dueText: '',
+    source: { contact: '测试' },
+    status: 'pending_confirm'
+  }]);
+
+  const result = confirmIntent(id);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.target.kind, 'cron');
+  assert.strictEqual(result.target.cron, '0 16 * * 1-5');
+  assert.strictEqual(result.target.action, null);
+  assert.strictEqual(result.queued, null);
+  assert.strictEqual(taskStore.getTask(result.target.id).status, 'open');
+});
+
+test('确认 AI 待办只入正式列表，手动开始后才进入 DSH 队列', () => {
+  const id = 'intent_test_ai_todo_' + Date.now();
+  const before = queue.listQueue().length;
+  saveIntents([...readIntents(), {
+    id,
+    type: 'todo',
+    summary: '整理实验数据',
+    detail: '整理本地实验数据并输出汇总',
+    action: { capability: 'data_organize', instruction: '整理实验数据', inputs: {} },
+    execution: { mode: 'dsh', capability: 'data_organize', instruction: '整理实验数据', inputs: {} },
+    status: 'pending_confirm',
+    source: { contact: '测试' }
+  }]);
+
+  const confirmed = confirmIntent(id);
+  assert.strictEqual(confirmed.ok, true);
+  assert.strictEqual(confirmed.queued, null);
+  assert.strictEqual(confirmed.target.type, 'todo');
+  assert.strictEqual(confirmed.target.executionStatus, 'not_started');
+  assert.strictEqual(queue.listQueue().length, before);
+
+  const started = taskStore.startTask(confirmed.target.id);
+  assert.strictEqual(started.ok, true);
+  assert.strictEqual(started.task.executionStatus, 'queued');
+  assert.strictEqual(queue.listQueue().length, before + 1);
+});
+
+test('旧版无动作 cron 条目归一为系统提醒', () => {
+  const reminder = taskStore.normalizeTask({
+    id: 'legacy_cron_reminder',
+    category: 'ai_task',
+    kind: 'cron',
+    cron: '0 16 * * 1-5',
+    action: null
+  });
+  assert.strictEqual(reminder.type, 'reminder');
+  assert.strictEqual(reminder.kind, 'cron');
+  assert.strictEqual(reminder.executionMode, 'system');
+});
+
+test('待办查询走数据查询路由，不识别为创建指令', () => {
+  assert.strictEqual(isDataQuery('现在有啥待办事项'), true);
+  assert.strictEqual(classifyDataQuery('现在有啥待办事项'), 'todo');
+  assert.strictEqual(isDataQuery('我有哪些提醒'), true);
+  assert.strictEqual(classifyDataQuery('我有哪些提醒'), 'reminder');
+  assert.strictEqual(isDataQuery('今天有什么日程'), true);
+  assert.strictEqual(classifyDataQuery('今天有什么日程'), 'schedule');
+  assert.strictEqual(isDataQuery('今天有什么提醒和日程'), true);
+  assert.strictEqual(classifyDataQuery('今天有什么提醒和日程'), 'reminder_schedule');
+  assert.strictEqual(isDataQuery('帮我创建一个待办'), false);
+  assert.strictEqual(isDataQuery('工作日16点提醒我打卡'), false);
 });

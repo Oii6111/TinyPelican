@@ -18,6 +18,9 @@ const { historyEventList } = require('./agent/event-utils');
 const mainSession = require('./agent/main-session');
 const conversations = require('./memory/stores/conversations');
 const { generateReplySuggestions } = require('./reply/suggestions');
+const { notifyUser } = require('./notify');
+const chatDb = require('./memory/chat-db');
+const { handleConversationIntent } = require('./engine/chat-intent');
 const agentQueue = require('./agent/queue');
 const { drainOnce } = require('./agent/queue-runner');
 
@@ -113,8 +116,24 @@ async function main() {
 
     let r = null;
     try {
-      // 优先走 DSH WebUI 常驻会话，微信拥有自己的长期主会话。
-      r = await mainSession.send({ sessionKey: session, message: m.content, history });
+      const operation = await handleConversationIntent({
+        message: m.content,
+        history,
+        session,
+        channel: 'weixin',
+        config: cfg
+      });
+      if (operation.handled) {
+        if (!operation.ok) throw new Error(operation.error || '意图处理失败');
+        r = { ok: true, text: operation.text };
+      } else {
+        // 直接 AI 指令和普通对话都走微信对应的长期 DSH 会话。
+        r = await mainSession.send({
+          sessionKey: session,
+          message: operation.dispatchDsh ? operation.dshPrompt : m.content,
+          history
+        });
+      }
     } catch (e) {
       log('error', 'agent', '微信主会话发送异常：' + String((e && e.message) || e));
     }
@@ -159,8 +178,14 @@ async function main() {
   const watcher = new ClipboardWatcher({
     config: cfg,
     onBatch: ({ msgs, contact, targetWindow }) => {
+      const hadContact = contact ? !!chatDb.getMember(contact) : true;
       const added = ingestMessages(msgs, contact);
-      if (added) triggerIntent();
+      if (added) {
+        triggerIntent();
+        const newContactText = !hadContact && contact ? `\n识别到新联系人「${contact}」，请在联系人页面补充备注和描述。` : '';
+        notifyUser({ config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${contact ? `，联系人：${contact}` : ''}。${newContactText}` })
+          .catch((e) => log('warn', 'capture', '录入完成通知失败：' + String((e && e.message) || e)));
+      }
       // 回复建议：先归档再生成，失败不影响归档
       generateReplySuggestions({ contact, targetWindow, config: cfg })
         .catch((e) => log('warn', 'reply', '回复建议生成失败：' + String((e && e.message) || e)));

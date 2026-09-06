@@ -4,6 +4,7 @@ const conversations = require('../../memory/stores/conversations');
 const mainSession = require('../../agent/main-session');
 const { createTask } = require('../../agent/tasks');
 const { sanitizeEventList, historyEventList } = require('../../agent/event-utils');
+const { handleConversationIntent } = require('../../engine/chat-intent');
 
 module.exports = (router, ctx) => {
   router.get('/api/history', (req, res, c, p, url) => {
@@ -34,14 +35,25 @@ module.exports = (router, ctx) => {
     const body = JSON.parse((await ctx.readBody(req)) || '{}');
     const message = String(body.message || '').trim();
     const session = String(body.session || 'agent:main:webui:' + Date.now()).trim();
+    const contact = String(body.contact || '').trim();
     if (!message) return ctx.json(res, 400, { ok: false, error: 'empty message' });
     conversations.append(session, { role: 'user', text: message });
 
     const full = conversations.get(session);
     const history = full.slice(-20, -1).map((e) => ({
       role: e.role === 'bot' ? 'bot' : 'user',
-      text: e.text
+      text: e.text,
+      ts: e.ts
     }));
+
+    const operation = await handleConversationIntent({
+      message, history, session, channel: 'webui', config: ctx.config
+    });
+    if (operation.handled) {
+      if (!operation.ok) return ctx.json(res, 400, { ok: false, error: operation.error || '处理失败' });
+      conversations.append(session, { role: 'bot', text: operation.text });
+      return ctx.json(res, 200, { ok: true, text: operation.text, session, status: 'completed', profileUpdate: operation.profileUpdate || null });
+    }
 
     // WebUI 与微信统一走 MainAgentSession（DSH WebUI 常驻会话）。
     // 用 createTask 包装成异步任务：DSH Web 事件实时进入 task.events，前端轮询展示。
@@ -51,6 +63,7 @@ module.exports = (router, ctx) => {
         const r = await mainSession.sendStreaming({
           sessionKey: session,
           message,
+          contact,
           history,
           onEvent: (ev) => onEvent({ ...ev })
         });

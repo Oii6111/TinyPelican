@@ -14,6 +14,9 @@ const DEFAULTS = {
   relationCheck: { enabled: true, days: 7 },
   intent: {
     agent: 'intent',
+    provider: 'deepseek',
+    model: '',
+    chatTimeoutMs: 120000,
     highConfidence: 0.85,
     mediumConfidence: 0.5,
     maxMessagesPerBatch: 50,
@@ -53,7 +56,7 @@ const DEFAULTS = {
   agent: {
     reply: {
       enabled: true,
-      profile: 'xiaotihu',
+      profile: 'tinypelican',
       maxHistory: 12,
       timeoutMs: 180000
     },
@@ -61,7 +64,7 @@ const DEFAULTS = {
       enabled: true,
       intervalMs: 10000,
       maxConcurrent: 1,
-      profile: 'xiaotihu',
+      profile: 'tinypelican',
       timeoutMs: 300000
     }
   },
@@ -99,6 +102,11 @@ const DEFAULTS = {
       call: false,
       isArchive: true
     }
+  },
+  auth: {
+    enabled: false,
+    username: 'admin',
+    password: ''
   }
 };
 

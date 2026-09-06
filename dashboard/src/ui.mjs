@@ -16,6 +16,9 @@ export function el(tag, attrs = {}, ...children) {
     else if (k === 'text') node.textContent = v;
     else if (k === 'html') node.innerHTML = v;
     else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+    else if (typeof v === 'boolean') {
+      if (v) node.setAttribute(k, '');
+    }
     else node.setAttribute(k, v);
   }
   for (const c of children.flat()) {

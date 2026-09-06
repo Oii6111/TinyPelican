@@ -5,6 +5,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { createRouter } = require('./router');
+const auth = require('../auth');
+const { loadConfig } = require('../lib/config');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const DASHBOARD = path.join(ROOT, 'dashboard');
@@ -59,12 +61,14 @@ function createRestServer({ config = null, onRestart = null } = {}) {
   const router = createRouter();
   const ctx = { config, onRestart, json, readBody, version: VERSION };
 
+  require('./routes/auth')(router, ctx);
   require('./routes/health')(router, ctx);
   require('./routes/status')(router, ctx);
   require('./routes/contacts')(router, ctx);
   require('./routes/search')(router, ctx);
   require('./routes/intents')(router, ctx);
   require('./routes/tasks')(router, ctx);
+  require('./routes/schedules')(router, ctx);
   require('./routes/voice')(router, ctx);
   require('./routes/logs')(router, ctx);
   require('./routes/settings')(router, ctx);
@@ -79,6 +83,28 @@ function createRestServer({ config = null, onRestart = null } = {}) {
     const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
     try {
       const p = url.pathname;
+      const authOn = auth.isEnabled(ctx.config || loadConfig());
+      const publicPaths = new Set([
+        '/login', '/logo.png',
+        '/api/auth/login', '/api/auth/logout', '/api/auth/status',
+        '/api/reply-suggestions/current', '/api/reply-suggestions/current/refresh-position',
+        '/suggestion-icon.html', '/suggestion-card.html', '/suggestion-icon.css', '/suggestion-card.css'
+      ]);
+
+      // 未登录时：API 返回 401；页面请求统一显示登录页
+      const localSuggestionApi = p.startsWith('/api/reply-suggestions/');
+      if (authOn && !publicPaths.has(p) && !localSuggestionApi && !auth.checkRequest(req)) {
+        if (p.startsWith('/api/')) return json(res, 401, { error: 'unauthorized' });
+        const loginHtml = await fs.promises.readFile(path.join(DASHBOARD, 'login.html'), 'utf8');
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end(loginHtml);
+      }
+
+      if (p === '/login') {
+        const loginHtml = await fs.promises.readFile(path.join(DASHBOARD, 'login.html'), 'utf8');
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end(loginHtml);
+      }
       if (p === '/' || p === '/index.html') {
         const html = await fs.promises.readFile(path.join(DASHBOARD, 'index.html'), 'utf8');
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

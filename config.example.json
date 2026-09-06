@@ -12,6 +12,9 @@
   },
   "intent": {
     "agent": "intent",
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "chatTimeoutMs": 120000,
     "highConfidence": 0.85,
     "mediumConfidence": 0.5,
     "maxMessagesPerBatch": 50,
@@ -100,5 +103,10 @@
       "call": false,
       "isArchive": true
     }
+  },
+  "auth": {
+    "enabled": false,
+    "username": "admin",
+    "password": ""
   }
 }

@@ -34,6 +34,9 @@ export const api = {
   contacts: {
     list: () => get('/api/contacts'),
     get: (name) => get('/api/contacts/' + encodeURIComponent(name)),
+    messages: (name, q = '', limit = 200) => get('/api/contacts/' + encodeURIComponent(name) + '/messages?q=' + encodeURIComponent(q) + '&limit=' + limit),
+    profile: (name) => get('/api/contacts/' + encodeURIComponent(name) + '/profile'),
+    saveProfile: (name, patch) => post('/api/contacts/' + encodeURIComponent(name) + '/profile', patch),
     save: (name, patch) => post('/api/contacts/' + encodeURIComponent(name), patch),
     setImportant: (name, important) => post('/api/contacts/' + encodeURIComponent(name) + '/important', { important }),
     remove: (name) => del('/api/contacts/' + encodeURIComponent(name)),
@@ -43,13 +46,22 @@ export const api = {
 
   intents: {
     list: (status = '') => get('/api/intents' + (status ? '?status=' + encodeURIComponent(status) : '')),
-    update: (id, patch) => post('/api/intents/' + encodeURIComponent(id), patch)
+    update: (id, patch) => post('/api/intents/' + encodeURIComponent(id), patch),
+    confirm: (id) => post('/api/intents/' + encodeURIComponent(id) + '/confirm')
+  },
+
+  schedules: {
+    list: (status = '') => get('/api/schedules' + (status ? '?status=' + encodeURIComponent(status) : '')),
+    create: (schedule) => post('/api/schedules', schedule),
+    update: (id, patch) => post('/api/schedules/' + encodeURIComponent(id), patch),
+    remove: (id) => del('/api/schedules/' + encodeURIComponent(id))
   },
 
   tasks: {
     list: (status = '') => get('/api/tasks' + (status ? '?status=' + encodeURIComponent(status) : '')),
     create: (task) => post('/api/tasks', task),
     update: (id, patch) => post('/api/tasks/' + encodeURIComponent(id), patch),
+    start: (id) => post('/api/tasks/' + encodeURIComponent(id) + '/start'),
     complete: (id) => post('/api/tasks/' + encodeURIComponent(id) + '/complete'),
     remove: (id) => del('/api/tasks/' + encodeURIComponent(id))
   },
@@ -81,7 +93,7 @@ export const api = {
     create: () => post('/api/conversations'),
     remove: (key) => del('/api/conversations?session=' + encodeURIComponent(key)),
     history: (session) => get('/api/history?session=' + encodeURIComponent(session)),
-    send: (message, session) => post('/api/chat', { message, session })
+    send: (message, session, contact = '') => post('/api/chat', { message, session, ...(contact ? { contact } : {}) })
   },
 
   wechat: {

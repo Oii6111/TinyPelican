@@ -75,13 +75,13 @@ export function mount(container) {
       }
       return;
     }
-    let c = null;
-    try { c = await api.contacts.get(name); } catch {}
-    if (!c) {
+    let result = null;
+    try { result = await api.contacts.messages(name, kw, 300); } catch {}
+    if (!result) {
       list.append(el('div', { class: 'empty', text: '加载失败' }));
       return;
     }
-    const msgs = (c.messages || []).filter((m) => !kw || String(m.content || '').includes(kw)).slice().reverse();
+    const msgs = (result.messages || []).slice().reverse();
     if (!msgs.length) {
       list.append(el('div', { class: 'empty', text: '没有匹配的消息' }));
       return;

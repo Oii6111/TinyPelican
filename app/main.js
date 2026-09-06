@@ -1,7 +1,7 @@
 // 小鹈鹕 TinyPelican — Electron 壳
 // 启动时后台拉起核心服务（core/index.js）；核心以退出码 42 退出时自动重启（微信登录/登出热重启）。
 // 同时创建两个无边框浮窗：右下角建议小图标 + 点击后弹出的建议卡片。
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
@@ -38,8 +38,62 @@ let cardWin = null;
 let suggestionPollTimer = null;
 let currentAnchor = null;
 let lastSuggestionId = null;
+let authCookie = '';
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+function readConfig() {
+  try {
+    const dataDir = process.env.XIAOTIHU_DATA_DIR;
+    const configPath = isPackaged && dataDir
+      ? path.join(dataDir, 'config.json')
+      : path.join(PROJECT_ROOT, 'config.json');
+    return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+async function establishDesktopSession() {
+  const cfg = readConfig();
+  const auth = cfg && cfg.auth;
+  if (!auth || !auth.enabled || !auth.username || !auth.password) return;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${PORT}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: auth.username, password: auth.password })
+      });
+      if (!res.ok) {
+        await sleep(500 * (attempt + 1));
+        continue;
+      }
+      const setCookie = typeof res.headers.getSetCookie === 'function'
+        ? res.headers.getSetCookie()[0]
+        : res.headers.get('set-cookie');
+      const match = String(setCookie || '').match(/xtp_session=([^;]+)/);
+      if (!match) return;
+      authCookie = `xtp_session=${match[1]}`;
+      await session.defaultSession.cookies.set({
+        url: `http://127.0.0.1:${PORT}`,
+        name: 'xtp_session',
+        value: match[1],
+        path: '/',
+        httpOnly: true
+      });
+      return;
+    } catch {
+      await sleep(500 * (attempt + 1));
+    }
+  }
+}
+
+function desktopFetch(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (authCookie) headers.Cookie = authCookie;
+  return fetch(url, { ...options, headers });
+}
 
 function findNode() {
   const cands = [];
@@ -120,7 +174,7 @@ function positionFloatingWindows(anchor = currentAnchor) {
 
 async function refreshCurrentAnchor() {
   try {
-    const res = await fetch(`http://127.0.0.1:${PORT}/api/reply-suggestions/current/refresh-position`, { method: 'POST' });
+    const res = await desktopFetch(`http://127.0.0.1:${PORT}/api/reply-suggestions/current/refresh-position`, { method: 'POST' });
     if (!res.ok) return 'error';
     const data = await res.json();
     const s = data && data.suggestion;
@@ -209,7 +263,11 @@ function createFloatingWindows() {
 
 async function pollSuggestions() {
   try {
-    const res = await fetch(`http://127.0.0.1:${PORT}/api/reply-suggestions/current`);
+    const res = await desktopFetch(`http://127.0.0.1:${PORT}/api/reply-suggestions/current`);
+    if (res.status === 401) {
+      await establishDesktopSession();
+      return;
+    }
     if (!res.ok) return;
     const data = await res.json();
     const s = data && data.suggestion;
@@ -222,8 +280,16 @@ async function pollSuggestions() {
         lastSuggestionId = s.id;
         currentAnchor = anchor;
         positionFloatingWindows(currentAnchor);
+        if (cardWin && !cardWin.isDestroyed()) {
+          cardWin.showInactive();
+          if (!cardWin.isVisible()) cardWin.show();
+          cardWin.webContents.send('suggestion:card-opened');
+        }
       }
-      if (!iconWin.isVisible()) iconWin.showInactive();
+      if (!iconWin.isVisible()) {
+        iconWin.showInactive();
+        if (!iconWin.isVisible()) iconWin.show();
+      }
     } else {
       lastSuggestionId = null;
       currentAnchor = null;
@@ -238,6 +304,7 @@ app.whenReady().then(async () => {
     startCore(node);
     await sleep(3000);
   }
+  await establishDesktopSession();
 
   win = new BrowserWindow({
     width: 1280,

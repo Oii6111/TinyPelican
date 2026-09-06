@@ -31,7 +31,18 @@ function defaultDoc(contact) {
 }
 
 function readContact(contact) {
-  const doc = readJson(contactFile(contact), null) || defaultDoc(contact);
+  let doc = readJson(contactFile(contact), null);
+  if (!doc) {
+    try {
+      const chatDb = require('../chat-db');
+      const member = chatDb.getMember(contact);
+      if (member) {
+        const result = chatDb.messages(member.name, '', 500);
+        doc = { name: member.name, remark: member.remark || '', important: !!member.important, updatedAt: member.updatedAt || '', messages: result ? result.messages.map((m) => ({ name: m.sender, ts: m.ts, type: m.type, content: m.content })) : [], profile: member.profile || {} };
+      }
+    } catch {}
+  }
+  if (!doc) doc = defaultDoc(contact);
   if (!Array.isArray(doc.messages)) doc.messages = [];
   if (!doc.profile || typeof doc.profile !== 'object') doc.profile = Object.assign({}, EMPTY_PROFILE);
   if (doc.remark === undefined || doc.remark === null) doc.remark = '';
@@ -81,7 +92,7 @@ function listContactsMeta() {
       updatedAt: c.updatedAt || '',
       important: !!c.important
     };
-  });
+  }).sort((a, b) => (a.important !== b.important ? (a.important ? -1 : 1) : String(b.updatedAt).localeCompare(String(a.updatedAt))));
 }
 
 // 从全量流水 inbox.jsonl 中移除某联系人的所有记录（含删除联系人时使用）

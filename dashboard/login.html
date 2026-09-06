@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>小鹈鹕 · 登录</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(135deg, #fef3c7 0%, #ffffff 50%, #e0f2fe 100%);
+      color: #1c1e21;
+    }
+    .login-box {
+      width: min(380px, calc(100vw - 32px));
+      background: rgba(255,255,255,.9);
+      border: 1px solid #e4e6eb;
+      border-radius: 18px;
+      padding: 32px 28px;
+      box-shadow: 0 16px 40px rgba(15,23,42,.10);
+      backdrop-filter: blur(8px);
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .logo img {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 0 0 4px;
+    }
+    .desc {
+      color: #5c6270;
+      font-size: 13px;
+      margin-bottom: 22px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      margin: 14px 0 6px;
+    }
+    input {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid #d0d3d9;
+      border-radius: 10px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input:focus { border-color: #f59e0b; }
+    button {
+      width: 100%;
+      margin-top: 22px;
+      padding: 11px;
+      border: none;
+      border-radius: 10px;
+      background: #d97706;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:hover { background: #b45309; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .error {
+      color: #b91c1c;
+      font-size: 13px;
+      min-height: 18px;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <div class="logo">
+      <img src="/logo.png" alt="小鹈鹕" />
+      <div>
+        <h1>小鹈鹕</h1>
+        <div class="desc">TinyPelican WebUI</div>
+      </div>
+    </div>
+    <form id="login-form">
+      <label for="username">用户名</label>
+      <input id="username" name="username" autocomplete="username" required />
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+      <button id="submit" type="submit">登 录</button>
+      <div class="error" id="error"></div>
+    </form>
+  </div>
+  <script>
+    const form = document.getElementById('login-form');
+    const errorEl = document.getElementById('error');
+    const btn = document.getElementById('submit');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.textContent = '';
+      btn.disabled = true;
+      btn.textContent = '登录中…';
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value.trim(),
+            password: document.getElementById('password').value
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          errorEl.textContent = data.error || '登录失败';
+          return;
+        }
+        location.href = '/';
+      } catch (err) {
+        errorEl.textContent = '网络错误，请重试';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '登 录';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,179 +1,136 @@
-# TinyPelican · 小鹈鹕 AI
+# TinyPelican · 小鹈鹕
 
-> **Your second brain for relationships, promises, and personal tasks.**
->
-> TinyPelican quietly turns everyday chat messages into durable memory, active reminders, and a personal Agent that helps you maintain the people and commitments that matter.
+> A local-first personal Agent for contact memory, commitments, reminders, schedules, and context-aware reply suggestions.
 
 🌐 **English** · [中文](README.zh-CN.md)
 
----
+## What it does
 
-## Why TinyPelican?
+TinyPelican runs on Windows and turns copied WeChat conversations into searchable contact memory. It combines a SQLite chat database, a proactive dashboard, task and schedule management, and a DSH Agent that uses system Skills instead of keyword routing.
 
-Most AI assistants are reactive: you have to ask, and they answer. But the real information that matters to you lives in casual conversations — a friend's new job, a client's deadline, a promise to send a document, a relationship you haven't touched in weeks.
+The DSH Agent is the natural-language decision maker. Backend APIs validate fields, enforce permissions, prevent duplicates, and persist changes. The Agent does not scan the project or edit data files directly.
 
-Existing tools fail in the same way:
-
-| Problem | Existing tools | TinyPelican |
-|---|---|---|
-| **Memory is lost** | Generic AI chats disappear when the session ends | Each person gets a living profile built over time |
-| **Promises slip away** | Todo apps need manual entry; calendars don't understand chat | "Send the plan next Monday" becomes a tracked DDL automatically |
-| **Relationships get cold** | Reminders are dumb timers | Important people who haven't been contacted get proactively surfaced |
-| **Replying is stressful** | Input methods only autocomplete words | Reply suggestions are generated from real relationship context |
-| **Setup is heavy** | Agents need prompts, files, and configuration | **Copy a WeChat chat → TinyPelican does the rest** |
-
-**TinyPelican is built on a simple bet:** the next generation of personal AI is not a chatbot you open when you need help — it is a continuously present assistant that remembers, notices, and acts.
-
----
-
-## Vision
-
-> From **"you tell the AI what to do"** to **"the AI tells you what deserves your attention."**
-
-TinyPelican is the personal-scene implementation of a **Relationship OS**:
-- Long-term memory that survives across sessions
-- Proactive timing — it knows when to nudge you
-- Relationship state machines — it understands the people behind the messages
-- Local-first trust — your private data stays on your machine
-
-Today it starts with WeChat chat records on your PC. The architecture is designed to grow toward a general personal AI companion across platforms.
-
----
-
-## How It Works
-
-```
-WeChat / clipboard input
-        │  copy & paste, or incoming message
-        ▼
-Memory Ingestion → contacts, intents, relationships, conversation history
+```text
+WeChat / clipboard
         │
         ▼
-DSH Agent (persistent Web session + headless fallback)
+Parse → deduplicate → resolve contact
         │
         ▼
-Dashboard: streaming thoughts, tool calls, execution, final answer
+SQLite: contacts, profiles, social goals, messages
+        │
+        ├── search / contact context / reply suggestions
+        └── intent review → task, reminder, or schedule
+                                      │
+                                      ▼
+                              DSH Agent + system Skills
 ```
 
-1. **You copy a chat** (or a WeChat message arrives).
-2. TinyPelican recognizes the conversation, deduplicates it, and files it under the right person.
-3. It extracts tasks, deadlines, and relationship context.
-4. Later, it reminds you at the right moment and helps you reply with context-aware suggestions.
-5. When you open the dashboard, the DSH Agent can read local files, run commands, and explain its reasoning step by step.
+## Current capabilities
 
----
+- WeChat-style contact list with remark-first names and direct chat view.
+- SQLite storage for contacts, profiles, social goals, messages, and indexed search.
+- Clipboard chat import with parsing, deduplication, contact discovery, and incremental ingestion.
+- Reply suggestions generated in this order: recent copied context, social goal, profile, then targeted historical search. Suggestions fill the input box and never auto-send.
+- Pending-intent review before creating tasks, reminders, or schedules.
+- Proactive dashboard with calendar, scrollable and paginated todos, schedules, reminders, pending intents, and Agent records.
+- Persistent DSH Web sessions for WebUI and WeChat, with streaming tool events and a task queue.
+- Electron desktop shell with core-process supervision and a floating reply-suggestion card.
+- Optional authentication, WeChat/Bark notifications, relationship reminders, and voice-transcript backfill.
 
-## What Already Works
-
-| Capability | Status | Notes |
-|---|---|---|
-| 💬 **DSH Agent conversations** | ✅ Live | WebUI and WeChat use a persistent DSH Web session with streaming thoughts/tool calls |
-| 🧠 **Per-person long memory** | ✅ Live | One profile per contact: recent updates, preferences, promises, emotional trends |
-| 📋 **Clipboard capture** | ✅ Live | Automatically recognizes, dedupes, and archives copied WeChat chats |
-| 🔔 **Relationship maintenance** | ✅ Live | Starred contacts are surfaced when they have been silent for too long |
-| ⏰ **Task & DDL extraction** | ✅ MVP | Chat deadlines are detected and proactively reminded |
-| 🗂️ **Contact & message management** | ✅ Live | Edit profiles, clear history, delete contacts, full-text search |
-| 💡 **Reply suggestions** | ✅ Live | Copy a private chat → 3 suggestions → one-click fill into WeChat input (never auto-sends) |
-| 📊 **Local dashboard** | ✅ Live | Conversations, contacts, timeline, knowledge, proactive strategy, agent records |
-| 🖥️ **Electron desktop shell** | ✅ Live | Launches core, floating suggestion bubble/card, auto-restart |
-| 🔊 **Voice message backfill** | ✅ Live | Paste voice transcripts and TinyPelican backfills them into the right archive |
-
----
-
-## Quick Start
+## Quick start
 
 ### Requirements
 
 - Windows
 - Node.js 18+
-- `@deepseek-ai/dsh` (installed automatically by `npm install`, or point `DSH_BIN` at your local DSH)
-
-### Run it
+- A DSH WebUI at `http://127.0.0.1:3080` by default
+- At least one configured OpenAI-compatible model provider
 
 ```powershell
-# From the repository root (the folder containing package.json)
+git clone <your-repository-url>
+cd TinyPelican
 npm install
-copy config.example.json config.json
-
-npm run daemon   # full daemon: HTTP + clipboard + WeChat + scheduler
+Copy-Item config.example.json config.json
 ```
 
-Open the dashboard:
+Edit `config.json` before starting. Set `selfNicknames`, configure a model provider, and choose whether clipboard capture is enabled. If the WebUI is exposed through a LAN, reverse proxy, or Cloudflare Tunnel, enable `auth.enabled` and set a strong username/password.
 
-```text
-http://127.0.0.1:18791
-```
-
-Optional Electron desktop shell:
+Start the full local service:
 
 ```powershell
-# From the app/ folder under the repository root
+npm run daemon
+```
+
+Open `http://127.0.0.1:18791`. To run only the WebUI/API, use `npm run server`.
+
+### Electron shell
+
+```powershell
+cd app
 npm install
 npm start
 ```
 
-### Commands
+The desktop shell starts the core service, establishes the local auth cookie when needed, and displays reply suggestions. Packaged builds use `XIAOTIHU_DATA_DIR` for writable data; development runs use the repository directory.
+
+## Commands
 
 ```powershell
-npm run server      # dashboard only
-npm run daemon      # full daemon
-npm test            # tests
-npm run check       # full syntax check
-npm run remind:dry  # dry-run reminder rules
+npm run daemon      # core, clipboard, WeChat, scheduler, and Agent queue
+npm run server      # local WebUI/API only
+npm test            # Node.js tests
+npm run check       # syntax checks
+npm run remind:dry  # preview reminder rules
 ```
 
-### DSH environment variables
+Useful environment variables:
 
 | Variable | Purpose |
 |---|---|
-| `DSH_BIN` | Path to `@deepseek-ai/dsh/lib/bin.js` |
-| `DSH_WEB_URL` | DSH Web URL, default `http://127.0.0.1:3080` |
-| `XIAOTIHU_NODE` | Node executable override used by the Electron shell |
-| `XIAOTIHU_DATA_DIR` | Data directory in packaged mode; dev mode defaults to project root |
+| `DSH_BIN` | Override the local DSH executable |
+| `DSH_WEB_URL` | DSH WebUI URL; defaults to `http://127.0.0.1:3080` |
+| `XIAOTIHU_NODE` | Node executable override for Electron |
+| `XIAOTIHU_DATA_DIR` | Writable data directory for packaged mode |
 
----
+## Repository layout and data
 
-## Tech Highlights
-
-- **Core**: Node.js, no framework lock-in, local JSON/JSONL/TOML storage
-- **Models**: Multi-provider OpenAI-compatible engine — SiliconFlow, OpenAI, DeepSeek, Ollama, custom endpoints
-- **Agent**: DeepSeek Harness (DSH) — persistent Web sessions + headless fallback + custom event-stream plugin
-- **Frontend**: Native ES Module dashboard, no build step
-- **Desktop**: Electron shell for background service management and floating reply UI
-- **Data**: `contacts/*.json`, `inbox.jsonl`, `intents.json`, `conversations.json`, local `config.toml`/`config.json`
-
-### Repository layout
-
-```
-app/          Electron desktop shell
-agent/        DSH profile + event-stream plugin
-core/         engine, agent, channels, memory, ingest, capture, remind, API
-dashboard/    local Web dashboard
-tests/        unit/integration tests
+```text
+app/                 Electron desktop shell
+agent/               Agent.md, Skills, and DSH event-stream plugin
+core/                API, Agent, SQLite, ingestion, reminders, and channels
+dashboard/           Native ES Module WebUI; no build step
+tests/               Unit and integration tests
+tinypelican.sqlite   Local contact/profile/message database; never commit it
+tasks.json           Local tasks and reminders
+schedules.json       Local schedules
+intents.json         Local pending intents
+config.json          Local configuration and secrets
 ```
 
----
+The SQLite database uses WAL mode, so `tinypelican.sqlite-shm` and `tinypelican.sqlite-wal` are also runtime files. Chat content, credentials, logs, Agent sessions, and local configuration are ignored by Git. Legacy contact JSON is only a one-time migration source and is not the runtime chat store.
 
-## Roadmap
+## System Skills
 
-The current MVP proves the core loop on one platform. The bigger product is already in the design:
+The capability index is `agent/Agent.md`; individual Skills live under `agent/skills/`. Contact and chat data must be queried through structured system tools:
 
-- 🌐 **More platforms** — WeChat, QQ, Feishu, email adapters through one channel contract
-- 📱 **Mobile presence** — proactive push summaries and mobile-friendly review
-- ⌨️ **Input-method integration** — context-aware reply suggestions while typing
-- 👥 **Group chat memory** — group profiles and multi-party task ownership
-- 🖼️ **Vision understanding** — image memory when appropriate (local-first)
-- 🧩 **Pluggable memory backends** — from local JSON to SQLite/vector storage for scale
-- 🤖 **Stronger autonomy** — from “suggest and confirm” to user-controlled auto-execution levels
+```powershell
+node core/agent/system-cli.js query contacts
+node core/agent/system-cli.js search-chat "keyword" [contact]
+node core/agent/system-cli.js contact-context "contact-or-remark"
+```
 
----
+This keeps the Agent focused on decisions while the backend owns validation and persistence.
+
+## Security
+
+- Keep authentication enabled whenever the WebUI is reachable beyond the local machine.
+- Never commit `config.json`, API keys, WeChat context, SQLite files, or chat records.
+- Reply suggestions are drafts only; they are not sent automatically.
 
 ## Documentation
 
-- [产品设计 / Product Design](产品设计.md)
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [RULES.md](RULES.md)
 - [agent/README.md](agent/README.md)
-
----
-
+- [产品设计.md](产品设计.md)

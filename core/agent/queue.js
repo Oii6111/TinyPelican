@@ -30,7 +30,7 @@ function saveQueue() {
   fs.writeFileSync(fp, lines.join('\n') + (lines.length ? '\n' : ''), 'utf8');
 }
 
-function enqueueTask({ type = 'task', summary, detail = '', payload = {}, source = {} }) {
+function enqueueTask({ type = 'task', summary, detail = '', payload = {}, source = {}, taskId = '' }) {
   const items = loadQueue();
   const item = {
     id: 'q_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
@@ -39,8 +39,8 @@ function enqueueTask({ type = 'task', summary, detail = '', payload = {}, source
     detail: String(detail || ''),
     payload,
     source,
+    taskId: taskId || (payload && payload.taskId) || '',
     status: 'pending',
-    taskId: '',
     output: '',
     error: '',
     createdAt: new Date().toISOString(),

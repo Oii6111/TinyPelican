@@ -7,7 +7,8 @@
 'use strict';
 
 const dshWeb = require('./dsh-web-client');
-const { buildReplyPrompt } = require('./dsh-reply');
+const { buildReplyPrompt, formatContactContext } = require('./dsh-reply');
+const { getContactContext } = require('./system-tools');
 
 const queues = new Map(); // conversationKey -> tail Promise
 
@@ -17,11 +18,11 @@ function channelFor(sessionKey) {
 
 function sessionIdForConversation(sessionKey, cwd = dshWeb.PROJECT_ROOT) {
   // 与 conversations 的 key 一一对应，例如：
-  //   agent:main:webui:<id>  -> session-xiaotihu-main-<hash(会话+项目目录)>
-  //   agent:main:weixin:<user>  -> session-xiaotihu-main-<hash(会话+项目目录)>
+  //   agent:main:webui:<id>  -> versioned stable session id
+  //   agent:main:weixin:<user> -> versioned stable session id
   // salt = cwd，保证项目迁移后不继续复用旧目录的历史会话，也不会触发
   // “same sessionId + different cwd”的 DSH Web 冲突。
-  return dshWeb.sessionIdForUser(sessionKey, 'xiaotihu-main', cwd);
+  return dshWeb.sessionIdForUser(sessionKey, 'tinypelican-main-v2', cwd);
 }
 
 async function ensureReady() {
@@ -32,22 +33,29 @@ async function send({
   sessionKey,
   message,
   history = [],
+  contact = '',
   cwd = dshWeb.PROJECT_ROOT,
   timeoutMs = 180000
 } = {}) {
   const key = String(sessionKey || 'agent:main:webui:default');
   const sessionId = sessionIdForConversation(key, cwd);
   const msg = String(message || '').trim();
+  let contactContext = '';
+  if (contact) {
+    try { contactContext = formatContactContext(getContactContext(contact)); } catch {}
+  }
   const initialPrompt = buildReplyPrompt({
     message: msg,
     history,
     channel: channelFor(key),
-    contact: key
+    contact: contact || key,
+    context: contactContext ? `当前联系人结构化上下文：\n${contactContext}` : ''
   });
+  const promptMessage = contactContext ? `当前联系人结构化上下文（来自 SQLite）：\n${contactContext}\n\n用户消息：${msg}` : msg;
   const previous = queues.get(key) || Promise.resolve();
   const job = previous.then(() => dshWeb.promptAndWait({
     sessionId,
-    text: msg,
+    text: promptMessage,
     cwd,
     timeoutMs,
     initialPrompt
@@ -62,6 +70,7 @@ async function sendStreaming({
   sessionKey,
   message,
   history = [],
+  contact = '',
   cwd = dshWeb.PROJECT_ROOT,
   timeoutMs = 180000,
   onEvent = () => {}
@@ -69,16 +78,22 @@ async function sendStreaming({
   const key = String(sessionKey || 'agent:main:webui:default');
   const sessionId = sessionIdForConversation(key, cwd);
   const msg = String(message || '').trim();
+  let contactContext = '';
+  if (contact) {
+    try { contactContext = formatContactContext(getContactContext(contact)); } catch {}
+  }
   const initialPrompt = buildReplyPrompt({
     message: msg,
     history,
     channel: channelFor(key),
-    contact: key
+    contact: contact || key,
+    context: contactContext ? `当前联系人结构化上下文：\n${contactContext}` : ''
   });
+  const promptMessage = contactContext ? `当前联系人结构化上下文（来自 SQLite）：\n${contactContext}\n\n用户消息：${msg}` : msg;
   const previous = queues.get(key) || Promise.resolve();
   const job = previous.then(() => dshWeb.promptStreaming({
     sessionId,
-    text: msg,
+    text: promptMessage,
     cwd,
     timeoutMs,
     onEvent,

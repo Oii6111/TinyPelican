@@ -17,7 +17,7 @@ const workspaceCache = new Map();
 let rpcSeq = 0;
 function nextRpcId() {
   rpcSeq += 1;
-  return 'xiaotihu-' + Date.now() + '-' + rpcSeq + '-' + crypto.randomBytes(2).toString('hex');
+  return 'tinypelican-' + Date.now() + '-' + rpcSeq + '-' + crypto.randomBytes(2).toString('hex');
 }
 
 async function rpc(method, payload = {}, base = DEFAULT_BASE) {
@@ -45,7 +45,7 @@ async function rpc(method, payload = {}, base = DEFAULT_BASE) {
     : { ok: false, error: (data.result && data.result.error && (data.result.error.message || JSON.stringify(data.result.error))) || 'DSH Web API 业务失败' };
 }
 
-function sessionIdForUser(userId, prefix = 'xiaotihu-wechat', salt = '') {
+function sessionIdForUser(userId, prefix = 'tinypelican-wechat-v2', salt = '') {
   const material = `${salt || ''}\n${String(userId || 'default')}`;
   const safe = crypto.createHash('sha1').update(material).digest('hex').slice(0, 12);
   return `session-${prefix}-${safe}`;
@@ -233,7 +233,7 @@ async function promptStreaming({
 
 // 微信/任务统一入口：userId 用来派生稳定会话；cwd 默认项目工作区。
 async function ask({ userId, text, cwd = PROJECT_ROOT, timeoutMs = 180000, base = DEFAULT_BASE, initialPrompt = '' } = {}) {
-  const sessionId = sessionIdForUser(userId, 'xiaotihu-wechat', cwd);
+  const sessionId = sessionIdForUser(userId, 'tinypelican-wechat-v2', cwd);
   return promptAndWait({ sessionId, text, cwd, timeoutMs, base, initialPrompt });
 }
 

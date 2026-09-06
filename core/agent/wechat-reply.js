@@ -1,18 +1,16 @@
 // 微信通道消息的轻量回复执行器
-// 目标：
-//  - 普通闲聊直连模型 API（不启动 DSH，最快）
-//  - 疑似需要工具/文件/执行时，优先走 DSH WebUI 常驻进程（3080 /api RPC）
+// 目标：所有消息统一交给 DSH Agent，由 Agent 自主决定是否使用工具。
+//  - 优先走 DSH WebUI 常驻进程（3080 /api RPC）
 //  - 3080 不可用时回退 runDshTask headless
 //  - 不走 agent/tasks 内存任务系统，不建 agentEvents
 'use strict';
 
 const { runDshTask } = require('./dsh-client');
-const { chatCompletion } = require('../engine/client');
 const { buildReplyPrompt } = require('./dsh-reply');
 const dshWeb = require('./dsh-web-client');
+const { readContact } = require('../memory/stores/contacts');
 
-// 简单启发式：命中这些词/场景就认为可能需要 DSH 的工具能力。
-// 命中后会启动 DSH；不命中则走直连模型，速度快。
+// 保留该函数供兼容调用方和旧测试使用；实际入口不再用关键词分流。
 const TOOL_HINTS = [
   '查', '搜', '找', '读', '看', '打开', '创建', '新建', '生成',
   '修改', '编辑', '更新', '删除', '移除', '移动', '复制', '重命名',
@@ -49,12 +47,8 @@ function buildDirectMessages(history = [], message = '') {
 async function answerWechatMessage({ message, history = [], userId = 'default', config = null } = {}) {
   const msg = String(message || '').trim();
   if (!msg) return { ok: false, error: '空消息', mode: 'direct' };
-
-  if (!needsDsh(msg)) {
-    const r = await chatCompletion(buildDirectMessages(history, msg), { config });
-    if (r.ok) return { ok: true, text: r.text, mode: 'direct' };
-    return { ok: false, error: r.error || '直连模型失败', mode: 'direct' };
-  }
+  let socialGoal = '';
+  try { socialGoal = String((readContact(userId).profile || {})['社交目标'] || '').trim(); } catch {}
 
   // 优先走 DSH WebUI 常驻进程：不新拉 headless，速度快。
   const initialPrompt = buildReplyPrompt({
@@ -62,7 +56,7 @@ async function answerWechatMessage({ message, history = [], userId = 'default', 
     history,
     channel: 'weixin',
     contact: '',
-    context: ''
+    context: socialGoal ? `当前联系人的社交目标：${socialGoal}。生成回复时请把握分寸、语气和推进方向。` : ''
   });
   const web = await dshWeb.ask({ userId, text: msg, initialPrompt });
   if (web.ok) return { ok: true, text: web.text, mode: 'dsh-web' };
@@ -74,7 +68,7 @@ async function answerWechatMessage({ message, history = [], userId = 'default', 
       history,
       channel: 'weixin',
       contact: '',
-      context: ''
+      context: socialGoal ? `当前联系人的社交目标：${socialGoal}。生成回复时请把握分寸、语气和推进方向。` : ''
     });
     const r = await runDshTask({ task: prompt, config });
     const text = String((r && r.text) || '').trim();

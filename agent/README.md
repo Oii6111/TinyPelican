@@ -19,7 +19,7 @@
 └───────────────────┘      └──────────────┬───────────────┘
         │                                 ▼
         ▼                       DSH Agent 任务（events 记录）
-  小模型任务（心跳意图/潜意识）              │
+  意图识别模型（DeepSeek 云端）               │
         │                                 ▼
         ▼                    Agent 任务页 / WebUI 逐步展示
   agent-tasks.jsonl 队列
@@ -29,8 +29,8 @@
 ```
 
 - **大模型回复**：任何通道进来的对话都由 DSH harness 配置的 LLM 回复。
-- **小模型任务**：心跳意图识别、潜意识/关系维护等继续走小鹈鹕引擎的小模型（`engine.smallModel`），只负责产出“具体任务”。
-- **DSH 执行**：小模型产出的任务写入 `agent-tasks.jsonl`，DSH Worker 拉取并执行。
+- **意图识别**：聊天入口和心跳扫描默认使用 `intent.provider` 指定的 DeepSeek 云端模型，只负责产出待确认意图。
+- **DSH 执行**：用户确认后的 AI 任务写入 `agent-tasks.jsonl`，DSH Worker 拉取执行；用户日程只进入日历。
 - **关系维护**：发现“特别关心 + 冷落”的联系人后，会入队一条 `relation` 任务；DSH 生成问候语后由队列 Worker 推送给用户确认。
 
 ## 目录
@@ -44,7 +44,7 @@ core/agent/
   dsh-client.js                    定位并 spawn DSH headless，解析事件流
   dsh-reply.js                     通道对话自动回复（DSH LLM）
   tasks.js                         内存 Agent 任务列表/状态/事件记录
-  queue.js                         agent-tasks.jsonl 小模型任务队列
+  queue.js                         agent-tasks.jsonl 已确认任务队列
   queue-runner.js                  队列 Worker：DSH 大模型拉取执行
 core/api/routes/agent.js           /api/agent/tasks + /api/agent/queue
 dashboard/src/views/agent.mjs      Agent 任务页（展示逐步思考/工具调用）
@@ -83,13 +83,17 @@ npm install
     "smallModel": "Qwen/Qwen3.5-9B"
   },
   "intent": {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "chatTimeoutMs": 120000,
     "scanIntervalMs": 60000
   }
 }
 ```
 
 - `agent.reply.enabled = false`：关闭通道自动回复。
-- `engine.smallModel`：心跳意图识别、关系维护等轻量任务使用的小模型；不填则沿用 `engine.provider.model`。
+- `intent.provider` / `intent.model`：对话和心跳意图识别使用的云端模型；默认使用 DeepSeek Provider。
+- `engine.smallModel`：其他仍保留小模型配置的轻量模块使用；意图识别不再读取它。
 - `intent.scanIntervalMs > 0`：开启心跳式周期意图扫描（默认 0，关闭）。
 
 ## 调用方式

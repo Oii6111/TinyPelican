@@ -80,6 +80,16 @@ function parseDeadline(text, msgTs) {
   }
 
   if (!target) return null;
+
+  const clock = t.match(/(上午|中午|下午|晚上)?\s*(\d{1,2})(?::|：|点)(\d{1,2})?/);
+  if (clock) {
+    let hour = parseInt(clock[2], 10);
+    const minute = parseInt(clock[3] || '0', 10);
+    const period = clock[1] || '';
+    if (period === '下午' || period === '晚上') { if (hour < 12) hour += 12; }
+    if (period === '中午' && hour < 12) hour = 12;
+    if (hour <= 23 && minute <= 59) target.setHours(hour, minute, 0, 0);
+  }
   return target.toISOString();
 }
 

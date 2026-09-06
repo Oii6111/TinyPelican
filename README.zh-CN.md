@@ -1,173 +1,138 @@
-# 小鹈鹕 AI（TinyPelican）
+# 小鹈鹕 TinyPelican
 
-> **你的“关系 + 承诺 + 个人事务”第二大脑。**
->
-> 小鹈鹕把日常聊天变成可持续的关系记忆、自动任务提醒和个人 Agent——它记得你在乎的人，也不会让你漏掉答应过的事。
+> 本地优先的个人 Agent：把聊天记录整理成联系人记忆，把承诺变成可执行事项，并在需要时给出有上下文的回复建议。
 
 [English](README.md) · **中文**
 
----
+## 项目定位
 
-## 为什么需要小鹈鹕？
+小鹈鹕运行在 Windows 本机，围绕微信聊天记录提供联系人记忆、主动提醒、待办/日程管理和 DSH Agent 对话。它不把自然语言意图拆成一串关键词路由，而是让 DSH 通过 Agent 规则和系统 Skill 决定下一步，再由后端 API 负责校验、权限和落库。
 
-大多数 AI 助手都是“被动工具”：你问它才答。但真正重要的事情往往藏在日常对话里——朋友的新近况、客户的时间线、随口答应的一句“下周发你”、一段很久没维护的关系。
+## 核心链路
 
-现有工具的普遍缺口：
-
-| 痛点 | 现有工具 | 小鹈鹕 |
-|---|---|---|
-| **记忆会丢** | 通用 AI 会话关闭即清零 | 每个人沉淀一份持续更新的活档案 |
-| **承诺会漏** | Todo 要手动录入，日历不懂聊天语义 | “下周发方案”自动变成 DDL |
-| **关系会冷** | 提醒只是死板定时器 | 特别关心的人太久没联系会自动浮现 |
-| **回复很累** | 输入法只补词，不理解关系 | 基于真实聊天上下文生成回复建议 |
-| **接入很重** | Agent 要写 prompt、整理文件、反复配置 | **复制一段微信聊天 → 剩下交给小鹈鹕** |
-
-**小鹈鹕相信一件事：** 下一代个人 AI 不是“你有空才打开的工具”，而是一个持续在场、会记忆、会观察、会主动提醒你的伙伴。
-
----
-
-## 愿景
-
-> 从 **“你告诉 AI 要做什么”** 变成 **“AI 告诉你什么值得你关注”**。
-
-小鹈鹕是 **Relationship OS（关系操作系统）** 的个人场景落地：
-
-- 跨会话的长期记忆
-- 主动时机判断，而不是被动等人下达指令
-- 关系状态机——它理解消息背后的人
-- 本地优先——私人数据留在你的机器上
-
-今天它从 Windows 上的微信聊天记录切入，架构上已经为未来更多平台和更多场景做好准备。
-
----
-
-## 工作方式
-
-```
-微信 / 剪贴板输入
-        │  复制聊天，或收到消息
-        ▼
-记忆输入 → 联系人 / 意图 / 关系 / 对话记录
-        │
-        ▼
-DSH Agent（Web 常驻会话 + headless 降级）
-        │
-        ▼
-看板流式展示思考 / 工具调用 / 执行 / 最终回答
+```text
+微信消息 / 剪贴板聊天
+          │
+          ▼
+解析、去重、联系人匹配
+          │
+          ▼
+SQLite：联系人、画像、社交目标、聊天消息
+          │
+          ├── 查询 / 搜索 / 回复建议
+          └── 意图识别 → 待确认意图 → 待办、提醒或日程
+                                      │
+                                      ▼
+                              DSH Agent + 系统 Skills
 ```
 
-1. **复制一段聊天**（或微信消息自动进来）。
-2. 小鹈鹕识别对话、去重，并归档到对应联系人。
-3. 自动提取任务、DDL 和关系上下文。
-4. 到合适时机主动提醒你，并基于语境生成回复建议。
-5. 打开看板时，DSH Agent 可以读取本地文件、执行命令，并逐步展示推理过程。
+DSH 是唯一的自然语言决策者。系统工具提供结构化查询和写入接口，禁止 Agent 直接扫描项目目录或编辑数据文件。聊天记录运行时以 `tinypelican.sqlite` 为准，旧版联系人 JSON 只用于一次性迁移。
 
----
+## 已实现能力
 
-## 当前已实现
-
-| 能力 | 状态 | 说明 |
-|---|---|---|
-| 💬 **DSH Agent 对话** | ✅ 已上线 | WebUI / 微信统一走 DSH Web 常驻会话，流式展示思考与工具调用 |
-| 🧠 **一人一档案长记忆** | ✅ 已上线 | 近况、偏好、承诺、情绪趋势自动沉淀 |
-| 📋 **剪贴板捕获** | ✅ 已上线 | 自动识别、去重、归档复制的微信聊天 |
-| 🔔 **关系维护** | ✅ 已上线 | 特别关心联系人长时间未联系时主动提醒 |
-| ⏰ **任务与 DDL 提取** | ✅ MVP | 聊天中的截止时间被识别并主动提醒 |
-| 🗂️ **联系人/消息管理** | ✅ 已上线 | 编辑画像、清空记录、删除联系人、全文检索 |
-| 💡 **回复建议** | ✅ 已上线 | 私聊复制后生成 3 条建议，一键填入微信输入框（不自动发送） |
-| 📊 **本地看板** | ✅ 已上线 | 对话、联系人、时间线、知识库、主动策略、Agent 记录 |
-| 🖥️ **Electron 桌面壳** | ✅ 已上线 | 拉起核心服务、右下角建议浮窗、自动重启 |
-| 🔊 **语音转写回填** | ✅ 已上线 | 按顺序粘贴转写文本，自动回填到语音消息档案 |
-
----
+- **联系人与聊天**：微信式联系人列表，备注名优先；点击联系人直接查看聊天，支持搜索消息、编辑画像、社交目标和关系信息。
+- **SQLite 聊天存储**：联系人、联系人画像、社交目标、消息和全文搜索索引集中在 SQLite 中，复制导入会去重并增量写入。
+- **上下文回复建议**：复制私聊后，按“最近复制内容 → 社交目标 → 联系人画像 → 定向历史检索”的顺序生成建议，不自动发送。
+- **意图与事项**：聊天中的可能事项先进入待确认意图；确认后才创建待办、提醒或日程。系统 API 负责字段校验、时间校验和重复保护。
+- **主动仪表盘**：日历、待办分页/滚动、日程提醒、待确认意图、思考与行动记录集中查看。
+- **DSH 对话**：WebUI 和微信使用长期会话，支持流式回复、系统工具调用和复杂任务队列。
+- **桌面浮窗**：Electron 负责拉起核心服务，并显示回复建议图标和悬浮卡片。
+- **主动提醒**：周期提醒、截止时间提醒、关系维护提醒，以及微信/Bark 推送。
+- **语音回填**：按顺序粘贴转写文本，回填到对应联系人的语音消息记录。
 
 ## 快速开始
 
 ### 环境要求
 
 - Windows
-- Node.js 18+
-- `@deepseek-ai/dsh`（`npm install` 会自动安装；也可用 `DSH_BIN` 指定本机 DSH）
+- Node.js 18 或更高版本
+- 可用的 DSH WebUI（默认地址 `http://127.0.0.1:3080`）
+- 至少配置一个 OpenAI 兼容模型 Provider
 
-### 启动
+### 初始化与启动
 
 ```powershell
-# 在仓库根目录（含 package.json）打开终端
+git clone <你的仓库地址>
+cd TinyPelican
 npm install
-copy config.example.json config.json
-
-npm run daemon   # 完整守护：HTTP + 剪贴板 + 微信 + 调度
+Copy-Item config.example.json config.json
 ```
 
-打开看板：
+编辑 `config.json`，至少确认：
 
-```text
-http://127.0.0.1:18791
-```
+- `selfNicknames`：你的微信昵称，用于区分自己和联系人发言；
+- `engine.providers`：模型 Provider、地址、模型和 API Key；
+- `capture.enabled`：是否启用剪贴板聊天导入；
+- `auth.enabled`、`auth.username`、`auth.password`：如果通过公网或 Cloudflare Tunnel 暴露 WebUI，必须开启鉴权。
 
-可选 Electron 桌面壳：
+启动完整核心：
 
 ```powershell
-# 在仓库根目录下的 app/ 目录
+npm run daemon
+```
+
+打开看板：`http://127.0.0.1:18791`
+
+只启动 WebUI/API：
+
+```powershell
+npm run server
+```
+
+### Electron 桌面端
+
+```powershell
+cd app
 npm install
 npm start
 ```
 
-### 常用命令
+桌面端会启动核心服务、处理鉴权 Cookie，并显示回复建议浮窗。开发模式的数据默认写入仓库目录；打包模式可通过 `XIAOTIHU_DATA_DIR` 指定数据目录。
+
+## 常用命令
 
 ```powershell
-npm run server      # 只看板
-npm run daemon      # 完整守护
-npm test            # 测试
+npm run daemon      # 核心服务、剪贴板、微信通道、调度器和 Agent 队列
+npm run server      # 仅启动本地 WebUI/API
+npm test            # Node.js 测试
 npm run check       # 全量语法检查
-npm run remind:dry  # 提醒规则演练
+npm run remind:dry  # 预览提醒规则
 ```
 
-### DSH 环境变量
+## 数据与目录
 
-| 变量 | 作用 |
-|---|---|
-| `DSH_BIN` | 指定 `@deepseek-ai/dsh/lib/bin.js` 路径 |
-| `DSH_WEB_URL` | DSH Web 地址，默认 `http://127.0.0.1:3080` |
-| `XIAOTIHU_NODE` | Electron 壳查找 Node 时的可选覆盖路径 |
-| `XIAOTIHU_DATA_DIR` | 打包模式数据目录；开发模式默认项目根目录 |
-
----
-
-## 技术亮点
-
-- **核心**：Node.js，无框架锁定，本地 JSON / JSONL / TOML 存储
-- **模型**：多 Provider OpenAI 兼容引擎 —— SiliconFlow / OpenAI / DeepSeek / Ollama / 自定义
-- **Agent**：DeepSeek Harness（DSH）—— Web 常驻会话 + headless 降级 + 自定义事件流插件
-- **前端**：原生 ES Module 看板，无构建步骤
-- **桌面**：Electron 壳，后台服务管理与回复建议浮窗
-- **数据**：`contacts/*.json`、`inbox.jsonl`、`intents.json`、`conversations.json`、本地 `config.toml` / `config.json`
-
-### 目录结构
-
-```
-app/          Electron 桌面壳
-agent/        DSH profile + event-stream 插件
-core/         engine、agent、channels、memory、ingest、capture、remind、API
-dashboard/    本地 Web 看板
-tests/        单元/集成测试
+```text
+app/                 Electron 桌面端
+agent/               Agent.md、Skills 和事件流插件
+core/                API、Agent、SQLite、导入、提醒和微信通道
+dashboard/           原生 ES Module WebUI，无构建步骤
+tests/               单元测试和集成测试
+tinypelican.sqlite   联系人、画像和聊天消息数据库（本地生成，不入库）
+tasks.json           待办与提醒数据（本地生成）
+schedules.json       日程数据（本地生成）
+intents.json         待确认意图（本地生成）
+config.json          本地配置和密钥（本地生成）
 ```
 
----
+SQLite 使用 WAL 模式，因此 `tinypelican.sqlite-shm` 和 `tinypelican.sqlite-wal` 也属于本地运行时文件。聊天内容、配置、日志和 Agent 会话不会提交到 Git。
 
-## Roadmap
+## DSH 与系统 Skill
 
-当前 MVP 已经在单平台跑通核心闭环，更大的产品图景已经进入设计：
+Agent 的能力总目录在 `agent/Agent.md`，具体能力在 `agent/skills/`。联系人和聊天记录必须通过系统工具查询，例如：
 
-- 🌐 **更多平台** —— 通过统一通道契约接入微信、QQ、飞书、邮件等
-- 📱 **移动端存在** —— 主动推送摘要与移动端查看
-- ⌨️ **输入法集成** —— 输入时实时给出语境化回复建议
-- 👥 **群聊记忆** —— 群组画像与多方任务归属
-- 🖼️ **视觉理解** —— 图片记忆（继续保持本地优先）
-- 🧩 **可插拔存储** —— 从本地 JSON 扩展到 SQLite / 向量库
-- 🤖 **更强自主性** —— 从“建议+确认”到用户可控的自动执行等级
+```powershell
+node core/agent/system-cli.js query contacts
+node core/agent/system-cli.js search-chat "关键词" [联系人]
+node core/agent/system-cli.js contact-context "联系人或备注名"
+```
 
----
+系统工具只返回结构化结果；创建或修改事项仍由后端 API 执行。这样可以避免重复创建、类型混淆和直接改写 SQLite/JSON 文件。
+
+## 安全提示
+
+- 本地开发可以关闭 WebUI 鉴权；只要把端口暴露到局域网、公网或 Cloudflare Tunnel，就应启用 `auth`。
+- 不要把 `config.json`、API Key、微信上下文、SQLite 数据库或聊天记录提交到仓库。
+- 回复建议只负责填入输入框，不会自动向联系人发送消息。
 
 ## 文档
 
@@ -176,5 +141,9 @@ tests/        单元/集成测试
 - [agent/README.md](agent/README.md)
 - [产品设计.md](产品设计.md)
 
----
+## 后续方向
 
+- 更完整的群聊归属和群组画像
+- 更多消息渠道与移动端查看
+- SQLite 上的更强搜索和摘要索引
+- 用户可控的主动执行等级与审计记录

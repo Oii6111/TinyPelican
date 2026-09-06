@@ -4,15 +4,17 @@
 const { runTask } = require('../engine/client');
 const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
-const { readContact } = require('../memory/stores/contacts');
+const chatDb = require('../memory/chat-db');
 const store = require('./suggestion-store');
 
 function latestTextMessage(contactDoc) {
-  const messages = Array.isArray(contactDoc.messages) ? contactDoc.messages : [];
+  const messages = Array.isArray(contactDoc?.recentMessages)
+    ? contactDoc.recentMessages
+    : (Array.isArray(contactDoc?.messages) ? contactDoc.messages : []);
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m && m.type === 'text' && String(m.content || '').trim()) {
-      return m;
+      return { ...m, name: m.name || m.sender || m.senderName, ts: m.ts || m.timestamp };
     }
   }
   return null;
@@ -44,6 +46,15 @@ function canSuggest({ contact, cfg }) {
   return true;
 }
 
+function historicalContext(contact, latestText, limit = 8) {
+  const terms = String(latestText || '').match(/[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{3,}/g) || [];
+  const unique = [...new Set(terms)].slice(0, 4);
+  const rows = [];
+  for (const term of unique) rows.push(...chatDb.searchMessages(term, { contact, limit: 3 }));
+  const seen = new Set();
+  return rows.filter((row) => { const key = `${row.ts}|${row.name}|${row.content}`; if (seen.has(key)) return false; seen.add(key); return true; }).slice(-limit);
+}
+
 async function generateReplySuggestions({ contact, targetWindow = null, config = null } = {}) {
   const cfg = config || loadConfig();
   const capture = (cfg.capture) || {};
@@ -56,7 +67,15 @@ async function generateReplySuggestions({ contact, targetWindow = null, config =
     return null;
   }
 
-  const doc = readContact(contact);
+  const configuredHistory = Number(rs.maxHistoryMessages);
+  const maxHistory = Number.isFinite(configuredHistory)
+    ? Math.min(Math.max(Math.floor(configuredHistory), 6), 40)
+    : 16;
+  const doc = chatDb.contactContext(contact, { limit: maxHistory });
+  if (!doc) {
+    store.invalidate();
+    return null;
+  }
   const latest = latestTextMessage(doc);
   if (!latest) {
     store.invalidate();
@@ -76,9 +95,10 @@ async function generateReplySuggestions({ contact, targetWindow = null, config =
 
   store.invalidate();
   const token = store.beginGeneration();
-  const maxHistory = rs.maxHistoryMessages || 24;
-  const history = (doc.messages || []).slice(-maxHistory);
+  const history = (doc.recentMessages || []).slice(-maxHistory);
+  const olderConversationContext = historicalContext(contact, latest.content, rs.maxHistoricalMessages || 8);
   const profile = doc.profile || {};
+  const socialGoal = doc.socialGoal || profile.socialGoal || profile.social_goal || profile.goal || '';
   const optionCount = rs.optionCount || 3;
   const maxOptionChars = rs.maxOptionChars || 120;
 
@@ -87,7 +107,15 @@ async function generateReplySuggestions({ contact, targetWindow = null, config =
       contact,
       remark: doc.remark || '',
       profile,
+      socialGoal: socialGoal || doc.socialGoal || '',
+      contextPriority: [
+        'latestCopiedMessages',
+        'contactSocialGoal',
+        'contactProfile',
+        'olderConversationContext'
+      ],
       history,
+      olderConversationContext,
       latestMessage: {
         text: latest.content,
         speaker: latest.name,

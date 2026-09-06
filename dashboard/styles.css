@@ -157,7 +157,8 @@ body {
 .content { flex: 1; min-width: 0; overflow: hidden; }
 #view { height: 100%; }
 .view { height: 100%; overflow-y: auto; padding: clamp(16px, 2.2vw, 28px); }
-.view.padless { padding: 0; }
+.view.padless { padding: 0; overflow: hidden; }
+.view.proactive-dashboard { height: 100%; overflow-y: auto; overflow-x: hidden; }
 
 /* ---------- 通用组件 ---------- */
 .card {
@@ -239,17 +240,19 @@ body {
 }
 .badge.info { background: var(--green-soft); color: var(--green-text); }
 .badge.warn { background: var(--accent-soft); color: var(--accent-text); }
+.badge.success { background: var(--green-soft); color: var(--green-text); }
 .badge.error { background: var(--red-soft); color: var(--red-text); }
 
 .empty { color: var(--text-3); text-align: center; padding: 48px 0; }
 .muted { color: var(--text-2); font-size: 13px; }
 
 /* ---------- 对话页 ---------- */
-.chat-layout { display: flex; height: 100%; }
+.chat-layout { display: flex; height: 100%; min-height: 0; }
 .chat-convs {
   width: clamp(200px, 22vw, 280px);
   flex: 0 0 clamp(200px, 22vw, 280px);
   border-right: 1px solid var(--border);
+  min-height: 0;
   background: var(--surface);
   display: flex;
   flex-direction: column;
@@ -273,9 +276,9 @@ body {
 }
 .conv-item:hover .del { opacity: 1; }
 .conv-item .del:hover { background: var(--red-soft); border-radius: 4px; }
-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
 .chat-head { padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--surface); }
-.chat-log { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+.chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
 .bubble { max-width: 76%; padding: 10px 14px; border-radius: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .bubble.user { align-self: flex-end; background: var(--blue); color: #fff; border-bottom-right-radius: 4px; }
 .bubble.bot { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
@@ -284,7 +287,9 @@ body {
 .chat-input .input { flex: 1; }
 
 /* ---------- 档案页 ---------- */
-.contacts-layout { display: flex; height: 100%; }
+.contacts-layout { display: flex; height: 100%; background: var(--surface); }
+.contact-sidebar { width: clamp(220px, 26vw, 340px); flex: 0 0 clamp(220px, 26vw, 340px); border-right: 1px solid var(--border); background: var(--surface-2); padding: 14px 10px; display: flex; flex-direction: column; gap: 10px; }
+.contact-sidebar > .input { width: 100%; box-sizing: border-box; }
 .contact-list {
   width: clamp(200px, 24vw, 300px);
   flex: 0 0 clamp(200px, 24vw, 300px);
@@ -299,6 +304,14 @@ body {
 .contact-item .name { font-weight: 600; }
 .contact-item .sub { font-size: 12px; color: var(--text-3); }
 .contact-detail { flex: 1; overflow-y: auto; padding: 24px 30px; }
+.contact-chat { height: calc(100% - 4px); display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.contact-chat-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 26px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.contact-chat-header h2 { margin: 0 0 4px; }
+.contact-chat-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 26px; background: var(--surface-2); }
+.contact-chat-actions { padding: 12px 26px; border-top: 1px solid var(--border); background: var(--surface); }
+.profile-panel { padding: 24px 26px; overflow-y: auto; }
+.contact-messages { padding: 10px 0; display: flex; flex-direction: column; gap: 8px; }
+.contact-messages .msg { padding: 9px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); }
 .star-btn { border: none; background: none; cursor: pointer; font-size: 22px; color: var(--text-3); padding: 0; }
 .star-btn.on { color: var(--accent); }
 .contact-header-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
@@ -799,6 +812,439 @@ body {
   white-space: pre-wrap;
 }
 
+/* ---------- 主动仪表盘 ---------- */
+.proactive-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.proactive-dashboard > * { flex-shrink: 0; }
+.proactive-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.proactive-hero h2 {
+  margin: 0 0 4px;
+}
+.proactive-heart {
+  min-width: 240px;
+  margin-bottom: 0;
+  padding: 14px 18px;
+}
+.hb-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.proactive-stat {
+  background: linear-gradient(135deg, var(--surface), var(--surface-2));
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  min-height: 82px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.proactive-stats .stat-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.proactive-tab-card {
+  padding: 0;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+.proactive-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 0 10px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.proactive-tab {
+  border: none;
+  background: transparent;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.proactive-tab:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+.proactive-tab.active {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.proactive-panels {
+  min-height: 420px;
+}
+.pane {
+  min-width: 0;
+}
+.pane.view {
+  height: auto;
+  overflow: visible;
+  padding: 16px;
+}
+
+/* ---------- 日历 ---------- */
+.calendar-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.cal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cal-title-block { min-width: 150px; text-align: center; line-height: 1.25; }
+.cal-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.cal-title {
+  font-size: 18px;
+  font-weight: 700;
+  display: block;
+}
+.cal-month-meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 400;
+}
+.cal-nav {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-2);
+}
+.cal-nav:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.cal-legend {
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cal-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.cal-dot.once { background: var(--accent); }
+.cal-dot.cron { background: var(--blue); }
+.cal-dot.ai-task { background: var(--accent); }
+.cal-dot.schedule { background: var(--green, #16a34a); }
+.cal-dot.reminder { background: var(--blue, #0ea5e9); }
+.cal-week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.cal-week-cell {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+  font-weight: 600;
+  padding: 4px 0;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  cursor: grab;
+  user-select: none;
+}
+.cal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 280px);
+  gap: 18px;
+  align-items: start;
+}
+.cal-main { min-width: 0; min-height: 0; }
+.cal-side {
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  contain: size;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cal-side-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.cal-side-head > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cal-side-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.cal-side-tab {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  padding: 7px 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+.cal-side-tab:hover { color: var(--text); background: var(--surface-2); }
+.cal-side-tab.active { color: var(--accent-text); background: var(--accent-soft); }
+.cal-side-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 3px;
+  scrollbar-gutter: stable;
+}
+.cal-side-footer {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+.cal-side-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0 2px;
+  background: var(--surface-2);
+}
+.cal-todo-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  margin-bottom: 8px;
+}
+.cal-todo-item:last-child { margin-bottom: 0; }
+.cal-todo-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cal-todo-title { min-width: 0; font-weight: 600; word-break: break-word; }
+.cal-todo-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cal-cell {
+  min-height: clamp(72px, 7.5vh, 96px);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, box-shadow .12s ease;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cal-cell:hover {
+  background: #fff;
+  border-color: var(--border-strong);
+}
+.cal-cell:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.cal-cell.dim {
+  opacity: .4;
+  min-height: clamp(72px, 7.5vh, 96px);
+}
+.cal-cell.today {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.cal-cell.selected {
+  box-shadow: 0 0 0 2px var(--accent-strong);
+}
+.cal-day-num {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.cal-task {
+  border: 0;
+  font-family: inherit;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 3px 5px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  overflow: hidden;
+}
+.cal-task-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.cal-task.cron {
+  background: var(--blue-soft);
+  color: var(--blue-text);
+}
+.cal-task.schedule {
+  background: var(--green-soft, #dcfce7);
+  color: var(--green-text, #166534);
+}
+.cal-task.reminder {
+  background: var(--blue-soft);
+  color: var(--blue-text);
+}
+.cal-task-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.cal-task-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cal-more {
+  font-size: 11px;
+  color: var(--text-3);
+  text-align: right;
+}
+.cal-day-detail {
+  min-height: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 14px;
+}
+.cal-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.cal-detail-item {
+  margin-bottom: 6px;
+  background: var(--surface);
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+.cal-detail-item:hover { border-color: var(--accent); }
+.cal-detail-empty { padding: 24px 8px; font-size: 12px; }
+.proactive-calendar {
+  margin-bottom: 4px;
+}
+
+/* ---------- 日程表 ---------- */
+.schedule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.schedule-day {
+  border-left: 3px solid var(--accent);
+  background: var(--surface-2);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 10px 12px;
+}
+.schedule-day-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.schedule-day-label {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+}
+.schedule-day-label.overdue {
+  color: var(--red-text);
+}
+.schedule-day-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.schedule-item {
+  display: flex;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.schedule-item.overdue {
+  opacity: .75;
+}
+.schedule-time {
+  flex: 0 0 52px;
+  font-weight: 700;
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+  padding-top: 2px;
+}
+.schedule-main {
+  min-width: 0;
+  flex: 1;
+}
+.schedule-title {
+  font-weight: 600;
+  word-break: break-word;
+}
+
 /* ---------- 任务看板 ---------- */
 .board-head {
   display: flex;
@@ -831,6 +1277,19 @@ body {
   flex-direction: column;
   gap: 10px;
 }
+.list-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 30px;
+  margin-top: 12px;
+}
+.list-pager-label {
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
 .board-empty {
   color: var(--text-3);
   text-align: center;
@@ -844,6 +1303,18 @@ body {
   padding: 10px 12px;
   box-shadow: var(--shadow);
 }
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.task-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.error-text { color: var(--danger, #dc2626) !important; }
 .task-title {
   font-weight: 600;
   margin-bottom: 4px;
@@ -878,8 +1349,94 @@ body {
   margin: 0 0 12px;
 }
 @media (max-width: 900px) {
+  .proactive-stats .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cal-layout { grid-template-columns: 1fr; }
+  .cal-side { height: auto !important; max-height: min(606px, 65vh); contain: none; }
+  .cal-day-detail { min-height: 0; }
   .task-board { grid-template-columns: 1fr; }
   .board-column { min-height: 120px; }
 }
-  word-break: break-word;
+@media (max-width: 560px) {
+  .calendar-card { padding: 12px; }
+  .cal-head { align-items: flex-start; }
+  .cal-legend { width: 100%; justify-content: flex-end; }
+  .cal-head-actions { width: 100%; justify-content: space-between; }
+  .cal-side { padding: 12px; }
+  .cal-cell, .cal-cell.dim { min-height: 72px; padding: 5px 4px; }
+  .cal-task { padding: 3px; gap: 3px; }
+  .cal-task-time { display: none; }
+  .cal-task-text { font-size: 10px; }
 }
+.unified-item-card { min-width: 0; }
+.unified-type-badge { margin-right: 3px; vertical-align: 1px; }
+
+/* ---------- 微信式联系人聊天 ---------- */
+.wechat-contacts-layout { display: flex; height: 100%; min-height: 0; background: #f5f5f5; }
+.wechat-sidebar { width: 290px; flex: 0 0 290px; display: flex; flex-direction: column; min-height: 0; background: #e9eaec; border-right: 1px solid #d5d6d8; }
+.wechat-search-wrap { padding: 18px 16px 12px; background: #e9eaec; }
+.wechat-search { width: 100%; height: 38px; border: 0; border-radius: 5px; background: #fff; padding: 0 12px; font-size: 14px; color: #333; box-shadow: inset 0 0 0 1px #ddd; }
+.wechat-search:focus { outline: 2px solid #07c160; box-shadow: none; }
+.wechat-contact-list { flex: 1; overflow-y: auto; padding: 0 0 18px; }
+.wechat-contact-item { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 58px; border: 0; border-bottom: 1px solid #ddd; background: transparent; padding: 10px 14px; text-align: left; cursor: pointer; }
+.wechat-contact-item:hover { background: #dfe1e3; }
+.wechat-contact-item.active { background: #07c160; color: #fff; }
+.wechat-contact-item.active small, .wechat-contact-item.active time { color: rgba(255,255,255,.8); }
+.wechat-avatar, .wechat-msg-avatar { display: none; }
+.wechat-contact-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.wechat-contact-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.wechat-contact-copy small, .wechat-contact-item time { color: #8b8f95; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wechat-contact-item time { align-self: flex-start; }
+.wechat-chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #f5f5f5; }
+.wechat-chat-head { height: 62px; flex: 0 0 62px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; border-bottom: 1px solid #ddd; background: #f7f7f7; }
+.wechat-chat-title { display: flex; flex-direction: column; min-width: 0; }
+.wechat-chat-title strong { font-size: 18px; font-weight: 600; }
+.wechat-chat-title small { color: #999; font-size: 11px; }
+.wechat-head-actions { display: flex; align-items: center; gap: 12px; }
+.wechat-head-btn { border: 1px solid #d4d4d4; border-radius: 4px; background: #fff; padding: 7px 12px; cursor: pointer; font-size: 13px; }
+.wechat-head-btn:hover { border-color: #07c160; color: #079b4f; }
+.wechat-head-icon { border: 0; background: transparent; color: #888; font-size: 25px; cursor: pointer; }
+.wechat-head-icon.on { color: #f59e0b; }
+.wechat-chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 30px 18px; display: flex; flex-direction: column; gap: 17px; }
+.wechat-msg-row { display: flex; align-items: flex-start; max-width: 78%; }
+.wechat-msg-row.outgoing { align-self: flex-end; flex-direction: row-reverse; }
+.wechat-msg-body { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.wechat-msg-row.outgoing .wechat-msg-body { align-items: flex-end; }
+.wechat-msg-body time { color: #b1b1b1; font-size: 10px; margin-bottom: 3px; }
+.wechat-bubble { padding: 9px 12px; border-radius: 5px; background: #fff; border: 1px solid #e4e4e4; font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.wechat-msg-row.outgoing .wechat-bubble { background: #95ec69; border-color: #95ec69; }
+.wechat-composer { flex: 0 0 72px; padding: 10px 20px; background: #f7f7f7; border-top: 1px solid #ddd; }
+.wechat-compose-input { width: 100%; height: 48px; resize: none; border: 1px solid #ddd; border-radius: 4px; padding: 10px; background: #fff; font: inherit; color: #999; }
+.wechat-profile-pane { width: 0; flex: 0 0 0; overflow: hidden; background: #fff; border-left: 1px solid #ddd; transition: width .2s ease; }
+.wechat-profile-pane.open { width: 360px; flex-basis: 360px; overflow-y: auto; padding: 20px; }
+.wechat-profile-head { display: flex; align-items: center; justify-content: space-between; font-size: 16px; margin-bottom: 20px; }
+.wechat-close-btn { border: 0; background: transparent; color: #888; font-size: 24px; cursor: pointer; }
+.wechat-profile-name { font-size: 20px; font-weight: 600; margin-bottom: 18px; }
+.wechat-profile-label { display: block; margin: 14px 0 6px; color: #666; font-size: 12px; }
+.wechat-profile-editor { min-height: 240px; resize: vertical; line-height: 1.7; }
+.wechat-profile-pane .btn { margin-top: 12px; }
+.wechat-no-selection, .wechat-empty { color: #aaa; text-align: center; padding: 70px 20px; width: 100%; }
+
+/* ---------- 微信式 Agent 对话 ---------- */
+.agent-chat-layout { background: #f5f5f5; }
+.agent-chat-sidebar { width: 300px; flex-basis: 300px; }
+.agent-search-wrap { display: flex; align-items: center; gap: 8px; }
+.agent-search-wrap .wechat-search { flex: 1; min-width: 0; }
+.wechat-new-chat-btn { width: 36px; height: 36px; flex: 0 0 36px; border: 1px solid #c9cacc; border-radius: 50%; background: #f7f7f7; color: #555; font-size: 22px; line-height: 1; cursor: pointer; }
+.wechat-new-chat-btn:hover { border-color: #07c160; color: #079b4f; }
+.agent-chat-sidebar .wechat-contact-item { min-height: 64px; }
+.agent-chat-sidebar .wechat-contact-item .agent-conv-delete { border: 0; background: transparent; color: #999; font-size: 17px; opacity: 0; cursor: pointer; padding: 4px 7px; }
+.agent-chat-sidebar .wechat-contact-item:hover .agent-conv-delete { opacity: 1; }
+.agent-chat-sidebar .wechat-contact-item.active .agent-conv-delete { color: rgba(255,255,255,.85); }
+.agent-chat-sidebar .wechat-contact-item .agent-conv-delete:hover { color: #d33; }
+.agent-chat-sidebar .wechat-contact-item.active .agent-conv-delete:hover { color: #fff; }
+.agent-chat-log { background: #f5f5f5; }
+.agent-chat-log .wechat-msg-row { max-width: 84%; }
+.agent-chat-log .wechat-bubble { font-size: 14px; box-shadow: 0 1px 1px rgba(0,0,0,.03); }
+.agent-chat-log .answer-card, .agent-chat-log .agent-answer-incoming { align-self: flex-start; max-width: 84%; }
+.agent-composer { display: flex; align-items: flex-end; gap: 10px; }
+.agent-composer .wechat-compose-input { flex: 1; min-height: 44px; max-height: 140px; color: #333; resize: vertical; }
+.wechat-send-btn { flex: 0 0 auto; border: 1px solid #07c160; border-radius: 4px; background: #07c160; color: #fff; padding: 9px 18px; font-size: 13px; cursor: pointer; }
+.wechat-send-btn:hover { background: #06ad56; }
+.wechat-send-btn:disabled { opacity: .5; cursor: not-allowed; }
+.wechat-chat-title-name { font-size: 18px; font-weight: 600; }
+@media (max-width: 800px) { .wechat-sidebar { width: 220px; flex-basis: 220px; } .wechat-profile-pane.open { position: absolute; right: 0; top: 0; bottom: 0; width: min(360px, 90vw); z-index: 3; box-shadow: -4px 0 14px rgba(0,0,0,.12); } }

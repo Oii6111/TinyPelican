@@ -25,7 +25,14 @@ function isInDoNotDisturb(now, dndCfg = {}) {
 }
 
 function typeLabel(type) {
-  const map = { task: '任务', deadline: 'DDL', schedule: '日程', reminder: '事项提醒', waiting_reply: '等待回复' };
+  const map = {
+    todo: '待办',
+    task: '待办',
+    deadline: 'DDL',
+    schedule: '日程',
+    reminder: '提醒',
+    waiting_reply: '等待回复'
+  };
   return map[type] || type;
 }
 

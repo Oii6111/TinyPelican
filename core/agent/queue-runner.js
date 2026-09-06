@@ -10,6 +10,7 @@ const { readJson, writeJson } = require('../lib/store');
 const { notifyUser } = require('../notify');
 const { runTaskAndWait } = require('./tasks');
 const queue = require('./queue');
+const tasks = require('../memory/stores/tasks');
 
 const P = getPaths();
 
@@ -20,8 +21,12 @@ function buildQueueTaskPrompt(item) {
   lines.push(`任务类型：${item.type || 'task'}`);
   lines.push(`任务摘要：${item.summary || ''}`);
   if (item.detail) lines.push(`任务详情：${item.detail}`);
+  if (item.payload && item.payload.action) {
+    lines.push(`结构化执行要求：${JSON.stringify(item.payload.action)}`);
+  }
   if (item.source && item.source.contact) lines.push(`来源：${item.source.contact}`);
   lines.push('');
+  lines.push('注意：只有已确认的 AI 任务会进入这里；用户日程只在日历展示，不要把日程当成工具执行请求。');
   lines.push('要求：');
   lines.push('1. 先理解任务，必要时读取本地文件、搜索资料或执行命令；');
   lines.push('2. 使用工具逐步完成，并把关键步骤展示出来；');
@@ -53,6 +58,9 @@ async function processOne(config) {
   if (!item) return null;
   const queueCfg = (config && config.agent && config.agent.queue) || {};
   const timeoutMs = queueCfg.timeoutMs || 300000;
+  if (item.taskId) {
+    tasks.updateTask(item.taskId, { executionStatus: 'running' });
+  }
   log('info', 'agent', `队列 Worker 拉取任务：${item.id} ${item.summary}`);
   try {
     const task = await runTaskAndWait(buildQueueTaskPrompt(item), {
@@ -61,17 +69,39 @@ async function processOne(config) {
     });
     if (task.status === 'completed') {
       queue.completeTask(item.id, { output: task.output, taskId: task.id });
+      if (item.taskId) {
+        const linkedTask = tasks.getTask(item.taskId);
+        tasks.updateTask(item.taskId, {
+          executionStatus: 'completed',
+          executionOutput: task.output || '',
+          executionError: ''
+        });
+        if (linkedTask && linkedTask.kind === 'cron') tasks.completeTask(item.taskId);
+        else tasks.updateTask(item.taskId, { status: 'done' });
+      }
       log('info', 'agent', `队列任务完成：${item.id} -> ${String(task.output || '').slice(0, 80)}`);
       if (item.type === 'relation') {
         await pushRelationResult(item, task.output, config);
       }
     } else {
       queue.failTask(item.id, task.error || 'DSH 执行失败', task.id);
+      if (item.taskId) {
+        tasks.updateTask(item.taskId, {
+          executionStatus: 'failed',
+          executionError: task.error || 'DSH 执行失败'
+        });
+      }
       log('error', 'agent', `队列任务失败：${item.id} ${task.error || ''}`);
     }
     return item.id;
   } catch (e) {
     queue.failTask(item.id, e);
+    if (item.taskId) {
+      tasks.updateTask(item.taskId, {
+        executionStatus: 'failed',
+        executionError: (e && e.message) || String(e)
+      });
+    }
     log('error', 'agent', `队列 Worker 异常：${item.id} ${(e && e.message) || e}`);
     return item.id;
   }
