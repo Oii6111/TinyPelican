@@ -8,6 +8,8 @@
   <a href="https://github.com/Oii6111/TinyPelican/commits/main"><img src="https://img.shields.io/github/last-commit/Oii6111/TinyPelican?style=flat-square" alt="Last commit"></a>
 </p>
 
+<p align="center"><a href="README.md">English</a> · <b>中文</b></p>
+
 > **本仓库是 C 端开源演示版。完整丝滑的企业微信（WeCom）B 端体验是闭源商业版本。**
 
 ---

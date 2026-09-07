@@ -8,6 +8,8 @@
   <a href="https://github.com/Oii6111/TinyPelican/commits/main"><img src="https://img.shields.io/github/last-commit/Oii6111/TinyPelican?style=flat-square" alt="Last commit"></a>
 </p>
 
+<p align="center">🌐 <b>English</b> · <a href="README.zh-CN.md">中文</a></p>
+
 > **Open-source demo for the C-side. The complete seamless enterprise WeCom (企业微信) experience is a closed-source commercial product.**
 
 ---
