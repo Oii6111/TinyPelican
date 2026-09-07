@@ -16,7 +16,7 @@
 
 This open-source repository is a **technical verification / C-side demo**:
 
-- ❌ It is **not** a turnkey personal-WeChat assistant. Personal WeChat history is ingested by **manually copying chats (clipboard)** or an **experimental iLink bot channel**.
+- ❌ It is **not** a turnkey personal-WeChat assistant. Personal WeChat history is ingested by **automatic clipboard detection: you copy a chat, TinyPelican detects and archives it automatically** — or via an **experimental iLink bot channel**.
 - ❌ It does **not** provide seamless auto-sync of WeChat, WeCom sidebar integration, multi-tenant SaaS, or enterprise relationship handover.
 - ✅ It **does** contain the open relationship-reasoning core: chat parsing, contact profile extraction, intent/todo/schedule generation, proactive reminders, and reply drafting.
 
@@ -32,7 +32,7 @@ Traditional personal CRMs like [Monica](https://github.com/monicahq/monica) requ
 
 | Capability | Description | Status |
 |---|---|---|
-| Chat ingestion | Clipboard capture of WeChat chat logs + experimental iLink channel | ✅ Live |
+| Chat ingestion | Automatic clipboard detection of WeChat chat logs + experimental iLink channel | ✅ Live |
 | Contact profiles | One profile per contact, continuously extracted from conversations | ✅ Live |
 | Relationship reasoning | Importance, recent context, preferences, boundaries, social goals | ✅ Basic |
 | Intent extraction | Tasks, deadlines, schedules, waiting-for-reply | ✅ Basic |
