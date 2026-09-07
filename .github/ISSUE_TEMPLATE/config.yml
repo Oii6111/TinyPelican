@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "💬 Discussions"
+    url: https://github.com/Oii6111/TinyPelican/discussions
+    about: "Product ideas, commercial version questions, and general discussion — use Discussions instead of issues."
+  - name: "🔒 Commercial / WeCom enterprise version"
+    url: https://github.com/Oii6111/TinyPelican/discussions
+    about: "Questions about the closed-source enterprise WeCom version. Open-source issues are for this repository only."
