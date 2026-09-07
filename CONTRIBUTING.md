@@ -18,6 +18,17 @@ Please keep contributions within the open-source scope:
 
 For out-of-scope requests we will close the issue and label it as `commercial` / `wontfix`.
 
+## Where help is most wanted
+
+The project is currently WeChat-first. The highest-impact areas for new contributors:
+
+1. **Channel adapters** — QQ, Feishu / DingTalk, Telegram, email, calendar. Every channel implements a simple `connect / stop / send` contract (`core/channels/interface.js`).
+2. **Intent & reasoning quality** — prompts, extraction logic, human-in-the-loop feedback.
+3. **Tests & CI stability** — the suite runs on Windows and currently has a few flaky cases.
+4. **Docs & onboarding** — README, dashboard copy, config guides.
+
+> The project is maintained by an undergraduate student with limited time. Responses may be slow, but every contribution is read and valued.
+
 ## Good first issues
 
 New to the project? Look for issues labeled [`good first issue`](https://github.com/Oii6111/TinyPelican/labels/good%20first%20issue). Suggested starting points:

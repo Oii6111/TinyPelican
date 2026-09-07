@@ -54,6 +54,15 @@
 | 本地优先 | 是，自带模型 Key | 可自托管 | 云端 |
 | 企业微信商业版 | 闭源商业 | 无 | 无 |
 
+## 更多社交通道正在开发中——欢迎加入 Contributor
+
+当前输入以微信为主（剪贴板自动识别 + 实验性 iLink）。更多社交通道正在规划/开发中：
+
+- QQ、飞书 / 钉钉、Telegram、邮件、日历
+- 穿戴设备活动导入（AI 眼镜 / 相机 / 手表）
+
+这个项目由一名本科学生维护，多通道支持需要时间。每个通道都遵循简单的 `connect / stop / send` 契约——如果你对通道适配器、Agent Skills 或关系推演内核感兴趣，**非常欢迎加入成为 Contributor**。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## 快速开始
 
 **环境要求：** Windows、Node.js 18+、DSH WebUI（默认 `http://127.0.0.1:3080`）、至少一个 OpenAI 兼容模型 Provider。

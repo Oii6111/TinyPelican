@@ -54,6 +54,15 @@ Traditional personal CRMs like [Monica](https://github.com/monicahq/monica) requ
 | Local-first | Yes, BYO model key | Self-host option | Cloud |
 | WeCom enterprise | Closed-source commercial | No | No |
 
+## More channels are coming — contributors wanted
+
+Current input is WeChat-first (clipboard auto-detection + experimental iLink). More social channels are under active planning/development:
+
+- QQ, Feishu / DingTalk, Telegram, email, calendar
+- Wearable activity import (AI glasses / cameras / watches)
+
+This project is maintained by an undergraduate student, so multi-channel support will take time. Every channel follows a simple `connect / stop / send` contract — if you are interested in channel adapters, Agent Skills, or the relationship-reasoning core, **you are very welcome to join as a contributor**. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Quick start
 
 **Requirements:** Windows, Node.js 18+, DSH WebUI (`http://127.0.0.1:3080`), one OpenAI-compatible model provider.
