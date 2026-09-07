@@ -10,6 +10,8 @@ const { isInDoNotDisturb } = require('../lib/reminder-rules');
 const { notifyUser } = require('../notify');
 const tasks = require('../memory/stores/tasks');
 const { enqueueTask } = require('../agent/queue');
+const conversations = require('../memory/stores/conversations');
+const { readCredentials } = require('../channels/weixin/login');
 
 function taskTimeText(task) {
   const iso = task.kind === 'cron' ? task.nextAt : task.dueAt;
@@ -70,6 +72,20 @@ async function runReminders(opts = {}) {
       ? (console.log('[remind][dry-run]', msg), { ok: true })
       : await notifyUser({ title: '⏰ 小鹈鹕提醒', message: msg, config: cfg });
     if (notifyResult && notifyResult.ok) {
+      // 将已送达的提醒写入微信主会话，使用户随后回复时 Agent 能看到完整上下文。
+      try {
+        const creds = notifyResult.channel === 'weixin' ? readCredentials() : null;
+        if (creds && creds.user_id) {
+          const session = 'agent:main:weixin:' + creds.user_id;
+          const existing = conversations.get(session);
+          const marker = `[reminder:${task.id}:${dueIso}]`;
+          if (!existing.some((entry) => entry.role === 'bot' && entry.reminderMarker === marker)) {
+            conversations.append(session, { role: 'bot', text: msg, reminderMarker: marker });
+          }
+        }
+      } catch (e) {
+        log('warn', 'remind', '提醒上下文写入失败：' + String((e && e.message) || e));
+      }
       if (task.kind === 'cron') {
         // 对 cron 任务，updateTask 会把 nextAt 自动推进到下一次
         tasks.updateTask(task.id, { lastNotifiedAt: dueIso });

@@ -20,7 +20,6 @@ const conversations = require('./memory/stores/conversations');
 const { generateReplySuggestions } = require('./reply/suggestions');
 const { notifyUser } = require('./notify');
 const chatDb = require('./memory/chat-db');
-const { handleConversationIntent } = require('./engine/chat-intent');
 const agentQueue = require('./agent/queue');
 const { drainOnce } = require('./agent/queue-runner');
 
@@ -116,24 +115,14 @@ async function main() {
 
     let r = null;
     try {
-      const operation = await handleConversationIntent({
+      // 微信消息直接交给长期 DSH 会话，由 DSH 自己决定是否调用工具。
+      // 微信协议不支持流式回复，因此等待整轮执行完成后一次性发送最终文本。
+      r = await mainSession.send({
+        sessionKey: session,
         message: m.content,
         history,
-        session,
-        channel: 'weixin',
-        config: cfg
+        timeoutMs: 180000
       });
-      if (operation.handled) {
-        if (!operation.ok) throw new Error(operation.error || '意图处理失败');
-        r = { ok: true, text: operation.text };
-      } else {
-        // 直接 AI 指令和普通对话都走微信对应的长期 DSH 会话。
-        r = await mainSession.send({
-          sessionKey: session,
-          message: operation.dispatchDsh ? operation.dshPrompt : m.content,
-          history
-        });
-      }
     } catch (e) {
       log('error', 'agent', '微信主会话发送异常：' + String((e && e.message) || e));
     }
@@ -159,8 +148,17 @@ async function main() {
         text,
         agentEvents: historyEventList((r && r.events) || [])
       });
-      await wechat.send({ to: m.from, text, contextToken: m.contextToken || '' });
-      log('info', 'weixin', `微信 Agent 回复成功（${r.mode || 'unknown'}）`);
+      let delivery = await wechat.send({ to: m.from, text, contextToken: m.contextToken || '' });
+      // 入站消息携带的 token 可能在 Agent 执行期间失效，使用通道保存的最新 token 重试一次。
+      if (!delivery || !delivery.ok) {
+        log('warn', 'weixin', `微信回复首次发送失败：${(delivery && delivery.error) || '未知错误'}，准备重试`);
+        delivery = await wechat.send({ to: m.from, text });
+      }
+      if (delivery && delivery.ok) {
+        log('info', 'weixin', `微信 Agent 回复成功（${r.mode || 'unknown'}）`);
+      } else {
+        log('error', 'weixin', `微信 Agent 最终发送失败：${(delivery && delivery.error) || '未知错误'}`);
+      }
     } else {
       log('warn', 'agent', `微信 Agent 回复失败：${(r && r.error) || '未知错误'}`);
     }

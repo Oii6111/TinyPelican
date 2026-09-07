@@ -91,12 +91,18 @@ async function ensureSession({ sessionId, cwd = PROJECT_ROOT, base = DEFAULT_BAS
 
 function assistantText(entry) {
   const ev = entry && entry.event ? entry.event : entry;
-  if (!ev || ev.type !== 'assistant/message') return null;
+  if (!ev) return null;
+  if (ev.type === 'assistant/chunk') {
+    const chunk = ev.data && ev.data.chunk;
+    if (!chunk || !chunk.text || String(chunk.type || '').includes('reasoning')) return null;
+    return String(chunk.text).trim() || null;
+  }
+  if (ev.type !== 'assistant/message') return null;
   const data = ev.data || {};
   const msg = data.message || {};
   const blocks = Array.isArray(msg.content) ? msg.content : [];
   const parts = blocks
-    .filter((b) => b && b.type === 'text' && b.text)
+    .filter((b) => b && ['text', 'output_text', 'markdown'].includes(b.type) && b.text)
     .map((b) => String(b.text).trim())
     .filter(Boolean);
   return parts.length ? parts.join('\n').trim() : null;
@@ -149,22 +155,34 @@ async function promptAndWait({
 
   const startedAt = Date.now();
   const eventMap = new Map(); // seq -> raw event object
+  let candidateText = null;
+  let candidateAt = 0;
+  let lastEventAt = 0;
+  let chunkText = '';
   while (Date.now() - startedAt < timeoutMs) {
     const h = await rpc('session.history', { sessionId, maxMessages: 100 }, base);
     if (h.ok && Array.isArray(h.value.events)) {
       let foundText = null;
       for (const entry of h.value.events) {
         const ev = entry && entry.event ? entry.event : entry;
-        if (!ev || typeof ev.seq !== 'number' || ev.seq <= beforeSeq) continue;
+        if (!ev || typeof ev.seq !== 'number' || ev.seq <= beforeSeq || eventMap.has(ev.seq)) continue;
         eventMap.set(ev.seq, ev);
-        if (ev.type === 'assistant/message') {
+        lastEventAt = Date.now();
+        if (ev.type === 'assistant/chunk') {
+          const piece = assistantText(entry);
+          if (piece) { chunkText += piece; candidateText = chunkText; candidateAt = Date.now(); }
+        } else if (ev.type === 'assistant/message') {
           const textOut = assistantText(entry);
-          if (textOut) foundText = textOut;
+          if (textOut) {
+            foundText = textOut;
+            candidateText = textOut;
+            candidateAt = Date.now();
+          }
         }
       }
-      if (foundText) {
+      if (candidateText && Date.now() - Math.max(candidateAt, lastEventAt) >= 2500) {
         const events = [...eventMap.values()].sort((a, b) => a.seq - b.seq);
-        return { ok: true, text: foundText, sessionId, mode: 'dsh-web', events };
+        return { ok: true, text: candidateText, sessionId, mode: 'dsh-web', events };
       }
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
@@ -209,6 +227,10 @@ async function promptStreaming({
 
   const startedAt = Date.now();
   const seen = new Set();
+  let candidateText = null;
+  let candidateAt = 0;
+  let lastEventAt = 0;
+  let chunkText = '';
   while (Date.now() - startedAt < timeoutMs) {
     const h = await rpc('session.history', { sessionId, maxMessages: 100 }, base);
     if (h.ok && Array.isArray(h.value.events)) {
@@ -217,13 +239,23 @@ async function promptStreaming({
         const ev = entry && entry.event ? entry.event : entry;
         if (!ev || typeof ev.seq !== 'number' || ev.seq <= beforeSeq || seen.has(ev.seq)) continue;
         seen.add(ev.seq);
+        lastEventAt = Date.now();
         try { onEvent(ev); } catch {}
-        if (ev.type === 'assistant/message') {
+        if (ev.type === 'assistant/chunk') {
+          const piece = assistantText(ev);
+          if (piece) { chunkText += piece; candidateText = chunkText; candidateAt = Date.now(); }
+        } else if (ev.type === 'assistant/message') {
           const textOut = assistantText(ev);
-          if (textOut) foundText = textOut;
+          if (textOut) {
+            foundText = textOut;
+            candidateText = textOut;
+            candidateAt = Date.now();
+          }
         }
       }
-      if (foundText) return { ok: true, text: foundText, sessionId, mode: 'dsh-web-stream' };
+      if (candidateText && Date.now() - Math.max(candidateAt, lastEventAt) >= 2500) {
+        return { ok: true, text: candidateText, sessionId, mode: 'dsh-web-stream' };
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
