@@ -16,8 +16,9 @@ A clear, concise description of what you want to happen.
 
 ## Scope
 
-- [ ] Within open-source scope (core engine / dashboard / agent / developer experience)
-- [ ] Commercial / WeCom enterprise scope (will be closed as `commercial`)
+- [ ] Core engine / dashboard / agent / developer experience
+- [ ] Channel adapter / docs / tests
+- [ ] Other (please describe)
 
 ## Alternatives considered
 

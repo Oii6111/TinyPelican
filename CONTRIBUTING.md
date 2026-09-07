@@ -1,6 +1,6 @@
 # Contributing to TinyPelican
 
-Thanks for your interest in TinyPelican. This repository is the **open-source C-side kernel** of an AI social copilot. The seamless enterprise WeCom (企业微信) version is closed-source commercial.
+Thanks for your interest in TinyPelican. This repository is the **open-source kernel** of an AI social copilot.
 
 ## Scope of this repository
 
@@ -13,10 +13,9 @@ Please keep contributions within the open-source scope:
 **Out of scope** for this repository:
 
 - Personal WeChat auto-sync (no official API)
-- WeCom sidebar integration, multi-tenant SaaS, enterprise handover
 - Any feature that reads chat data without explicit user action
 
-For out-of-scope requests we will close the issue and label it as `commercial` / `wontfix`.
+For out-of-scope requests we will close the issue and label it as `wontfix`.
 
 ## Where help is most wanted
 
@@ -58,7 +57,7 @@ npm run check
 
 - Search existing issues before opening a new one.
 - Use the provided issue templates.
-- For product/commercial questions, open a [Discussion](https://github.com/Oii6111/TinyPelican/discussions) instead of an issue.
+- For product questions and general discussion, open a [Discussion](https://github.com/Oii6111/TinyPelican/discussions) instead of an issue.
 
 ## Code of conduct
 

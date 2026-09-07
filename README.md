@@ -10,27 +10,21 @@
 
 <p align="center">🌐 <b>English</b> · <a href="README.zh-CN.md">中文</a></p>
 
-> **Open-source demo for the C-side. The complete seamless enterprise WeCom (企业微信) experience is a closed-source commercial product.**
-
 ---
 
-## ⚠️ Read this first: what this repo is NOT
+## ⚠️ Read this first
 
-This open-source repository is a **technical verification / C-side demo**:
+This project is **not** a turnkey personal-WeChat assistant:
 
-- ❌ It is **not** a turnkey personal-WeChat assistant. Personal WeChat history is ingested by **automatic clipboard detection: you copy a chat, TinyPelican detects and archives it automatically** — or via an **experimental iLink bot channel**.
-- ❌ It does **not** provide seamless auto-sync of WeChat, WeCom sidebar integration, multi-tenant SaaS, or enterprise relationship handover.
-- ✅ It **does** contain the open relationship-reasoning core: chat parsing, contact profile extraction, intent/todo/schedule generation, proactive reminders, and reply drafting.
+- ❌ It does **not** silently read WeChat in the background. Chat logs are ingested by **automatic clipboard detection: you copy a chat, TinyPelican detects and archives it automatically** — or via an **experimental iLink bot channel**.
+- ❌ It does **not** claim official WeChat integration or real-time message sync for all scenarios.
+- ✅ It **does** provide the open relationship-reasoning core: chat parsing, contact profile extraction, intent/todo/schedule generation, proactive reminders, and reply drafting.
 
-**The full seamless WeCom (企业微信) experience — auto-sync, enterprise sidebar, team handover — is a closed-source commercial version.**
-
-If you are looking for a ready-to-use WeChat/WeCom social CRM, this repo is only the kernel, not the product.
-
----
+If you are interested in the reasoning engine and the product idea, you are in the right place.
 
 ## What TinyPelican does
 
-Traditional personal CRMs like [Monica](https://github.com/monicahq/monica) require manual data entry. TinyPelican turns imported chat logs into a self-growing relationship memory:
+Traditional personal CRMs like [Monica](https://github.com/monicahq/monica) require manual data entry. TinyPelican turns copied chat logs into a self-growing relationship memory:
 
 | Capability | Description | Status |
 |---|---|---|
@@ -42,19 +36,18 @@ Traditional personal CRMs like [Monica](https://github.com/monicahq/monica) requ
 | Reply drafts | Relationship-aware suggestions, one-click fill, never auto-sent | ✅ Live |
 | Agent execution | DSH Agent with structured Skills and auditable event stream | ✅ Live |
 | Spoken diary via bot | Tell the WeChat bot; memory is settled by the Agent | 🚧 In progress |
+| More social channels | QQ, Feishu / DingTalk, Telegram, email, calendar | ⏳ In development |
 | Wearable activity import | AI glasses / cameras / watches as future memory inputs | ⏳ Planned |
-| WeCom enterprise version | Auto-sync, sidebar, multi-tenant SaaS, handover | 🔒 Closed-source commercial |
 
 ## Why it's different
 
-| | TinyPelican OSS | Monica | General AI assistant |
+| | TinyPelican | Monica | General AI assistant |
 |---|---|---|---|
-| Data entry | Automatic from chat logs | Manual | None |
+| Data entry | Automatic from copied chat logs | Manual | None |
 | Relationship profiles | AI-extracted, continuously updated | Manual forms | No persistent memory |
 | Proactive reminders | From chat commitments and relationship signals | User-set reminders only | No |
 | Reply drafts | Relationship-aware | No | Generic |
 | Local-first | Yes, BYO model key | Self-host option | Cloud |
-| WeCom enterprise | Closed-source commercial | No | No |
 
 ## More channels are coming — contributors wanted
 
@@ -129,17 +122,10 @@ Runtime data (SQLite, tasks, schedules, intents, credentials, logs, chat records
 
 ## Roadmap
 
-**Open-source C-side (this repo):**
-
 1. Make contact memory, proactive reminders, and reply drafts a daily habit.
 2. Improve intent accuracy with human-in-the-loop feedback.
 3. Group-chat model and wearable activity import adapters.
-
-**Closed-source commercial (WeCom enterprise version):**
-
-1. Seamless WeCom auto-sync and sidebar assistant.
-2. Multi-tenant SaaS with encrypted cloud sync, auto-update, backup.
-3. Enterprise relationship handover and team collaboration.
+4. Add more channel adapters (QQ, Feishu / DingTalk, Telegram, email, calendar).
 
 ## Contributing
 
@@ -147,9 +133,7 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). We keep a 
 
 ## License
 
-MIT License — free for personal learning and open-source use. The enterprise WeCom version and related commercial capabilities are **closed-source and require official commercial authorization**.
-
-See [LICENSE](LICENSE).
+MIT License — free for personal learning and open-source use. See [LICENSE](LICENSE).
 
 ---
 

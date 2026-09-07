@@ -3,6 +3,6 @@ contact_links:
   - name: "💬 Discussions"
     url: https://github.com/Oii6111/TinyPelican/discussions
     about: "Product ideas, commercial version questions, and general discussion — use Discussions instead of issues."
-  - name: "🔒 Commercial / WeCom enterprise version"
+  - name: "💡 Feature & product discussion"
     url: https://github.com/Oii6111/TinyPelican/discussions
-    about: "Questions about the closed-source enterprise WeCom version. Open-source issues are for this repository only."
+    about: "Share product ideas and discuss the roadmap before opening an issue."
