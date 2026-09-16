@@ -1,12 +1,45 @@
 // 小鹈鹕核心 — WebUI 登录鉴权
-// 会话使用内存 token + HttpOnly Cookie；进程重启后需重新登录。
+// 会话 token + HttpOnly Cookie。会话落盘到数据目录（sessions.json）：
+// 保存配置会让核心热重启，会话若只在内存里，重启后看板/桌面端会静默变“未登录”
+// （表现就是下一次「保存策略」报 unauthorized）。过期会话在载入时清理。
 'use strict';
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const { getPaths } = require('./lib/paths');
 
 const COOKIE_NAME = 'xtp_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const sessions = new Map();
+
+function sessionsFile() {
+  return getPaths().sessions;
+}
+
+function loadSessions() {
+  const map = new Map();
+  try {
+    const raw = JSON.parse(fs.readFileSync(sessionsFile(), 'utf8'));
+    const now = Date.now();
+    for (const [token, value] of Object.entries(raw || {})) {
+      if (!value || !(Number(value.expiresAt) > now)) continue;
+      map.set(token, { username: String(value.username || ''), expiresAt: Number(value.expiresAt) });
+    }
+  } catch {}
+  return map;
+}
+
+let sessions = loadSessions();
+
+function persistSessions() {
+  try {
+    const obj = {};
+    for (const [token, s] of sessions) obj[token] = { username: s.username, expiresAt: s.expiresAt };
+    const file = sessionsFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(obj), { mode: 0o600 });
+  } catch {}
+}
 
 function isEnabled(cfg) {
   return !!(cfg && cfg.auth && cfg.auth.enabled && cfg.auth.password);
@@ -37,6 +70,7 @@ function createSession(username) {
     username,
     expiresAt: Date.now() + SESSION_TTL_MS
   });
+  persistSessions();
   return token;
 }
 
@@ -52,7 +86,9 @@ function getSession(token) {
 }
 
 function destroySession(token) {
-  if (token) sessions.delete(token);
+  if (!token) return;
+  sessions.delete(token);
+  persistSessions();
 }
 
 function tokenFromRequest(req) {
@@ -88,5 +124,8 @@ module.exports = {
   checkRequest,
   sessionCookie,
   clearCookie,
+  // 测试用：丢掉内存会话，模拟重新载入（核心重启）
+  reloadSessions: () => { sessions = loadSessions(); return sessions.size; },
+  sessionCount: () => sessions.size,
   COOKIE_NAME
 };

@@ -17,6 +17,11 @@ async function request(method, url, body) {
   let data = null;
   try { data = await res.json(); } catch {}
   if (!res.ok) {
+    // 会话失效（例如核心重启后 token 失效）：回登录页重新登录，别让看板停在“半死”状态
+    if (res.status === 401) {
+      const p = location.pathname;
+      if (p === '/' || p === '/index.html') location.href = '/login';
+    }
     throw new ApiError((data && data.error) || `请求失败（${res.status}）`, res.status);
   }
   return data;
@@ -106,8 +111,11 @@ export const api = {
 
   replySuggestions: {
     current: () => get('/api/reply-suggestions/current'),
-    apply: (id, index) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/apply', { index }),
-    dismiss: (id) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/dismiss')
+    regenerate: (hint = '', rotate = false, deep = false) => post('/api/reply-suggestions/current/regenerate', { hint, rotate, deep }),
+    continuePlan: (id, deep = false) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/continue', { deep }),
+    apply: (id, plan) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/apply', { plan }),
+    next: (id) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/next'),
+    reset: (id) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/reset')
   },
 
   agent: {

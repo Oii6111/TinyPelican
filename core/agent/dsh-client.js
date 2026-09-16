@@ -148,36 +148,71 @@ function buildDshEnv(dshHome, config) {
   return env;
 }
 
+function dshPackageVersion(binPath) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(path.dirname(binPath), '..', 'package.json'), 'utf8')).version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+function compareVersions(a, b) {
+  const parse = (v) => String(v || '').split('-')[0].split('.').map((n) => parseInt(n, 10) || 0);
+  const x = parse(a);
+  const y = parse(b);
+  for (let i = 0; i < 3; i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
+  }
+  // 同版本号时正式版 > 预发布版
+  const pre = (v) => (String(v || '').includes('-') ? 0 : 1);
+  return pre(a) - pre(b);
+}
+
 // 定位 dsh 的 lib/bin.js：
-// 1. 显式 DSH_BIN
-// 2. 作为 node_modules 依赖被安装（推荐，用户 npm install 后自动可用）
-// 3. 开发环境回退：扫描 npx 缓存里已有的 @deepseek-ai/dsh
+// 1. 显式 DSH_BIN（最高优先，用户说了算）
+// 2. 项目依赖 / 全局安装 / npx 缓存里，取版本号最高的那个
+//    （WebUI 协议在 0.1.5 才换成 Typert Remote，捡到老的会直接 404）
 function findDshBin() {
   if (process.env.DSH_BIN && fs.existsSync(process.env.DSH_BIN)) return process.env.DSH_BIN;
 
+  const candidates = [];
   try {
     const resolved = require.resolve('@deepseek-ai/dsh/lib/bin.js');
-    if (resolved && fs.existsSync(resolved)) return resolved;
+    if (resolved && fs.existsSync(resolved)) candidates.push(resolved);
   } catch {}
 
-  const npxRoot = path.join(process.env.LOCALAPPDATA || '', 'npm-cache', '_npx');
-  if (fs.existsSync(npxRoot)) {
-    let best = null;
-    let bestTime = 0;
-    for (const dir of fs.readdirSync(npxRoot)) {
-      const p = path.join(npxRoot, dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
-      if (fs.existsSync(p)) {
-        const t = fs.statSync(p).mtimeMs;
-        if (t > bestTime) {
-          bestTime = t;
-          best = p;
-        }
-      }
-    }
-    if (best) return best;
+  // 全局安装（npm i -g @deepseek-ai/dsh）
+  const globalRoot = process.env.APPDATA
+    ? path.join(process.env.APPDATA, 'npm', 'node_modules')
+    : '';
+  if (globalRoot) {
+    const p = path.join(globalRoot, '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+    if (fs.existsSync(p)) candidates.push(p);
   }
 
-  throw new Error('未找到 DSH（@deepseek-ai/dsh）。请先执行 npm install，或设置 DSH_BIN 环境变量。');
+  // npx 缓存
+  const npxRoot = path.join(process.env.LOCALAPPDATA || '', 'npm-cache', '_npx');
+  if (fs.existsSync(npxRoot)) {
+    for (const dir of fs.readdirSync(npxRoot)) {
+      const p = path.join(npxRoot, dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+      if (fs.existsSync(p)) candidates.push(p);
+    }
+  }
+
+  if (!candidates.length) {
+    throw new Error('未找到 DSH（@deepseek-ai/dsh）。请先执行 npm install，或设置 DSH_BIN 环境变量。');
+  }
+
+  let best = candidates[0];
+  let bestVersion = dshPackageVersion(best);
+  for (const candidate of candidates.slice(1)) {
+    const version = dshPackageVersion(candidate);
+    if (compareVersions(version, bestVersion) > 0) {
+      best = candidate;
+      bestVersion = version;
+    }
+  }
+  return best;
 }
 
 // 把一行 stdout 转成事件对象；不是事件流的行返回 null。

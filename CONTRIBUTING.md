@@ -46,6 +46,9 @@ npm test
 npm run check
 ```
 
+> **PowerShell 文件请保存为 UTF-8 with BOM。** Windows PowerShell 5.1 读取无 BOM 的 `.ps1` 时按 ANSI 解码，
+> 中文注释会把脚本解析坏（表现为退出码 1 且没有任何输出）。`tests/powershell-scripts.test.js` 会检查这一点。
+
 ## Pull request guidelines
 
 - Keep PRs small and focused.

@@ -25,7 +25,7 @@ export function mount(container) {
     ),
     el('div', { class: 'field' },
       el('label', { class: 'switch' }, replyChk, ' 复制聊天后生成回复建议'),
-      el('div', { class: 'hint', text: '识别私聊联系人后，根据画像与最近聊天生成三条建议。点击建议只填入微信输入框，不会自动发送。' })
+      el('div', { class: 'hint', text: '识别私聊联系人后，在微信输入框上方弹出建议卡片：几组不同风格的方案，每组可以是连着发的 1~3 条短消息。点一条只填入输入框，不会自动发送；支持换一批，也可以在卡片里写下你的想法让模型重写。' })
     ),
     el('div', {},
       el('button', { class: 'btn btn-primary btn-sm', text: '保存', onclick: saveCapture }),

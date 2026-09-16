@@ -46,7 +46,7 @@ core/                   核心服务（Node，无第三方运行时依赖，Node
     client.js           统一调用入口（OpenAI 兼容 /chat/completions，超时 + 重试）
     providers.js        Provider 预设与解析（SiliconFlow/OpenAI/DeepSeek/Ollama/自定义）
     extract.js          模型结构化输出解析
-    tasks.js + prompts/ 任务注册表与提示词（intent/relation/reminder/reply/reply-suggestions）
+    tasks.js + prompts/ 任务注册表与提示词（intent/relation/reminder/reply-suggestions/reply_followup）
     intent-runner.js    意图识别执行器（扫描新增消息 -> 识别 -> 入库 -> 通知）
   channels/             ② 通道接入
     interface.js        通道契约（name/connect/stop/send）
@@ -63,7 +63,7 @@ core/                   核心服务（Node，无第三方运行时依赖，Node
   remind/               ⑤ 主动提醒
     scheduler.js        进程内定时调度（防重叠、异常隔离）
     runner.js           提醒执行器（到期点、免打扰、文案生成、推送）
-  reply/                回复建议（生成、状态、安全回填）
+  reply/                回复建议（多组连贯消息方案、换一批/按描述重写、状态、安全回填）
   agent/                DSH Agent 后端（headless、web 会话、任务队列、微信回复）
   status.js             全局状态（心跳 / 主动级别 / 未读数）
   api/                  路由层：rest.js 装配 + router.js 路由表 + routes/ 按领域拆分
@@ -115,6 +115,47 @@ tests/                  单元测试与集成测试（node --test）
 - 未配置 Key 时给出明确提示；「测试连接」用当前表单配置做一次最小请求验证
 - 配置保存在 `config.json` 的 `engine` 段（gitignore 排除），API Key 不回显完整值
 
+## 回复建议（悬浮卡片）
+
+复制一段微信私聊（`capture.enabled` + `capture.replySuggestions.enabled` 同时打开）后：
+
+1. 归档聊天 → 模型按「下一轮怎么回」给出 `optionCount` 组方案，每组是 **1~N 条按发送顺序排列的短消息**（多数情况 1~2 条；只有必须完整说明一件事时才用一条长消息）；
+2. 卡片自动出现在微信输入框上方（不再有独立的悬浮小图标，卡片高度随内容自适应）；
+3. 点某一组 = 先填入第 1 条并停在该组「下一条」上，用户发出上一条后再点下一条，逐条按顺序回填；**任何一条都不会自动发送**；
+4. 卡片底部一行输入框：写下自己想表达什么，回车（或点 ↵）让模型按你的描述重写；🎲 换一批 = 同一段聊天换几种说法（会把已给过的方案作为「不要重复」约束传给模型）。
+
+生成速度与两种模式：
+
+- 检测到聊天复制就**先把浮窗弹出来放「思考中」**（`/api/reply-suggestions/current` 里带 `pending`，含定位锚点），模型返回后再把内容填进去；
+- **快速模式（默认）**：关掉模型思考过程（DeepSeek 等混合模型实测 5.5s → 1.0s，参数见 `core/engine/client.js` 的 `noThinkingBody()`），每组最多 `maxMessagesPerPlan`（默认 4）条、每条 `maxMessageChars`（默认 40）字；
+- **深度思考模式**：卡片上的 🧠 按钮，打开思考过程重来，放开到 `deepMaxMessagesPerPlan`（默认 8）条、`deepMaxMessageChars`（默认 120）字，超时 `deepTimeoutMs`（默认 120s）；
+- 顺序发送中，这一组的「🎲 换一批 / 🧠 深度思考」只重写**还没发出去的那几条**（`reply_followup` 任务），并把用户**已经发出去的内容**带进提示词，避免续写和已发消息语境割裂；已经给过的那几条同时进「不要重复」清单。
+
+回收与找回：
+
+- ✕ / Esc 是**收起**（只隐藏浮窗，服务端那批建议仍然保留）；
+- 再复制一次同一段聊天 → 直接把既有的那批建议重新弹出来（`showToken` 自增触发重新显示），顺带刷新定位与有效期，**不会重复调模型、也不会重复归档**；
+- 上下文变了（你回了新消息，最新消息指纹不同）→ 自动重新生成；复制别的聊天、过期或核心重启也会丢掉旧那批。
+
+安全边界：回填前校验窗口句柄 + 进程 + 前台窗口，只发 Ctrl+V 不发 Enter；无微信窗口句柄时降级为只复制到剪贴板。
+
+## DSH WebUI 对接（dsh 0.1.5+）
+
+`core/agent/dsh-web-client.js` 通过 `dsh web`（默认 3080）的 `/api` 与常驻 Agent 会话交互。DSH 0.1.5 起换了两样东西，客户端已按新协议对接（不再兼容 0.1.0 的点号接口）：
+
+- **内置鉴权（BrowserAuth）**：`/api` 需要签名 cookie。`dsh web` 启动时会打印 `http://127.0.0.1:3080/?token=<临时令牌>`；用该令牌 GET 一次即下发 `dsh-auth-*` cookie（签名密钥持久化，重启 DSH 后 cookie 仍有效）。客户端把 cookie 缓存在数据目录 `dsh-web-auth.json` 复用，只有拿不到 cookie 时才需要令牌：
+  - 由小鹈鹕拉起 `dsh web` 时，自动从启动输出里抓令牌（`--no-open`，不弹浏览器）；
+  - 用户自己启动 DSH 时，把日志里的 `?token=` 填到 `config.json` 的 `agent.dsh.webToken`（或环境变量 `DSH_WEB_TOKEN`），认证一次即可。
+  没令牌时错误信息会直接给出这段指引，而不是只丢一句 401。
+- **接口风格**：Typert Remote，路径 `<namespace>/<method>`（如 `session/prompt`、`session/page`、`workspace/create`），载荷为 `payload.args = { <参数名>: request }`；参数名各控制器不统一（`request` / `_request`），客户端会按服务端的校验提示自动纠正并记住。发消息必须带 `requestId`；历史用 `session/page`（游标取自 `session/list` 的 `asOfSeq`），事件结构与旧版一致（`assistant/message`）。
+
+`findDshBin()` 会在**项目依赖 / 全局安装 / npx 缓存**里挑版本号最高的那份 dsh（0.1.5 以下没有这套 WebUI 协议，捡到老的会 404）。
+
+**会话 id 代次**：同一条会话 key（`agent:main:webui:*` / `agent:main:weixin:*`）永远映射同一个 DSH sessionId，历史靠它续上。
+常量 `SESSION_GENERATION`（`core/agent/dsh-web-client.js`）决定代次；当前是 `v3`——`v2` 那批会话文件被从 DSH 外部删过，
+DSH 仍记着那些 id，`session/prompt` 会被接受但落盘时 `ENOENT`（表现为「本轮运行失败」），已经不可用。
+以后再出现「绕过 DSH 删掉会话文件」，把该常量 +1 即可；从界面清理会话请用 DSH 的归档，或让小鹈鹕换一代 id。
+
 ## 微信通道（iLink）
 
 1. 看板点「扫码登录」→ `POST /api/wechat/login/start`
@@ -135,6 +176,8 @@ tests/                  单元测试与集成测试（node --test）
 
 - 数据默认本地存储：SQLite、`contacts/`、`inbox.jsonl`、`intents.json`、`config.toml` 等均在数据目录（开发模式为项目根目录，打包模式为用户数据目录）
 - `config.json`（含 Provider Key）、`config.toml`（微信凭据）、`unread.json`、`conversations.json` 均已 gitignore，不入库
+- 登录会话持久化在数据目录 `sessions.json`（HttpOnly Cookie `xtp_session`，7 天有效，载入时清理过期项）。
+  保存设置会热重启核心，会话若只在内存里，重启后看板/桌面端会静默变“未登录”（表现为下一次保存报 `unauthorized`），所以会话必须落盘
 - 剪贴板只识别聊天记录格式，非聊天内容丢弃
 
 ## 配置项一览（config.json）
@@ -145,7 +188,7 @@ tests/                  单元测试与集成测试（node --test）
 | `proactivity.level` | 全局主动级别 L0~L4 | 主动 → 策略配置 |
 | `heartbeat.intervalSec` | 心跳间隔（秒） | 主动 → 策略配置 |
 | `capture.enabled` | 剪贴板捕获开关（默认关闭） | 记忆 → 记忆输入 |
-| `capture.replySuggestions.*` | 回复建议开关与参数 | 记忆 → 记忆输入 |
+| `capture.replySuggestions.*` | 回复建议开关与参数（`optionCount` 组数、`maxMessagesPerPlan` 每组最多几条、`maxMessageChars` 单条字数、`expireSeconds` 有效期） | 记忆 → 记忆输入 |
 | `selfNicknames` | 自己的微信昵称（归档排除用） | 记忆 → 记忆输入 |
 | `relationCheck` / `reminder` / `doNotDisturb` | 关系维护与提醒策略 | 主动 → 策略配置 |
 | `notify.mode` / `notify.bark.*` | 通知通道（微信 / Bark） | 设置 |

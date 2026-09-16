@@ -1,5 +1,8 @@
 # DSH Agent 后端集成（小鹈鹕）
 
+> **现状（2026-09）**：主路径已改为 **DSH Web 常驻会话**（`core/agent/dsh-web-client.js` → `dsh web` 的 `/api`，需 dsh 0.1.5+ 的 BrowserAuth，见 [ARCHITECTURE.md「DSH WebUI 对接」](../ARCHITECTURE.md)）；
+> 本文下面写的 headless 子进程 + `agent-tasks.jsonl` 队列是**兜底/后台执行**路径，只在 Web 路径不可用时使用，且依赖 `agent/dsh-home` 下存在与 `agent.reply.profile` 同名的 profile。
+
 小鹈鹕通过 DSH Headless 获得通用 Agent 能力：
 
 - 查看本地文件

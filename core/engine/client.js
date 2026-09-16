@@ -3,7 +3,20 @@
 'use strict';
 
 const { loadConfig } = require('../lib/config');
+const { log } = require('../lib/log');
 const { resolveProvider, normalizeChatUrl } = require('./providers');
+
+// 关闭「思考过程」的请求体：不同服务商参数名不同。
+// 思考型模型（DeepSeek 混合模型等）在「直接产出 JSON」的任务上会先吐几百上千 token 的思考，
+// 实测同一个建议提示词 5.5s -> 1.0s，所以这类任务显式关掉。
+function noThinkingBody(provider, engine = {}) {
+  const custom = engine.noThinkingBody;
+  if (custom && typeof custom === 'object') return custom;
+  const hay = `${(provider && provider.name) || ''} ${(provider && provider.baseUrl) || ''}`.toLowerCase();
+  if (hay.includes('deepseek')) return { thinking: { type: 'disabled' } };
+  if (hay.includes('siliconflow')) return { enable_thinking: false };
+  return {};
+}
 
 async function chatCompletion(messages, opts = {}) {
   const cfg = opts.config || loadConfig();
@@ -26,9 +39,11 @@ async function chatCompletion(messages, opts = {}) {
     messages,
     temperature: opts.temperature !== undefined ? opts.temperature : 0.2
   };
+  if (opts.thinking === false) Object.assign(body, noThinkingBody(provider, engine));
 
   let lastErr = null;
   for (let i = 0; i <= maxRetries; i++) {
+    const startedAt = Date.now();
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -38,7 +53,10 @@ async function chatCompletion(messages, opts = {}) {
         const data = await res.json();
         const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
         if (typeof content === 'string' && content.trim()) {
-          return { ok: true, text: content.trim(), raw: data, model: data.model || provider.model };
+          const usage = (data && data.usage) || {};
+          // 记一条耗时：以后判断「慢」是模型慢还是本地慢，看日志就够了
+          log('info', 'engine', `${provider.model} ${Date.now() - startedAt}ms in=${usage.prompt_tokens || '?'} out=${usage.completion_tokens || '?'}${opts.taskName ? ' task=' + opts.taskName : ''}`);
+          return { ok: true, text: content.trim(), raw: data, model: data.model || provider.model, usage };
         }
         lastErr = new Error('模型服务返回了空内容');
       } else {
@@ -65,10 +83,11 @@ async function runTask(taskName, context, opts = {}) {
   const r = await chatCompletion([{ role: 'user', content: prompt }], {
     ...(task.opts || {}),
     ...opts,
+    taskName,
     ...(smallModel && !opts.model ? { model: smallModel } : {})
   });
   if (!r.ok) return r;
   return task.parse(r.text, context) || { ok: false, error: '模型输出无法解析' };
 }
 
-module.exports = { chatCompletion, runTask };
+module.exports = { chatCompletion, runTask, noThinkingBody };

@@ -22,7 +22,7 @@ function sessionIdForConversation(sessionKey, cwd = dshWeb.PROJECT_ROOT) {
   //   agent:main:weixin:<user> -> versioned stable session id
   // salt = cwd，保证项目迁移后不继续复用旧目录的历史会话，也不会触发
   // “same sessionId + different cwd”的 DSH Web 冲突。
-  return dshWeb.sessionIdForUser(sessionKey, 'tinypelican-main-v2', cwd);
+  return dshWeb.conversationSessionId(sessionKey, cwd, 'main');
 }
 
 async function ensureReady() {

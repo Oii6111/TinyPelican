@@ -39,8 +39,10 @@ config.json
 config.toml
 weixin-cursor.json
 weixin-context.json
+dsh-web-auth.json
 conversations.json
 unread.json
+sessions.json
 
 # 密钥/凭据类文件（额外保险）
 .env
@@ -58,3 +60,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# 本地备份（清理数据前的备份，含聊天内容，不入库）
+.backup/

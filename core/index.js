@@ -175,14 +175,18 @@ async function main() {
 
   const watcher = new ClipboardWatcher({
     config: cfg,
-    onBatch: ({ msgs, contact, targetWindow }) => {
-      const hadContact = contact ? !!chatDb.getMember(contact) : true;
-      const added = ingestMessages(msgs, contact);
-      if (added) {
-        triggerIntent();
-        const newContactText = !hadContact && contact ? `\n识别到新联系人「${contact}」，请在联系人页面补充备注和描述。` : '';
-        notifyUser({ config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${contact ? `，联系人：${contact}` : ''}。${newContactText}` })
-          .catch((e) => log('warn', 'capture', '录入完成通知失败：' + String((e && e.message) || e)));
+    onBatch: ({ msgs, contact, targetWindow, repeat = false }) => {
+      // repeat = 同一段聊天又被复制了一次（内容早已归档）。此时不重复归档、不发“已录入”通知，
+      // 但仍要重新给建议：用户再复制一次，意思就是「再给我建议」。
+      if (!repeat) {
+        const hadContact = contact ? !!chatDb.getMember(contact) : true;
+        const added = ingestMessages(msgs, contact);
+        if (added) {
+          triggerIntent();
+          const newContactText = !hadContact && contact ? `\n识别到新联系人「${contact}」，请在联系人页面补充备注和描述。` : '';
+          notifyUser({ config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${contact ? `，联系人：${contact}` : ''}。${newContactText}` })
+            .catch((e) => log('warn', 'capture', '录入完成通知失败：' + String((e && e.message) || e)));
+        }
       }
       // 回复建议：先归档再生成，失败不影响归档
       generateReplySuggestions({ contact, targetWindow, config: cfg })

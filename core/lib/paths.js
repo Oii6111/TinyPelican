@@ -41,7 +41,9 @@ function getPaths() {
     unread: path.join(b, 'unread.json'),
     configToml: path.join(b, 'config.toml'),
     weixinCursor: path.join(b, 'weixin-cursor.json'),
-    weixinContext: path.join(b, 'weixin-context.json')
+    weixinContext: path.join(b, 'weixin-context.json'),
+    // 登录会话（会话 token，重启核心后仍然有效，避免每次保存配置都被踢下线）
+    sessions: path.join(b, 'sessions.json')
   };
 }
 

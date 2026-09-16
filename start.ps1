@@ -1,6 +1,7 @@
-# 小鹈鹕 — 一键启动（开发模式）
+﻿# 小鹈鹕 — 一键启动（开发模式）
 # 后台拉起 core/launcher.js（守护核心：HTTP 服务 + 剪贴板监听 + 微信通道 + 定时任务），然后打开本地窗口。
 # 用法：双击「启动小鹈鹕.bat」，或 powershell -NoProfile -ExecutionPolicy Bypass -File start.ps1
+# 注意：本文件必须保存为 UTF-8 with BOM，否则 Windows PowerShell 5.1 会按 ANSI 解码中文注释并解析失败。
 
 $ErrorActionPreference = 'Continue'
 $Root = $PSScriptRoot

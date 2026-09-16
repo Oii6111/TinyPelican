@@ -7,10 +7,9 @@ const { getPaths } = require('./paths');
 
 const DEFAULTS = {
   selfNicknames: [],
-  pollMs: 700,
-  debounceMs: 5000,
+  // 剪贴板轮询间隔：调小能让建议回复更快感知到复制（300ms 只比 700ms 多约 1% 单核）
+  pollMs: 400,
   minMatchLines: 2,
-  inboxMaxLines: 500,
   relationCheck: { enabled: true, days: 7 },
   intent: {
     agent: 'intent',
@@ -66,6 +65,11 @@ const DEFAULTS = {
       maxConcurrent: 1,
       profile: 'tinypelican',
       timeoutMs: 300000
+    },
+    // DSH WebUI（dsh web）内置鉴权的登录令牌：留空也能用——
+    // 由本程序拉起 dsh web 时会自动从启动日志抓取；用户自己启动时，把日志里的 ?token= 填到这里（认证一次即可，cookie 会落盘复用）
+    dsh: {
+      webToken: ''
     }
   },
   proactivity: {
@@ -76,8 +80,15 @@ const DEFAULTS = {
     replySuggestions: {
       enabled: true,
       optionCount: 3,
+      // 快速模式（默认，关模型思考）：每组最多 4 条、每条不超过 40 字
+      maxMessagesPerPlan: 4,
+      maxMessageChars: 40,
+      // 深度思考模式（卡片上的 🧠 按钮）：允许更多条、更长内容，也更慢
+      deepMaxMessagesPerPlan: 8,
+      deepMaxMessageChars: 120,
+      deepTimeoutMs: 120000,
       maxHistoryMessages: 24,
-      expireSeconds: 120,
+      expireSeconds: 300,
       maxOptionChars: 120,
       timeoutMs: 30000
     }

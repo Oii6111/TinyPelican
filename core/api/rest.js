@@ -88,7 +88,7 @@ function createRestServer({ config = null, onRestart = null } = {}) {
         '/login', '/logo.png',
         '/api/auth/login', '/api/auth/logout', '/api/auth/status',
         '/api/reply-suggestions/current', '/api/reply-suggestions/current/refresh-position',
-        '/suggestion-icon.html', '/suggestion-card.html', '/suggestion-icon.css', '/suggestion-card.css'
+        '/suggestion-card.html', '/suggestion-card.css'
       ]);
 
       // 未登录时：API 返回 401；页面请求统一显示登录页
@@ -116,8 +116,8 @@ function createRestServer({ config = null, onRestart = null } = {}) {
         return res.end(data);
       }
       if (p === '/favicon.ico' || p === '/styles.css' ||
-          p === '/suggestion-icon.html' || p === '/suggestion-card.html' ||
-          p === '/suggestion-icon.css' || p === '/suggestion-card.css' ||
+          p === '/suggestion-card.html' ||
+          p === '/suggestion-card.css' ||
           p.startsWith('/src/')) {
         if (await serveStatic(res, p.slice(1))) return;
       }

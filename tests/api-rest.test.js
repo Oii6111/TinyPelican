@@ -10,6 +10,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaotihu-api-'));
 process.env.XIAOTIHU_DATA_DIR = tmp;
 
 const { createServer } = require('../core/server');
+const store = require('../core/reply/suggestion-store');
 
 function listen(srv) {
   return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve(srv.address().port)));
@@ -66,14 +67,63 @@ test('REST 服务：健康/设置读写/静态资源/404', async () => {
     // 回复建议 API
     const cur = await (await fetch(base + '/api/reply-suggestions/current')).json();
     assert.strictEqual(cur.suggestion, null);
+    assert.strictEqual(cur.pending, null);
     const badApply = await fetch(base + '/api/reply-suggestions/nope/apply', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ index: 0 })
+      body: JSON.stringify({ plan: 0 })
     });
     assert.strictEqual(badApply.status, 400);
-    const dismiss = await (await fetch(base + '/api/reply-suggestions/nope/dismiss', { method: 'POST' })).json();
-    assert.strictEqual(dismiss.ok, false);
+    const badNext = await fetch(base + '/api/reply-suggestions/nope/next', { method: 'POST' });
+    assert.strictEqual(badNext.status, 400);
+    const badContinue = await fetch(base + '/api/reply-suggestions/nope/continue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deep: false })
+    });
+    assert.strictEqual(badContinue.status, 400);
+    const badReset = await (await fetch(base + '/api/reply-suggestions/nope/reset', { method: 'POST' })).json();
+    assert.strictEqual(badReset.ok, false);
+    // 没有当前建议时，换一批 / 按描述重写直接失败（不会去调模型）
+    const regen = await (await fetch(base + '/api/reply-suggestions/current/regenerate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hint: '婉拒他' })
+    })).json();
+    assert.strictEqual(regen.ok, false);
+    assert.ok(regen.error);
+
+    // 有一批建议时：方案序号越界 / 没有顺序状态都只报错，不触发任何回填
+    store.invalidate();
+    store.replaceSuggestion({
+      id: 'reply_api_1',
+      contact: 'Hank',
+      sourceMessage: '在吗',
+      plans: [{ tone: '自然', messages: ['在的', '怎么了'] }],
+      targetWindow: null,
+      createdAt: new Date().toISOString(),
+      expiresAt: Date.now() + 60000
+    });
+    const cur2 = await (await fetch(base + '/api/reply-suggestions/current')).json();
+    assert.strictEqual(cur2.suggestion.contact, 'Hank');
+    assert.deepStrictEqual(cur2.suggestion.plans[0].messages, ['在的', '怎么了']);
+    const badPlan = await fetch(base + '/api/reply-suggestions/reply_api_1/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: 5 })
+    });
+    assert.strictEqual(badPlan.status, 400);
+    const noSeq = await fetch(base + '/api/reply-suggestions/reply_api_1/next', { method: 'POST' });
+    assert.strictEqual(noSeq.status, 400);
+    // 还没开始顺序发送时，「换一批剩下的」也不该触发模型
+    const noSeqContinue = await (await fetch(base + '/api/reply-suggestions/reply_api_1/continue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deep: false })
+    })).json();
+    assert.strictEqual(noSeqContinue.ok, false);
+    const reset = await (await fetch(base + '/api/reply-suggestions/reply_api_1/reset', { method: 'POST' })).json();
+    assert.strictEqual(reset.ok, true);
 
     // 静态资源
     const html = await (await fetch(base + '/')).text();
@@ -82,8 +132,9 @@ test('REST 服务：健康/设置读写/静态资源/404', async () => {
     assert.ok(css.includes('--accent'));
     const src = await fetch(base + '/src/app.mjs');
     assert.strictEqual(src.status, 200);
-    assert.strictEqual((await fetch(base + '/suggestion-icon.html')).status, 200);
     assert.strictEqual((await fetch(base + '/suggestion-card.html')).status, 200);
+    // 悬浮小图标已取消：卡片直接出现，不再有独立图标窗口
+    assert.strictEqual((await fetch(base + '/suggestion-icon.html')).status, 404);
 
     // 未匹配路由
     assert.strictEqual((await fetch(base + '/api/nope')).status, 404);

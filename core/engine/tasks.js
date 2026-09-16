@@ -5,8 +5,7 @@
 const { buildIntentPrompt } = require('./prompts/intent');
 const { buildRelationPrompt } = require('./prompts/relation');
 const { buildReminderPrompt } = require('./prompts/reminder');
-const { buildReplyPrompt } = require('./prompts/reply');
-const { buildReplySuggestionsPrompt } = require('./prompts/reply-suggestions');
+const { buildReplySuggestionsPrompt, buildReplyFollowUpPrompt } = require('./prompts/reply-suggestions');
 const { extractJsonArray } = require('./extract');
 
 const TASKS = {
@@ -26,14 +25,16 @@ const TASKS = {
     buildPrompt: (ctx) => buildReminderPrompt(ctx.intent),
     parse: (text) => ({ ok: true, text })
   },
-  reply: {
-    opts: { temperature: 0.8 },
-    buildPrompt: (ctx) => buildReplyPrompt(ctx),
-    parse: (text) => ({ ok: true, text })
-  },
   reply_suggestions: {
-    opts: { temperature: 0.75, timeoutMs: 30000 },
+    // thinking: false = 不让模型先吐思考过程（DeepSeek 等混合模型能快好几倍，见 client.js）
+    opts: { temperature: 0.75, timeoutMs: 30000, thinking: false },
     buildPrompt: (ctx) => buildReplySuggestionsPrompt(ctx),
+    parse: (text) => ({ ok: true, text, array: extractJsonArray(text) })
+  },
+  // 用户已经按一组方案发出去前几条，只重写「剩下的几条」（必须带上已发内容做上下文）
+  reply_followup: {
+    opts: { temperature: 0.75, timeoutMs: 30000, thinking: false },
+    buildPrompt: (ctx) => buildReplyFollowUpPrompt(ctx),
     parse: (text) => ({ ok: true, text, array: extractJsonArray(text) })
   }
 };

@@ -1,6 +1,6 @@
 // 小鹈鹕 TinyPelican — Electron 壳
 // 启动时后台拉起核心服务（core/index.js）；核心以退出码 42 退出时自动重启（微信登录/登出热重启）。
-// 同时创建两个无边框浮窗：右下角建议小图标 + 点击后弹出的建议卡片。
+// 另有一个无边框回复建议浮窗：复制聊天后自动出现在微信输入框上方，可换一批 / 按描述重写 / 逐条回填。
 const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -33,12 +33,17 @@ if (isPackaged) {
 
 let coreProc = null;
 let win = null;
-let iconWin = null;
 let cardWin = null;
 let suggestionPollTimer = null;
 let currentAnchor = null;
 let lastSuggestionId = null;
+let lastShowToken = null;
+let lastPendingAt = null;
 let authCookie = '';
+
+const CARD_WIDTH = 340;
+const CARD_HEIGHT = 300;
+const CARD_EDGE_GAP = 24;
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -89,10 +94,18 @@ async function establishDesktopSession() {
   }
 }
 
-function desktopFetch(url, options = {}) {
+async function desktopFetch(url, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (authCookie) headers.Cookie = authCookie;
-  return fetch(url, { ...options, headers });
+  const res = await fetch(url, { ...options, headers });
+  // 会话失效（核心重启 / 过期）：自动重新登录一次再重试，桌面端不该因为重启就掉线
+  if (res.status === 401) {
+    await establishDesktopSession();
+    const retryHeaders = { ...(options.headers || {}) };
+    if (authCookie) retryHeaders.Cookie = authCookie;
+    return fetch(url, { ...options, headers: retryHeaders });
+  }
+  return res;
 }
 
 function findNode() {
@@ -138,14 +151,14 @@ function clamp(value, min, max) {
 }
 
 function positionAtScreenCorner() {
-  if (!iconWin || !cardWin || iconWin.isDestroyed() || cardWin.isDestroyed()) return;
+  if (!cardWin || cardWin.isDestroyed()) return;
   const area = screen.getPrimaryDisplay().workArea;
-  iconWin.setPosition(area.x + area.width - 68, area.y + area.height - 68);
-  cardWin.setPosition(area.x + area.width - 340, area.y + area.height - 68 - 290);
+  const [width, height] = cardWin.getSize();
+  cardWin.setPosition(area.x + area.width - width - 16, area.y + area.height - height - 16);
 }
 
 function positionFloatingWindows(anchor = currentAnchor) {
-  if (!iconWin || !cardWin || iconWin.isDestroyed() || cardWin.isDestroyed()) return;
+  if (!cardWin || cardWin.isDestroyed()) return;
 
   if (!anchor || !Number.isFinite(Number(anchor.x)) || !Number.isFinite(Number(anchor.y))) {
     positionAtScreenCorner();
@@ -154,21 +167,15 @@ function positionFloatingWindows(anchor = currentAnchor) {
 
   const anchorX = Number(anchor.x);
   const anchorY = Number(anchor.y);
-  const iconWidth = 48;
-  const iconHeight = 48;
-  const cardWidth = 340;
-  const cardHeight = 300;
+  const [cardWidth, cardHeight] = cardWin.getSize();
 
   // 用锚点找最近的显示器，并限制在该显示器工作区内，防止微信位于副屏/屏幕边缘时窗口越界。
   const display = screen.getDisplayNearestPoint({ x: anchorX, y: anchorY });
   const area = display.workArea;
 
-  const iconX = clamp(Math.round(anchorX - iconWidth / 2), area.x, area.x + area.width - iconWidth);
-  const iconY = clamp(Math.round(anchorY - iconHeight / 2), area.y, area.y + area.height - iconHeight);
-  const cardX = clamp(Math.round(anchorX - cardWidth + iconWidth / 2), area.x, area.x + area.width - cardWidth);
+  // 卡片贴在微信输入框右上方：右下角对齐锚点再左移一点，向上抬出输入框区域。
+  const cardX = clamp(Math.round(anchorX - cardWidth + CARD_EDGE_GAP), area.x, area.x + area.width - cardWidth);
   const cardY = clamp(Math.round(anchorY - cardHeight - 12), area.y, area.y + area.height - cardHeight);
-
-  iconWin.setPosition(iconX, iconY);
   cardWin.setPosition(cardX, cardY);
 }
 
@@ -182,7 +189,8 @@ async function refreshCurrentAnchor() {
     const anchor = s.anchor && Number.isFinite(Number(s.anchor.x)) && Number.isFinite(Number(s.anchor.y))
       ? { x: Number(s.anchor.x), y: Number(s.anchor.y) }
       : null;
-    if (s.id !== lastSuggestionId) lastSuggestionId = s.id;
+    lastSuggestionId = s.id;
+    lastShowToken = Number(s.showToken) || 1;
     currentAnchor = anchor;
     positionFloatingWindows(currentAnchor);
     return 'ok';
@@ -191,56 +199,34 @@ async function refreshCurrentAnchor() {
   }
 }
 
-async function showCard() {
-  if (!cardWin || cardWin.isDestroyed()) return;
-  // 点击图标时按服务端保存的句柄重新读窗口矩形，窗口移动后卡片仍跟随微信。
-  const state = await refreshCurrentAnchor();
-  if (state === 'none') {
-    lastSuggestionId = null;
-    currentAnchor = null;
-    hideAllSuggestions();
-    return;
-  }
-  positionFloatingWindows(currentAnchor);
-  if (!cardWin.isVisible()) cardWin.show();
-  cardWin.webContents.send('suggestion:card-opened');
-}
-
 function hideCard() {
   if (cardWin && !cardWin.isDestroyed() && cardWin.isVisible()) cardWin.hide();
 }
 
-function hideAllSuggestions() {
-  hideCard();
-  if (iconWin && !iconWin.isDestroyed() && iconWin.isVisible()) iconWin.hide();
+// 卡片内容高度变化时把窗口收到刚好包住卡片，避免透明区域挡住微信。
+function resizeCard(size) {
+  if (!cardWin || cardWin.isDestroyed()) return;
+  const width = clamp(Math.round(Number(size && size.width) || CARD_WIDTH), 280, 460);
+  const height = clamp(Math.round(Number(size && size.height) || CARD_HEIGHT), 120, 620);
+  const [curWidth, curHeight] = cardWin.getSize();
+  if (curWidth === width && curHeight === height) return;
+  const wasResizable = cardWin.isResizable();
+  try {
+    if (!wasResizable) cardWin.setResizable(true);
+    cardWin.setSize(width, height);
+    if (!wasResizable) cardWin.setResizable(false);
+  } catch {
+    try { cardWin.setSize(width, height); } catch {}
+  }
+  positionFloatingWindows(currentAnchor);
 }
 
 function createFloatingWindows() {
   const preload = path.join(__dirname, 'preload.js');
 
-  iconWin = new BrowserWindow({
-    width: 48,
-    height: 48,
-    show: false,
-    frame: false,
-    transparent: true,
-    hasShadow: false,
-    backgroundColor: '#00000000',
-    roundedCorners: false,
-    resizable: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    focusable: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, preload }
-  });
-  iconWin.loadURL(`http://127.0.0.1:${PORT}/suggestion-icon.html`);
-  iconWin.setBackgroundColor('#00000000');
-  if (typeof iconWin.setHasShadow === 'function') iconWin.setHasShadow(false);
-  iconWin.setAlwaysOnTop(true, 'screen-saver');
-
   cardWin = new BrowserWindow({
-    width: 340,
-    height: 300,
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
     show: false,
     frame: false,
     transparent: true,
@@ -271,30 +257,46 @@ async function pollSuggestions() {
     if (!res.ok) return;
     const data = await res.json();
     const s = data && data.suggestion;
-    if (s && iconWin && !iconWin.isDestroyed()) {
-      const anchor = s.anchor && Number.isFinite(Number(s.anchor.x)) && Number.isFinite(Number(s.anchor.y))
-        ? { x: Number(s.anchor.x), y: Number(s.anchor.y) }
-        : null;
-      // 只在建议 ID 变化时重新定位，避免每 800ms 重复 setPosition()。
-      if (s.id !== lastSuggestionId) {
-        lastSuggestionId = s.id;
-        currentAnchor = anchor;
-        positionFloatingWindows(currentAnchor);
-        if (cardWin && !cardWin.isDestroyed()) {
-          cardWin.showInactive();
-          if (!cardWin.isVisible()) cardWin.show();
-          cardWin.webContents.send('suggestion:card-opened');
-        }
-      }
-      if (!iconWin.isVisible()) {
-        iconWin.showInactive();
-        if (!iconWin.isVisible()) iconWin.show();
-      }
-    } else {
+    const pending = data && data.pending;
+    if (!s && !pending) {
       lastSuggestionId = null;
+      lastShowToken = null;
+      lastPendingAt = null;
       currentAnchor = null;
-      hideAllSuggestions();
+      hideCard();
+      return;
     }
+
+    // 模型还没返回：先按 pending 里的锚点把浮窗拉起来，卡片自己会显示「思考中」
+    if (pending && pending.startedAt && pending.startedAt !== lastPendingAt) {
+      lastPendingAt = pending.startedAt;
+      const pendingAnchor = pending.anchor && Number.isFinite(Number(pending.anchor.x)) && Number.isFinite(Number(pending.anchor.y))
+        ? { x: Number(pending.anchor.x), y: Number(pending.anchor.y) }
+        : currentAnchor;
+      currentAnchor = pendingAnchor;
+      positionFloatingWindows(currentAnchor);
+      cardWin.showInactive();
+      if (!cardWin.isVisible()) cardWin.show();
+      cardWin.webContents.send('suggestion:shown');
+      return;
+    }
+    if (!pending) lastPendingAt = null;
+    if (!s) return;
+
+    // 只在「新一批建议」或「同一批被要求重新显示」（showToken 变化，比如用户又复制了一次同一段聊天）
+    // 时重新定位并显示，避免每 800ms 重复 setPosition()。用户点 ✕ 收起只是隐藏窗口，服务端建议仍在，
+    // 所以要靠 showToken 才能区分「收起」和「重新要一次」。
+    const showToken = Number(s.showToken) || 1;
+    if (s.id === lastSuggestionId && showToken === lastShowToken) return;
+    lastSuggestionId = s.id;
+    lastShowToken = showToken;
+    // 重新读一次窗口矩形：微信窗口在复制之后移动过也能贴住输入框。
+    await refreshCurrentAnchor();
+    if (!cardWin || cardWin.isDestroyed()) return;
+    positionFloatingWindows(currentAnchor);
+    cardWin.showInactive();
+    if (!cardWin.isVisible()) cardWin.show();
+    cardWin.webContents.send('suggestion:shown');
   } catch {}
 }
 
@@ -320,11 +322,13 @@ app.whenReady().then(async () => {
 
   createFloatingWindows();
 
-  ipcMain.on('suggestion:show-card', () => showCard());
   ipcMain.on('suggestion:hide-card', () => hideCard());
-  ipcMain.on('suggestion:apply-done', () => hideAllSuggestions());
+  ipcMain.on('suggestion:resize', (event, size) => {
+    if (event && event.sender && event.sender === (cardWin && cardWin.webContents)) resizeCard(size);
+  });
 
-  suggestionPollTimer = setInterval(pollSuggestions, 800);
+  // 250ms：本地回环上的小接口，代价可忽略，但卡片能更快弹出来（原 800ms 光等待就要 0.8s）
+  suggestionPollTimer = setInterval(pollSuggestions, 250);
   pollSuggestions();
 
   app.on('activate', () => {

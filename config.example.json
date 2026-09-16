@@ -72,13 +72,23 @@
   "proactivity": {
     "level": "L2"
   },
+  "agent": {
+    "reply": { "enabled": true, "profile": "tinypelican", "maxHistory": 12, "timeoutMs": 180000 },
+    "queue": { "enabled": true, "intervalMs": 10000, "maxConcurrent": 1, "profile": "tinypelican", "timeoutMs": 300000 },
+    "dsh": { "webToken": "" }
+  },
   "capture": {
     "enabled": false,
     "replySuggestions": {
       "enabled": true,
       "optionCount": 3,
+      "maxMessagesPerPlan": 4,
+      "maxMessageChars": 40,
+      "deepMaxMessagesPerPlan": 8,
+      "deepMaxMessageChars": 120,
+      "deepTimeoutMs": 120000,
       "maxHistoryMessages": 24,
-      "expireSeconds": 120,
+      "expireSeconds": 300,
       "maxOptionChars": 120,
       "timeoutMs": 30000
     }

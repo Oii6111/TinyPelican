@@ -157,17 +157,26 @@ class ClipboardWatcher {
     }
     if (msgs.length < this.minMatchLines) return;
     const fresh = msgs.filter((m) => !this.seen.has(msgKey(m)));
-    if (!fresh.length) return;
-    for (const m of fresh) this.seen.add(msgKey(m));
-    if (this.seen.size > 100000) {
-      this.seen = new Set([...this.seen].slice(-100000));
+    if (fresh.length) {
+      for (const m of fresh) this.seen.add(msgKey(m));
+      if (this.seen.size > 100000) {
+        this.seen = new Set([...this.seen].slice(-100000));
+      }
     }
+    // 同一段聊天又被复制了一次：不重复归档（见上面的 seen 去重），但要告诉上层「用户又要了一次」，
+    // 否则回复建议卡片不会再弹出来。
+    this._emitBatch(msgs, fresh, windowRef, !fresh.length);
+  }
+
+  _emitBatch(msgs, fresh, windowRef, repeat) {
     if (this._debounceTimer) clearTimeout(this._debounceTimer);
     this._debounceTimer = setTimeout(() => {
       const contact = getBatchContact(msgs, this.selfNicknames);
-      log('info', 'capture', `捕获 ${fresh.length} 条新消息`);
-      this.onBatch({ msgs: fresh, contact, targetWindow: windowRef });
-    }, 500);
+      log('info', 'capture', repeat
+        ? `捕获 ${msgs.length} 条重复消息（同一段聊天再次复制）`
+        : `捕获 ${fresh.length} 条新消息`);
+      this.onBatch({ msgs: fresh, contact, targetWindow: windowRef, repeat });
+    }, 250);
   }
 
   stop() {
