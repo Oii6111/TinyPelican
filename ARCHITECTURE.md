@@ -64,6 +64,7 @@ core/                   核心服务（Node，无第三方运行时依赖，Node
     scheduler.js        进程内定时调度（防重叠、异常隔离）
     runner.js           提醒执行器（到期点、免打扰、文案生成、推送）
   reply/                回复建议（多组连贯消息方案、换一批/按描述重写、状态、安全回填）
+  import/               聊天记录批量导入（ZIP/TXT/CSV/JSON → 统一归档进 SQLite）
   agent/                DSH Agent 后端（headless、web 会话、任务队列、微信回复）
   status.js             全局状态（心跳 / 主动级别 / 未读数）
   api/                  路由层：rest.js 装配 + router.js 路由表 + routes/ 按领域拆分
@@ -138,6 +139,16 @@ tests/                  单元测试与集成测试（node --test）
 - 上下文变了（你回了新消息，最新消息指纹不同）→ 自动重新生成；复制别的聊天、过期或核心重启也会丢掉旧那批。
 
 安全边界：回填前校验窗口句柄 + 进程 + 前台窗口，只发 Ctrl+V 不发 Enter；无微信窗口句柄时降级为只复制到剪贴板。
+
+## 聊天记录批量导入（微信导出 / 分享目标）
+
+微信 4.x 支持把聊天记录导出成 ZIP/TXT；导入管线见 `core/import/chat-archive.js`（`npm run import -- <文件>`、`POST /api/import/archive`）。
+压缩包在内存内解压（`core/import/zip.js`，无第三方依赖），按联系人归档进 SQLite 并自动去重；不认识的文件如实报告状态 + 内容预览。
+
+系统入口分两类，细节与取舍见 [docs/chat-import.md](docs/chat-import.md)：
+
+- **经典 Win32**：`scripts/register-import-handler.ps1` 注册「发送到」与右键菜单（HKCU，可 `-Unregister` 撤销），配合 `scripts/tinypelican-import.cmd` 使用；
+- **微信「转发到其他应用」**（已实现）：走的是 Windows 分享面板（UWP `windows.shareTarget` 合约），只有**打包应用**会出现在列表里。`packaging/share-target/` 提供了全信任打包 shim（C#，`Windows.FullTrustApplication` + `rescap:runFullTrust`）：接收 `ShareTarget` 激活 → 取 `StorageItems` → 调用 `core/import/chat-archive.js` 入库（微信导出无昵称，shim 会先问「这段记录属于谁」）。安装/卸载：`install-share-target.ps1` / `-Unregister`（开发模式免签名注册，本机已验证）。
 
 ## DSH WebUI 对接（dsh 0.1.5+）
 

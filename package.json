@@ -14,6 +14,7 @@
     "server": "node core/server.js",
     "daemon": "node core/launcher.js",
     "remind:dry": "node remind.js --dry-run",
+    "import": "node core/import/chat-archive.js",
     "check": "node scripts/check-syntax.js"
   }
 }

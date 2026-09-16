@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  小鹈鹕分享目标：让「微信 → 转发到其他应用」的列表里出现「小鹈鹕 · 聊天记录导入」。
+  说明：Windows 分享面板只列有包标识（MSIX）且声明了 windows.shareTarget 的应用，
+        所以这份清单必须通过 Add-AppxPackage（开发模式可免签名注册）安装，光放注册表没用。
+  修改 Identity 的 Version / Publisher 时，注意与安装证书保持一致（开发模式注册用的是本地开发者证书）。
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity Name="TinyPelican.ShareTarget" Publisher="CN=TinyPelican-Dev" Version="1.0.0.0" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>小鹈鹕 · 聊天记录导入</DisplayName>
+    <PublisherDisplayName>TinyPelican</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Resources>
+    <Resource Language="zh-CN" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Applications>
+    <Application Id="TinyPelicanShareTarget" Executable="app\TinyPelicanShareTarget.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="小鹈鹕 · 聊天记录导入"
+        Description="把微信导出的聊天记录（ZIP/TXT）导入小鹈鹕本地记忆库"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <uap:Extension Category="windows.shareTarget">
+          <uap:ShareTarget Description="把微信聊天记录导入小鹈鹕">
+            <uap:SupportedFileTypes>
+              <uap:FileType>.zip</uap:FileType>
+              <uap:FileType>.txt</uap:FileType>
+              <uap:FileType>.csv</uap:FileType>
+              <uap:FileType>.json</uap:FileType>
+              <uap:FileType>.jsonl</uap:FileType>
+            </uap:SupportedFileTypes>
+            <uap:DataFormat>StorageItems</uap:DataFormat>
+          </uap:ShareTarget>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- 全信任桌面应用（要跑 node 子进程、读写项目目录） -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

@@ -63,3 +63,11 @@ Thumbs.db
 
 # 本地备份（清理数据前的备份，含聊天内容，不入库）
 .backup/
+
+# 分享目标构建产物（保留源码：csproj / Program.cs / AppxManifest.xml / 安装脚本）
+packaging/share-target/layout/
+packaging/share-target/**/bin/
+packaging/share-target/**/obj/
+
+# 微信导出的聊天记录样本（含隐私内容，不入库）
+聊天记录_*.zip

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    小鹈鹕分享目标 shim
+    只做一件事：接住 Windows 分享面板交过来的文件，转交给核心的导入脚本。
+    必须编译成无控制台窗口的 WinExe；WinRT 类型（AppInstance / ShareTargetActivatedEventArgs）
+    来自 Windows SDK 投影包，随 net*-windows10.0.19041.0 目标框架引入。
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>TinyPelicanShareTarget</AssemblyName>
+    <RootNamespace>TinyPelican.ShareTarget</RootNamespace>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>
