@@ -14,27 +14,69 @@
   "build": {
     "appId": "com.xiaotihu.app",
     "productName": "小鹈鹕",
-    "directories": { "output": "dist" },
-    "files": ["main.js", "preload.js", "package.json"],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
     "extraResources": [
-      { "from": "../dashboard", "to": "content/dashboard" },
-      { "from": "../core", "to": "content/core" },
-      { "from": "../_process_batches.js", "to": "content/_process_batches.js" },
-      { "from": "../extract_intents.js", "to": "content/extract_intents.js" },
-      { "from": "../remind.js", "to": "content/remind.js" },
-      { "from": "../check_relations.js", "to": "content/check_relations.js" },
-      { "from": "../config.json", "to": "content/config.json" },
-      { "from": "../config.example.json", "to": "content/config.example.json" },
-      { "from": "../RULES.md", "to": "content/RULES.md" },
-      { "from": "../logo2.png", "to": "content/logo2.png" }
+      {
+        "from": "../dashboard",
+        "to": "content/dashboard"
+      },
+      {
+        "from": "../core",
+        "to": "content/core"
+      },
+      {
+        "from": "../_process_batches.js",
+        "to": "content/_process_batches.js"
+      },
+      {
+        "from": "../extract_intents.js",
+        "to": "content/extract_intents.js"
+      },
+      {
+        "from": "../remind.js",
+        "to": "content/remind.js"
+      },
+      {
+        "from": "../check_relations.js",
+        "to": "content/check_relations.js"
+      },
+      {
+        "from": "../config.example.json",
+        "to": "content/config.example.json"
+      },
+      {
+        "from": "../RULES.md",
+        "to": "content/RULES.md"
+      },
+      {
+        "from": "../logo2.png",
+        "to": "content/logo2.png"
+      },
+      {
+        "from": "../packaging/vendor/node_modules",
+        "to": "content/vendor/node_modules"
+      }
     ],
     "win": {
-      "target": ["nsis"],
-      "icon": "../dashboard/favicon.ico"
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "TinyPelican-Setup-${version}.${ext}"
     }
   }
 }

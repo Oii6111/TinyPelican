@@ -140,6 +140,24 @@ tests/                  单元测试与集成测试（node --test）
 
 安全边界：回填前校验窗口句柄 + 进程 + 前台窗口，只发 Ctrl+V 不发 Enter；无微信窗口句柄时降级为只复制到剪贴板。
 
+## 打包分发（双击安装即用）
+
+一条命令产出安装包：
+
+```powershell
+npm run dist          # = scripts/build-installer.ps1
+```
+
+产物 `app/dist/TinyPelican-Setup-<版本>.exe`（本机实测 147MB；NSIS oneClick，装到当前用户目录、无需管理员，装完自动启动）。
+
+自包含三件套（都已落地）：
+
+1. **Node 运行时**：不再要求用户安装 Node —— Electron 壳用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 直接把核心当 Node 进程跑（`app/main.js` 的 `coreEnv()/startCore()`）；
+2. **DSH 内置**：`packaging/vendor/node_modules` 里装好 `@deepseek-ai/dsh`（约 223MB，`scripts/build-installer.ps1` 会自动安装），由 electron-builder 复制到 `resources/content/vendor/node_modules`；`findDshBin()` 与 `app/main.js` 都优先用它（`XIAOTIHU_DSH_BIN`）。注意 dsh 0.1.5-rc.2 自己的依赖里有个不存在的版本（`…sidebar-documentpreview@^0.1.5-rc.3`），所以 `packaging/vendor/package.json` 用 npm `overrides` 钉到 rc.2；
+3. **DSH home 与配置**：首次启动把 `DSH_HOME` 指向 `<用户数据目录>/dsh-home`（DSH 自己生成 `web` profile，实测 4 秒完成、不需要联网），并把「设置 → 模型服务」里的模型与 API Key 通过 `buildDshEnv()` 传给 DSH；配置只带 `config.example.json`，首次运行生成 `config.json`（**安装包里不含开发者的 Key**）。
+
+用户拿到 exe 之后要做的只有两件（无法代劳）：在「设置 → 模型服务」填自己的模型 API Key（首次启动会弹提示），以及微信通道扫码登录一次。
+
 ## 意图识别（结合上下文与当前时间）
 
 `core/engine/intent-runner.js` 只扫描**新增消息**（按联系人游标增量），所以提示词必须自带上下文，否则会误判：
@@ -279,8 +297,7 @@ DSH 常驻会话（agent:main:weixin:<user>）
 
 - 微信扫码登录、长轮询收发的 HTTP 细节需真实设备持续验证；
 - 剪贴板捕获默认关闭，需在记忆输入页开启；
-- 打包分发尚未完全自包含：Electron 壳依赖本机 Node，DSH 依赖根目录 `node_modules`，商业化前需内置于安装包；
-- `app/package.json` 打包时会把根目录 `config.json` 作为 `extraResources`，发布前必须改为 `config.example.json` 或首次运行生成，避免泄露密钥；
+- 安装包已自包含（见下节「打包分发」）：用 Electron 自带 Node 跑核心、内置 DSH、不打包开发者 `config.json`；仍未做的是**代码签名与自动更新**（用户会看到 SmartScreen 未知发布者提示）；
 - 心跳间隔修改后需重启核心生效。
 
 ## 运行与打包改进清单（商业化 Beta 前）

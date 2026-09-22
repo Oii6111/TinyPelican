@@ -16,6 +16,7 @@
     "daemon": "node core/launcher.js",
     "remind:dry": "node remind.js --dry-run",
     "import": "node core/import/chat-archive.js",
+    "dist": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
     "check": "node scripts/check-syntax.js"
   }
 }

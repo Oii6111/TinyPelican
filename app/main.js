@@ -1,7 +1,7 @@
 // 小鹈鹕 TinyPelican — Electron 壳
 // 启动时后台拉起核心服务（core/index.js）；核心以退出码 42 退出时自动重启（微信登录/登出热重启）。
 // 另有一个无边框回复建议浮窗：复制聊天后自动出现在微信输入框上方，可换一批 / 按描述重写 / 逐条回填。
-const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, screen, session } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
@@ -23,8 +23,15 @@ if (isPackaged && !process.env.XIAOTIHU_DATA_DIR) {
 if (isPackaged) {
   const dataDir = process.env.XIAOTIHU_DATA_DIR;
   fs.mkdirSync(dataDir, { recursive: true });
-  // 首次运行：把 config 模板拷到数据目录
-  const cfgSrc = path.join(PROJECT_ROOT, 'config.json');
+  // DSH 自己的 home 放在用户数据目录：首次运行由 DSH 自己生成 web profile（实测 4 秒完成，不需要联网）
+  const dshHome = path.join(dataDir, 'dsh-home');
+  fs.mkdirSync(dshHome, { recursive: true });
+  process.env.DSH_HOME = dshHome;
+  // 随包内置的 DSH（找不到时核心会退回系统安装的 / npx 缓存里的那份）
+  const bundledDsh = path.join(PROJECT_ROOT, 'vendor', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+  if (fs.existsSync(bundledDsh)) process.env.XIAOTIHU_DSH_BIN = bundledDsh;
+  // 首次运行：只拷配置模板（绝不打包开发者自己的 config.json，里面可能有 API Key）
+  const cfgSrc = path.join(PROJECT_ROOT, 'config.example.json');
   const cfgDst = path.join(dataDir, 'config.json');
   if (fs.existsSync(cfgSrc) && !fs.existsSync(cfgDst)) {
     fs.copyFileSync(cfgSrc, cfgDst);
@@ -108,24 +115,6 @@ async function desktopFetch(url, options = {}) {
   return res;
 }
 
-function findNode() {
-  const cands = [];
-  const pathEnv = process.env.PATH || '';
-  for (const dir of pathEnv.split(path.delimiter)) {
-    if (dir) cands.push(path.join(dir, 'node.exe'));
-  }
-  const customNode = process.env.XIAOTIHU_NODE;
-  if (customNode) cands.push(customNode);
-  for (const name of ['ProgramFiles', 'ProgramFiles(x86)']) {
-    const root = process.env[name];
-    if (root) cands.push(path.join(root, 'nodejs', 'node.exe'));
-  }
-  for (const p of cands) {
-    try { if (fs.existsSync(p)) return p; } catch {}
-  }
-  return 'node';
-}
-
 function portFree(port) {
   return new Promise((resolve) => {
     const s = net.createServer();
@@ -135,12 +124,26 @@ function portFree(port) {
   });
 }
 
-function startCore(node) {
-  coreProc = spawn(node, [CORE], { stdio: 'ignore', windowsHide: true });
+// 运行核心：默认用 Electron 自带的 Node（ELECTRON_RUN_AS_NODE=1，进程即 node），
+// 这样用户机器上不需要另外安装 Node；开发时可用 XIAOTIHU_NODE 指定系统 Node。
+function coreEnv() {
+  const env = { ...process.env };
+  if (!process.env.XIAOTIHU_NODE) env.ELECTRON_RUN_AS_NODE = '1';
+  if (isPackaged) {
+    env.XIAOTIHU_DATA_DIR = process.env.XIAOTIHU_DATA_DIR || '';
+    env.DSH_HOME = process.env.DSH_HOME || path.join(env.XIAOTIHU_DATA_DIR, 'dsh-home');
+    if (process.env.XIAOTIHU_DSH_BIN) env.XIAOTIHU_DSH_BIN = process.env.XIAOTIHU_DSH_BIN;
+  }
+  return env;
+}
+
+function startCore() {
+  const runner = process.env.XIAOTIHU_NODE || process.execPath;
+  coreProc = spawn(runner, [CORE], { stdio: 'ignore', windowsHide: true, env: coreEnv() });
   coreProc.on('error', () => {});
   coreProc.on('exit', (code) => {
     if (code === RESTART_EXIT_CODE) {
-      startCore(node); // 微信登录/登出后的热重启
+      startCore(); // 微信登录/登出后的热重启
     }
   });
   return coreProc;
@@ -301,9 +304,8 @@ async function pollSuggestions() {
 }
 
 app.whenReady().then(async () => {
-  const node = findNode();
   if (await portFree(PORT)) {
-    startCore(node);
+    startCore();
     await sleep(3000);
   }
   await establishDesktopSession();
@@ -321,6 +323,26 @@ app.whenReady().then(async () => {
   win.loadURL(`http://127.0.0.1:${PORT}`);
 
   createFloatingWindows();
+
+  // 首次运行引导：没配模型 Key 时直接告诉用户去哪儿填
+  if (isPackaged) {
+    try {
+      const cfg = readConfig();
+      const providerName = (cfg.engine && cfg.engine.provider) || '';
+      const prov = (cfg.engine && cfg.engine.providers && cfg.engine.providers[providerName]) || {};
+      if (!prov.apiKey && providerName !== 'ollama') {
+        win.webContents.once('did-finish-load', () => {
+          dialog.showMessageBox(win, {
+            type: 'info',
+            title: '小鹈鹕 · 首次使用',
+            message: '还差一步：填入模型 API Key',
+            detail: '打开「设置 → 模型服务」，选择服务商并填入 API Key 与模型名后保存。\n保存后核心会自动重启，回复建议、意图识别与 DSH Agent 都会使用这个模型。',
+            buttons: ['好']
+          }).catch(() => {});
+        });
+      }
+    } catch {}
+  }
 
   ipcMain.on('suggestion:hide-card', () => hideCard());
   ipcMain.on('suggestion:resize', (event, size) => {

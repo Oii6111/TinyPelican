@@ -1,0 +1,11 @@
+{
+  "name": "tinypelican-vendor",
+  "private": true,
+  "description": "打包时随安装包内置的运行时依赖（DSH）。装到本目录后由 electron-builder 复制进 resources/content/vendor/",
+  "overrides": {
+    "@deepseek-ai/dsh-client-ui-sidebar-documentpreview": "0.1.5-rc.2"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "^0.1.5-rc.2"
+  }
+}

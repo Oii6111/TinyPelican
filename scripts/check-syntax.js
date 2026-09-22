@@ -17,7 +17,7 @@ const TARGETS = [
   'check_relations.js',
   '_process_batches.js'
 ];
-const SKIP_DIRS = new Set(['node_modules', 'dsh-home', '.git']);
+const SKIP_DIRS = new Set(['node_modules', 'dsh-home', '.git', 'dist', 'build', 'vendor', 'layout']);
 const EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
 
 function collect(target, out = []) {

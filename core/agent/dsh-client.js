@@ -169,13 +169,23 @@ function compareVersions(a, b) {
 }
 
 // 定位 dsh 的 lib/bin.js：
-// 1. 显式 DSH_BIN（最高优先，用户说了算）
-// 2. 项目依赖 / 全局安装 / npx 缓存里，取版本号最高的那个
+// 1. 显式指定：XIAOTIHU_DSH_BIN（打包后由 Electron 壳指向随包内置的那份）/ DSH_BIN
+// 2. 随包内置：<项目根>/vendor/dsh/lib/bin.js（electron-builder 把 DSH 放进 extraResources）
+// 3. 项目依赖 / 全局安装 / npx 缓存里，取版本号最高的那个
 //    （WebUI 协议在 0.1.5 才换成 Typert Remote，捡到老的会直接 404）
 function findDshBin() {
-  if (process.env.DSH_BIN && fs.existsSync(process.env.DSH_BIN)) return process.env.DSH_BIN;
+  for (const explicit of [process.env.XIAOTIHU_DSH_BIN, process.env.DSH_BIN]) {
+    if (explicit && fs.existsSync(explicit)) return explicit;
+  }
 
   const candidates = [];
+  // 随包内置（打包分发时唯一保证存在的那份）
+  for (const bundled of [
+    path.join(PROJECT_ROOT, 'vendor', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+    path.join(PROJECT_ROOT, 'vendor', 'dsh', 'lib', 'bin.js')
+  ]) {
+    if (fs.existsSync(bundled)) candidates.push(bundled);
+  }
   try {
     const resolved = require.resolve('@deepseek-ai/dsh/lib/bin.js');
     if (resolved && fs.existsSync(resolved)) candidates.push(resolved);
@@ -460,6 +470,7 @@ async function runDshTask(opts) {
 module.exports = {
   runDshTask,
   findDshBin,
+  buildDshEnv,
   parseEventLine,
   ensureLocalProfileDependencies,
   DEFAULT_DSH_HOME,

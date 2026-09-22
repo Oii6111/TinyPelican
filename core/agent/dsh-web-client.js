@@ -10,9 +10,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { findDshBin } = require('./dsh-client');
+const { findDshBin, buildDshEnv } = require('./dsh-client');
 const webAuth = require('./dsh-web-auth');
 const { log } = require('../lib/log');
+const { loadConfig } = require('../lib/config');
 
 const DEFAULT_BASE = process.env.DSH_WEB_URL || 'http://127.0.0.1:3080';
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -459,10 +460,21 @@ let webLaunchPromise = null;
 
 function spawnDshWeb(base, port) {
   const bin = findDshBin();
+  // 打包分发时 Electron 壳会把 DSH_HOME 指到用户数据目录（首次运行由 DSH 自己生成 profile）。
+  // 这时把「设置里的模型」写进该 home，并把 API Key 通过环境变量传给 DSH，
+  // 用户装完就能直接用，不必再去 DSH 界面里配一遍。
+  let env = process.env;
+  const dshHome = String(process.env.DSH_HOME || '').trim();
+  if (dshHome) {
+    try {
+      env = buildDshEnv(dshHome, loadConfig());
+    } catch {}
+  }
   // --no-open：不自动弹浏览器；stdout/stderr 保留下来，用于抓取带鉴权令牌的地址
   webChild = spawn(process.execPath, [bin, 'web', '--port', String(port), '--no-open'], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
+    windowsHide: true,
+    env
   });
   webChild.on('error', () => {});
   const onOutput = (chunk) => webAuth.scanLaunchOutput(base, chunk);
