@@ -492,8 +492,10 @@ function spawnDshWeb(base, port) {
   }
   rememberWebState({ ok: null, bin, home: dshHome, exitCode: null, error: '', output: '' });
   log('info', 'agent', `启动 DSH：bin=${bin} DSH_HOME=${dshHome || '(默认 ~/.dsh)'} runner=${process.execPath}`);
+  // --expose-internals：DSH 的 web profile 默认 patchReload: live，它的 HMR 插件要求这个 flag，
+  //   否则 DSH 会在启动阶段直接崩（--expose-internals is required for HMR service）：全新机器上就是这样。
   // --no-open：不自动弹浏览器；stdout/stderr 保留下来，用于抓取带鉴权令牌的地址
-  webChild = spawn(process.execPath, [bin, 'web', '--port', String(port), '--no-open'], {
+  webChild = spawn(process.execPath, ['--expose-internals', bin, 'web', '--port', String(port), '--no-open'], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     env

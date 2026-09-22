@@ -194,6 +194,15 @@ npm run dist          # = scripts/build-installer.ps1
 任何 RPC 遇到网络层失败（`fetch failed`）会先 `ensureWebReady()` 等它就绪再重试，多个调用共享同一次启动。
 入口：`npm start`（= `node core/launcher.js`，启动核心并确保 DSH）。
 
+**`--expose-internals`（打包版必须带）**：DSH 的 `web` profile 模板里 `patchReload: live`，
+而 live reload 的 `@deepseek-ai/cordis-plugin-hmr` 依赖 Node 的 `--expose-internals`。
+打包版用 Electron 当 Node（`ELECTRON_RUN_AS_NODE`），不带这个 flag 时 DSH 会**在启动阶段直接崩**
+（`--expose-internals is required for HMR service`）：全新机器上第一次装完就是这个表现——
+3080 打不开、对话报 `fetch failed`。所以 `spawnDshWeb()` 拉起 DSH 时固定加上该 flag。
+老安装目录里的核心没有这个 flag，`scripts/start-dsh.{cmd,js}`（排障脚本）会把该 profile 的
+`patchReload` 降为 `startup`（DSH 自己的 `initProfile` 不覆盖已有文件，所以改一次就永久生效），
+这样连老版本核心也能正常拉起 DSH。
+
 **会话 id 代次**：同一条会话 key（`agent:main:webui:*` / `agent:main:weixin:*`）永远映射同一个 DSH sessionId，历史靠它续上。
 常量 `SESSION_GENERATION`（`core/agent/dsh-web-client.js`）决定代次；当前是 `v3`——`v2` 那批会话文件被从 DSH 外部删过，
 DSH 仍记着那些 id，`session/prompt` 会被接受但落盘时 `ENOENT`（表现为「本轮运行失败」），已经不可用。

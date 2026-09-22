@@ -11,6 +11,7 @@ const TARGETS = [
   'core',
   'dashboard/src',
   'app',
+  'scripts',
   'agent/dsh-event-stream/lib',
   'extract_intents.js',
   'remind.js',
