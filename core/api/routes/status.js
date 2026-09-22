@@ -8,7 +8,9 @@ module.exports = (router, ctx) => {
     const cfg = ctx.config || require('../../lib/config').loadConfig();
     return ctx.json(res, 200, {
       version: ctx.version,
-      ...getStatus(cfg)
+      ...getStatus(cfg),
+      // DSH 后端状态：装了没起来时，这一条能直接告诉用户/客服原因（bin 路径、DSH_HOME、退出码、子进程输出）
+      dsh: require('../../agent/dsh-web-client').dshStatus()
     });
   });
 

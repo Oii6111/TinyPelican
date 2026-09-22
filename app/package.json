@@ -62,6 +62,10 @@
       {
         "from": "../packaging/vendor/node_modules",
         "to": "content/vendor/node_modules"
+      },
+      {
+        "from": "../scripts/start-dsh.cmd",
+        "to": "content/start-dsh.cmd"
       }
     ],
     "win": {

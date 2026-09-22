@@ -457,6 +457,16 @@ async function isReachable(base = DEFAULT_BASE, timeoutMs = 1500) {
 //   3. 谁先需要 DSH，谁 await ensureWebReady()，共享同一次启动。
 const DSH_START_TIMEOUT_MS = 120000;
 let webLaunchPromise = null;
+// 供 /api/status 与日志使用的最近一次 DSH 状态（排障用：另一台机器上 DSH 起不来时能看到原因）
+let webState = { ok: null, bin: '', home: '', pid: null, exitCode: null, error: '', output: '', at: '' };
+
+function rememberWebState(patch) {
+  webState = { ...webState, ...patch, at: new Date().toISOString() };
+}
+
+function dshStatus() {
+  return { ...webState };
+}
 
 function spawnDshWeb(base, port) {
   const bin = findDshBin();
@@ -470,14 +480,31 @@ function spawnDshWeb(base, port) {
       env = buildDshEnv(dshHome, loadConfig());
     } catch {}
   }
+  rememberWebState({ ok: null, bin, home: dshHome, exitCode: null, error: '', output: '' });
+  log('info', 'agent', `启动 DSH：bin=${bin} DSH_HOME=${dshHome || '(默认 ~/.dsh)'} runner=${process.execPath}`);
   // --no-open：不自动弹浏览器；stdout/stderr 保留下来，用于抓取带鉴权令牌的地址
   webChild = spawn(process.execPath, [bin, 'web', '--port', String(port), '--no-open'], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     env
   });
-  webChild.on('error', () => {});
-  const onOutput = (chunk) => webAuth.scanLaunchOutput(base, chunk);
+  rememberWebState({ pid: webChild.pid });
+  webChild.on('error', (e) => {
+    const message = String((e && e.message) || e);
+    rememberWebState({ ok: false, error: 'spawn 失败：' + message });
+    log('error', 'agent', 'DSH 子进程启动失败：' + message);
+  });
+  webChild.on('exit', (code) => {
+    const failed = code !== 0;
+    rememberWebState({ ok: !failed, exitCode: code, ...(failed ? { error: `DSH 进程退出（code=${code}）` } : {}) });
+    // 退出码 + 最后一段输出一定要落日志：打包机器上 DSH 起不来时，这是唯一的线索
+    log(failed ? 'error' : 'info', 'agent', `DSH 进程退出：code=${code}${webState.output ? '｜输出：' + webState.output : ''}`);
+  });
+  const onOutput = (chunk) => {
+    const text = String(chunk || '');
+    webState.output = (webState.output + text).slice(-800);
+    webAuth.scanLaunchOutput(base, chunk);
+  };
   webChild.stdout.setEncoding('utf8');
   webChild.stdout.on('data', onOutput);
   if (webChild.stderr) {
@@ -493,10 +520,17 @@ async function waitForWeb(base, waitMs) {
     if (await isReachable(base, 800)) {
       // 起来了就用刚抓到的令牌换一次 cookie
       await webAuth.ensureCookie({ base, force: true });
+      rememberWebState({ ok: true, error: '' });
       return true;
+    }
+    // 子进程已经退出就别再等了，直接带着它的输出报错
+    if (webChild && webChild.exitCode !== null) {
+      rememberWebState({ ok: false, error: `DSH 进程已退出（code=${webChild.exitCode}）` });
+      return false;
     }
     await new Promise((r) => setTimeout(r, 500));
   }
+  rememberWebState({ ok: false, error: `等待 ${Math.round(waitMs / 1000)} 秒后仍不可达` });
   return false;
 }
 
@@ -520,7 +554,12 @@ async function ensureWebReady({ port = 3080, base = DEFAULT_BASE, waitMs = DSH_S
     return { ok: true, started: true };
   }
   // 还没起来：保留后台启动，让调用方先失败，稍后再试
-  return { ok: false, pending: true, error: `DSH WebUI 启动中（已等待 ${Math.round(waitMs / 1000)} 秒，可稍后重试）` };
+  const detail = webState.error || webState.output || '';
+  return {
+    ok: false,
+    pending: true,
+    error: `DSH WebUI 启动中（已等待 ${Math.round(waitMs / 1000)} 秒，可稍后重试）${detail ? '｜' + detail : ''}`
+  };
 }
 
 // 兼容旧调用方（core/index.js 启动时调用）：后台拉起，不长时间阻塞；带 waitMs 时才等。
@@ -545,6 +584,7 @@ module.exports = {
   conversationSessionId,
   launchWeb,
   stopWeb,
+  dshStatus,
   PROJECT_ROOT,
   DEFAULT_BASE
 };
