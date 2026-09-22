@@ -19,6 +19,8 @@ const DEFAULTS = {
     highConfidence: 0.85,
     mediumConfidence: 0.5,
     maxMessagesPerBatch: 50,
+    // 截止时间已经过去这么多天、且模型没说仍然未完成的，不再生成待确认事项
+    staleDeadlineDays: 2,
     agentTimeoutMs: 120000,
     minIntervalMinutes: 0,
     scanIntervalMs: 0

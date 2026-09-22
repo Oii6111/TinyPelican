@@ -18,6 +18,7 @@
     "highConfidence": 0.85,
     "mediumConfidence": 0.5,
     "maxMessagesPerBatch": 50,
+    "staleDeadlineDays": 2,
     "agentTimeoutMs": 120000,
     "minIntervalMinutes": 0
   },

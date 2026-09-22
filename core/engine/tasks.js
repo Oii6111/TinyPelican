@@ -12,7 +12,7 @@ const TASKS = {
   // 意图识别：返回原始文本 + 解析出的数组，由调用方按 NO_TASK / JSON 分流
   intent: {
     opts: { temperature: 0.1 },
-    buildPrompt: (ctx) => buildIntentPrompt(ctx.chatText, ctx.sourceLabel),
+    buildPrompt: (ctx) => buildIntentPrompt(ctx),
     parse: (text) => ({ ok: true, text, array: extractJsonArray(text) })
   },
   relation: {
