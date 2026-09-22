@@ -123,12 +123,14 @@ export function mount(container) {
 
   function enginePatch() {
     const name = providerSel.value;
+    // 输入框留空 = 不修改已保存的 Key（绝不能把掩码当 Key 发出去）
+    const apiKey = apiKeyInput.value.trim();
     return {
       provider: name,
       providers: {
         [name]: {
           baseUrl: baseUrlInput.value.trim(),
-          apiKey: apiKeyInput.value.trim(),
+          ...(apiKey ? { apiKey } : {}),
           model: modelInput.value.trim()
         }
       }
@@ -139,10 +141,11 @@ export function mount(container) {
   function buildEnginePatch(cur) {
     const name = providerSel.value;
     const providers = { ...((cur && cur.engine && cur.engine.providers) || {}) };
+    const apiKey = apiKeyInput.value.trim();
     providers[name] = {
       ...(providers[name] || {}),
       baseUrl: baseUrlInput.value.trim(),
-      apiKey: apiKeyInput.value.trim(),
+      ...(apiKey ? { apiKey } : {}),
       model: modelInput.value.trim()
     };
     return { provider: name, providers };
@@ -150,7 +153,9 @@ export function mount(container) {
 
   function fillProvider(p) {
     baseUrlInput.value = (p && p.baseUrl) || '';
-    apiKeyInput.value = (p && p.apiKey) || '';
+    // 不回填掩码串：留空表示沿用已保存的 Key，需要更换时重新粘贴即可
+    apiKeyInput.value = '';
+    apiKeyInput.placeholder = (p && p.apiKey) ? `已保存（${p.apiKey}）· 留空表示不修改` : 'sk-...';
     modelInput.value = (p && p.model) || '';
   }
 
