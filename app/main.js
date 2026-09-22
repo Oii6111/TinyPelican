@@ -39,6 +39,7 @@ if (isPackaged) {
 }
 
 let coreProc = null;
+let coreCrashNotified = false;
 let win = null;
 let cardWin = null;
 let suggestionPollTimer = null;
@@ -139,11 +140,27 @@ function coreEnv() {
 
 function startCore() {
   const runner = process.env.XIAOTIHU_NODE || process.execPath;
+  const startedAt = Date.now();
   coreProc = spawn(runner, [CORE], { stdio: 'ignore', windowsHide: true, env: coreEnv() });
   coreProc.on('error', () => {});
   coreProc.on('exit', (code) => {
     if (code === RESTART_EXIT_CODE) {
       startCore(); // 微信登录/登出后的热重启
+      return;
+    }
+    // 刚起来就挂：最典型的原因是另一个小鹈鹕（开发实例/另一个安装版本）占着 18791，
+    // 核心会立刻退出，用户只看到「DSH 没起来」。这里直接把原因弹出来。
+    if (code !== 0 && Date.now() - startedAt < 15000 && !coreCrashNotified) {
+      coreCrashNotified = true;
+      dialog.showMessageBox(win, {
+        type: 'error',
+        title: '小鹈鹕 · 核心没能启动',
+        message: '核心服务启动失败（退出码 ' + code + '）',
+        detail: '最常见的原因：已经开着一个「小鹈鹕」了（开发实例或另一个安装版本），端口 18791 被占用。\n'
+          + '请关掉多余的实例后，再重新打开小鹈鹕。\n\n'
+          + '日志：' + path.join(process.env.XIAOTIHU_DATA_DIR || '', 'activity.log'),
+        buttons: ['好']
+      }).catch(() => {});
     }
   });
   return coreProc;

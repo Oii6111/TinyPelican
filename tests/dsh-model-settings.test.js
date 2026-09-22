@@ -85,6 +85,18 @@ test('DSH 模型配置：选中且可用时用选中的那个；没 Key 时不�
   assert.strictEqual(effectiveEngineProvider(cfg), null);
 });
 
+test('DSH 模型配置：没填任何 Key 时，不能悄悄退到本地 Ollama', () => {
+  // 打包版默认配置长这样：选中 siliconflow（空 Key）+ 预设里的 ollama（qwen3:8b、无 Key）
+  const cfg = configWithKeyOnDeepSeek();
+  cfg.engine.providers.deepseek.apiKey = '';
+  cfg.engine.providers.ollama = { baseUrl: 'http://127.0.0.1:11434/v1', apiKey: '', model: 'qwen3:8b' };
+  assert.strictEqual(effectiveEngineProvider(cfg), null);
+
+  // 但用户显式选了 Ollama 就得用 Ollama（本地服务不需要 Key）
+  cfg.engine.provider = 'ollama';
+  assert.strictEqual(effectiveEngineProvider(cfg).name, 'ollama');
+});
+
 test('DSH 模型配置：设置里的 Key 覆盖环境里残留的 DEEPSEEK_API_KEY', (t) => {
   const home = tmpHome(t);
   const prev = process.env.DEEPSEEK_API_KEY;

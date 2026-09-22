@@ -39,6 +39,16 @@ async function main() {
   server.listen(PORT, '127.0.0.1', () => {
     log('info', 'core', `小鹈鹕核心已启动: http://127.0.0.1:${PORT}`);
   });
+  // 端口被占用是最容易踩、又最难查的一种启动失败：核心以前会直接抛未捕获异常退出，
+  // 用户只看到「DSH 没起来」。这里明确写日志并退出。
+  server.on('error', (e) => {
+    if (e && e.code === 'EADDRINUSE') {
+      log('error', 'core', `端口 ${PORT} 已被占用：多半是已经开着另一个小鹈鹕（开发实例或另一个安装版本）。请关掉多余的实例后重开。`);
+    } else {
+      log('error', 'core', '核心 HTTP 服务启动失败：' + String((e && e.message) || e));
+    }
+    setTimeout(() => process.exit(1), 300);
+  });
 
   startHeartbeat((cfg.heartbeat && cfg.heartbeat.intervalSec) || 30);
 

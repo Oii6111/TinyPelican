@@ -144,22 +144,24 @@ export function mount(container) {
   // 这里提前把它会在 DSH 里用的模型显示出来——不然出现「DSH 里还是上一个模型 / 报 API 密钥无效」很难查。
   function renderDshModel(engine) {
     const providers = (engine && engine.providers) || {};
-    const usable = (name) => {
+    const read = (name) => {
       const p = providers[name];
       if (!p) return null;
       const model = String(p.model || '').trim();
       const baseUrl = String(p.baseUrl || '').trim();
       const apiKey = String(p.apiKey || '').trim();
       if (!model || !baseUrl) return null;
-      if (!apiKey && name !== 'ollama') return null;
-      return { name, model };
+      return { name, model, apiKey };
     };
-    const selected = usable(engine && engine.provider);
+    // 与后端 effectiveEngineProvider 同一套规则：选中的 provider 里 Ollama 不需要 Key；
+    // 回退到别的 provider 时必须真的填了 Key（否则会退到没配过的本地 Ollama）
+    const picked = read(engine && engine.provider);
+    const selected = picked && (picked.apiKey || picked.name === 'ollama') ? picked : null;
     let hit = selected;
     if (!hit) {
       for (const name of ['deepseek', ...Object.keys(providers).filter((n) => n !== 'deepseek')]) {
-        hit = usable(name);
-        if (hit) break;
+        const candidate = read(name);
+        if (candidate && candidate.apiKey) { hit = candidate; break; }
       }
     }
     if (!hit) {

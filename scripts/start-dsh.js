@@ -98,21 +98,22 @@ function readAppConfig() {
 function modelFromConfig(config) {
   const engine = (config && config.engine) || {};
   const providers = engine.providers || {};
-  const usable = (name) => {
+  const read = (name) => {
     const p = providers[name];
     if (!p) return null;
     const model = String(p.model || '').trim();
     const baseUrl = String(p.baseUrl || '').trim();
     const apiKey = String(p.apiKey || '').trim();
     if (!model || !baseUrl) return null;
-    if (!apiKey && name !== 'ollama') return null;
     return { name, model, baseUrl, apiKey };
   };
-  const selected = usable(engine.provider);
-  if (selected) return selected;
+  // 选中的 provider：Ollama 本地服务不需要 Key，显式选中就算可用
+  const selected = read(engine.provider);
+  if (selected && (selected.apiKey || selected.name === 'ollama')) return selected;
+  // 回退只认真的填了 Key 的（否则会退到没配过的本地 Ollama）
   for (const name of ['deepseek', ...Object.keys(providers).filter((n) => n !== 'deepseek')]) {
-    const hit = usable(name);
-    if (hit) return hit;
+    const hit = read(name);
+    if (hit && hit.apiKey) return hit;
   }
   return null;
 }

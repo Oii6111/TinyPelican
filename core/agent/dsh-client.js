@@ -79,22 +79,24 @@ const FALLBACK_SETTINGS_LINES = [
 function effectiveEngineProvider(config) {
   const engine = (config && config.engine) || {};
   const providers = engine.providers || {};
-  const usable = (name) => {
+  const read = (name) => {
     const p = providers[name];
     if (!p) return null;
     const model = String(p.model || '').trim();
     const baseUrl = String(p.baseUrl || '').trim();
     const apiKey = String(p.apiKey || '').trim();
     if (!model || !baseUrl) return null;
-    if (!apiKey && name !== 'ollama') return null;   // 本地 Ollama 不需要 Key
     return { name, model, baseUrl, apiKey };
   };
-  const selected = usable(engine.provider);
-  if (selected) return selected;
+  // 选中的 provider：Ollama 本地服务本来就不需要 Key，显式选中就算可用
+  const selected = read(engine.provider);
+  if (selected && (selected.apiKey || selected.name === 'ollama')) return selected;
+  // 退而求其次：只认「真的填了 Key」的那个（否则会退到没配过的本地 Ollama，
+  // DSH 就会去连一个不存在的 127.0.0.1:11434，同样用不了）
   const rest = Object.keys(providers).filter((name) => name !== 'deepseek');
   for (const name of ['deepseek', ...rest]) {
-    const hit = usable(name);
-    if (hit) return hit;
+    const hit = read(name);
+    if (hit && hit.apiKey) return hit;
   }
   return null;
 }
