@@ -162,6 +162,11 @@ tests/                  单元测试与集成测试（node --test）
 
 `findDshBin()` 会在**项目依赖 / 全局安装 / npx 缓存**里挑版本号最高的那份 dsh（0.1.5 以下没有这套 WebUI 协议，捡到老的会 404）。
 
+**启动慢与自愈**：本机实测 `dsh web` **冷启动要 40~50 秒**才监听 3080（插件/鉴权门初始化慢，热启动 4 秒左右）。
+所以 DSH 的拉起是**后台进行、不阻塞核心启动**（微信通道、剪贴板监听先跑），等待窗口 120 秒；
+任何 RPC 遇到网络层失败（`fetch failed`）会先 `ensureWebReady()` 等它就绪再重试，多个调用共享同一次启动。
+入口：`npm start`（= `node core/launcher.js`，启动核心并确保 DSH）。
+
 **会话 id 代次**：同一条会话 key（`agent:main:webui:*` / `agent:main:weixin:*`）永远映射同一个 DSH sessionId，历史靠它续上。
 常量 `SESSION_GENERATION`（`core/agent/dsh-web-client.js`）决定代次；当前是 `v3`——`v2` 那批会话文件被从 DSH 外部删过，
 DSH 仍记着那些 id，`session/prompt` 会被接受但落盘时 `ENOENT`（表现为「本轮运行失败」），已经不可用。

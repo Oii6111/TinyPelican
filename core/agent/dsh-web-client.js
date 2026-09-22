@@ -32,7 +32,9 @@ function nextRpcId() {
 }
 
 // 带鉴权的 POST：cookie 走缓存（或令牌兑换）；401 时兑换一次再重试。
-async function postJson(base, endpoint, message, { timeoutMs = 0 } = {}) {
+// 网络层失败（DSH 还没起来 / 刚被重启）会先等它就绪再重试——这是「DSH 没拉起」最常见的表现：
+// isReachable 探测通过、但真正请求时连接被拒（fetch failed）。
+async function postJson(base, endpoint, message, { timeoutMs = 0, allowReload = true } = {}) {
   const url = `${normalizeBase(base)}/api/${endpoint}`;
   const send = () => {
     const headers = { 'Content-Type': 'application/json' };
@@ -48,7 +50,15 @@ async function postJson(base, endpoint, message, { timeoutMs = 0 } = {}) {
     return fetch(url, init);
   };
 
-  let res = await send();
+  let res;
+  try {
+    res = await send();
+  } catch (e) {
+    if (!allowReload) throw e;
+    // 让 DSH 有机会起来（或等已经在后台启动中的那次完成），再重试一次
+    await ensureWebReady({ base, waitMs: 60000 });
+    res = await send();
+  }
   if (res.status === 401) {
     const cookie = await webAuth.ensureCookie({ base, force: true });
     if (cookie) res = await send();
@@ -431,7 +441,8 @@ let webChild = null;
 // 新版 DSH 只是要鉴权，不能因此判定它没启动、再拉一个起来（会抢端口）。
 async function isReachable(base = DEFAULT_BASE, timeoutMs = 1500) {
   try {
-    const res = await postJson(base, 'session/list', envelopeV2('session/list', {}), { timeoutMs });
+    // 探测本身不要再触发「拉起 DSH」，否则会递归
+    const res = await postJson(base, 'session/list', envelopeV2('session/list', {}), { timeoutMs, allowReload: false });
     if (res.status === 200 || res.status === 401 || res.status === 403) return true;
     return false;
   } catch {
@@ -439,9 +450,14 @@ async function isReachable(base = DEFAULT_BASE, timeoutMs = 1500) {
   }
 }
 
-// 启动 dsh web（只在 3080 未就绪时拉起）；返回是否由本次启动。
-async function launchWeb({ port = 3080, base = DEFAULT_BASE } = {}) {
-  if (await isReachable(base, 1200)) return { ok: true, started: false, child: null };
+// DSH 在这台机器上实测要 ~40 秒才真正监听（插件/鉴权门初始化很慢），所以：
+//   1. 启动改成后台进行，不阻塞核心启动（微信通道、剪贴板监听先跑起来）；
+//   2. 等待窗口放宽到 120 秒；
+//   3. 谁先需要 DSH，谁 await ensureWebReady()，共享同一次启动。
+const DSH_START_TIMEOUT_MS = 120000;
+let webLaunchPromise = null;
+
+function spawnDshWeb(base, port) {
   const bin = findDshBin();
   // --no-open：不自动弹浏览器；stdout/stderr 保留下来，用于抓取带鉴权令牌的地址
   webChild = spawn(process.execPath, [bin, 'web', '--port', String(port), '--no-open'], {
@@ -456,18 +472,49 @@ async function launchWeb({ port = 3080, base = DEFAULT_BASE } = {}) {
     webChild.stderr.setEncoding('utf8');
     webChild.stderr.on('data', onOutput);
   }
-  const deadline = Date.now() + 30000;
+  return webChild;
+}
+
+async function waitForWeb(base, waitMs) {
+  const deadline = Date.now() + Math.max(0, waitMs);
   while (Date.now() < deadline) {
     if (await isReachable(base, 800)) {
       // 起来了就用刚抓到的令牌换一次 cookie
       await webAuth.ensureCookie({ base, force: true });
-      return { ok: true, started: true, child: webChild };
+      return true;
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  try { webChild.kill(); } catch {}
-  webChild = null;
-  return { ok: false, error: 'DSH WebUI 启动超时' };
+  return false;
+}
+
+// 确保 DSH WebUI 可用：已在跑就直接返回；否则拉起一次（单飞，多个调用共享）。
+async function ensureWebReady({ port = 3080, base = DEFAULT_BASE, waitMs = DSH_START_TIMEOUT_MS } = {}) {
+  if (await isReachable(base, 1200)) return { ok: true, started: false };
+  if (!webLaunchPromise) {
+    try {
+      spawnDshWeb(base, port);
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+    webLaunchPromise = waitForWeb(base, DSH_START_TIMEOUT_MS);
+  }
+  const started = await Promise.race([
+    webLaunchPromise,
+    new Promise((resolve) => setTimeout(() => resolve(false), Math.max(0, waitMs)))
+  ]);
+  if (started) {
+    webLaunchPromise = null;
+    return { ok: true, started: true };
+  }
+  // 还没起来：保留后台启动，让调用方先失败，稍后再试
+  return { ok: false, pending: true, error: `DSH WebUI 启动中（已等待 ${Math.round(waitMs / 1000)} 秒，可稍后重试）` };
+}
+
+// 兼容旧调用方（core/index.js 启动时调用）：后台拉起，不长时间阻塞；带 waitMs 时才等。
+async function launchWeb({ port = 3080, base = DEFAULT_BASE, waitMs = 5000 } = {}) {
+  const result = await ensureWebReady({ port, base, waitMs });
+  return result.ok ? { ok: true, started: result.started, pid: webChild ? webChild.pid : null } : result;
 }
 
 function stopWeb() {

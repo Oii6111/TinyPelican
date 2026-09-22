@@ -91,9 +91,14 @@ async function main() {
   // 确保 DSH WebUI（默认 3080）可用；不可用则由小鹈鹕自动拉起。
   try {
     const webStart = await mainSession.ensureReady();
-    log('info', 'agent', webStart && webStart.started
-      ? '已自动启动 DSH WebUI（3080）'
-      : 'DSH WebUI（3080）已就绪');
+    if (webStart && webStart.ok) {
+      // 启动是后台进行的（这台机器上 DSH 实测要 40 秒左右才监听），不阻塞微信通道与剪贴板监听
+      log('info', 'agent', webStart.started ? 'DSH WebUI（3080）已在后台启动' : 'DSH WebUI（3080）已就绪');
+    } else if (webStart && webStart.pending) {
+      log('warn', 'agent', `DSH WebUI（3080）仍在启动中：${webStart.error || ''}（后续请求会自动等它就绪）`);
+    } else {
+      log('error', 'agent', 'DSH WebUI（3080）启动失败：' + ((webStart && webStart.error) || '未知错误'));
+    }
   } catch (e) {
     log('warn', 'agent', 'DSH WebUI 启动/探测失败：' + String((e && e.message) || e));
   }
