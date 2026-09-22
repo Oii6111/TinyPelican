@@ -66,6 +66,10 @@
       {
         "from": "../scripts/start-dsh.cmd",
         "to": "content/start-dsh.cmd"
+      },
+      {
+        "from": "../scripts/start-dsh.ps1",
+        "to": "content/start-dsh.ps1"
       }
     ],
     "win": {

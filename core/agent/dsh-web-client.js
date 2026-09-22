@@ -468,6 +468,16 @@ function dshStatus() {
   return { ...webState };
 }
 
+// DSH 子进程输出同时落一份文件：打包机器上起不来时，用户直接把 <数据目录>/dsh.log 发过来即可
+function appendDshLog(text) {
+  try {
+    const { getPaths } = require('../lib/paths');
+    const fs = require('fs');
+    const file = require('path').join(getPaths().dataDir, 'dsh.log');
+    fs.appendFileSync(file, text, 'utf8');
+  } catch {}
+}
+
 function spawnDshWeb(base, port) {
   const bin = findDshBin();
   // 打包分发时 Electron 壳会把 DSH_HOME 指到用户数据目录（首次运行由 DSH 自己生成 profile）。
@@ -497,12 +507,14 @@ function spawnDshWeb(base, port) {
   webChild.on('exit', (code) => {
     const failed = code !== 0;
     rememberWebState({ ok: !failed, exitCode: code, ...(failed ? { error: `DSH 进程退出（code=${code}）` } : {}) });
+    appendDshLog(`\n[DSH 进程退出 code=${code}]\n`);
     // 退出码 + 最后一段输出一定要落日志：打包机器上 DSH 起不来时，这是唯一的线索
     log(failed ? 'error' : 'info', 'agent', `DSH 进程退出：code=${code}${webState.output ? '｜输出：' + webState.output : ''}`);
   });
   const onOutput = (chunk) => {
     const text = String(chunk || '');
     webState.output = (webState.output + text).slice(-800);
+    appendDshLog(text);
     webAuth.scanLaunchOutput(base, chunk);
   };
   webChild.stdout.setEncoding('utf8');
