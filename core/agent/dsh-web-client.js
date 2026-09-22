@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { findDshBin, buildDshEnv } = require('./dsh-client');
+const { findDshBin, buildDshEnv, writeGeneratedDshSettings } = require('./dsh-client');
 const webAuth = require('./dsh-web-auth');
 const { log } = require('../lib/log');
 const { loadConfig } = require('../lib/config');
@@ -528,6 +528,27 @@ function spawnDshWeb(base, port) {
   return webChild;
 }
 
+// 每次要跟 DSH 打交道前，都把小鹈鹕设置里的模型配置刷进 DSH_HOME/settings.yaml。
+// 打包版 DSH 是常驻的：用户改了「设置 → 模型服务」后核心会重启，但 DSH 不会自己重启，
+// 旧版本还会一直用第一次启动时的模型（甚至是一个没配 Key 的 provider）。
+// 这里发现配置真的有变化、而 DSH 是我们自己拉起来的，就重启它，保证新模型立刻生效。
+function refreshDshSettings() {
+  const dshHome = String(process.env.DSH_HOME || '').trim();
+  if (!dshHome) return false;   // 开发模式跟随 ~/.dsh，不动用户自己的 DSH 配置
+  let changed = false;
+  try {
+    changed = writeGeneratedDshSettings(dshHome, loadConfig()) === true;
+  } catch {
+    return false;
+  }
+  if (!changed) return false;
+  if (webChild && webChild.exitCode === null) {
+    log('info', 'agent', '模型配置有变化，重启 DSH 让新模型生效');
+    stopWeb();
+  }
+  return true;
+}
+
 async function waitForWeb(base, waitMs) {
   const deadline = Date.now() + Math.max(0, waitMs);
   while (Date.now() < deadline) {
@@ -550,6 +571,7 @@ async function waitForWeb(base, waitMs) {
 
 // 确保 DSH WebUI 可用：已在跑就直接返回；否则拉起一次（单飞，多个调用共享）。
 async function ensureWebReady({ port = 3080, base = DEFAULT_BASE, waitMs = DSH_START_TIMEOUT_MS } = {}) {
+  refreshDshSettings();
   if (await isReachable(base, 1200)) return { ok: true, started: false };
   if (!webLaunchPromise) {
     try {

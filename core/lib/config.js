@@ -42,7 +42,9 @@ const DEFAULTS = {
     to: ''
   },
   engine: {
-    provider: 'siliconflow',
+    // 默认服务商 = DeepSeek：产品的默认模型、内置 DSH 的 llm-deepseek 路由、
+    // 意图识别默认（intent.provider=deepseek）都是它，默认值不该是硅基流动的 Qwen。
+    provider: 'deepseek',
     providers: {
       siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1', apiKey: '', model: 'Qwen/Qwen3.5-9B' },
       openai: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o-mini' },

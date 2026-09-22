@@ -56,6 +56,7 @@ export function mount(container) {
   const testBtn = el('button', { class: 'btn btn-edit', text: '测试连接' });
   const engineSaveBtn = el('button', { class: 'btn btn-primary', text: '保存模型设置' });
   const engineSaveMsg = el('span', { class: 'muted' });
+  const dshModelHint = el('div', { class: 'hint' });
 
   // 旧版推送（已弃用，仅兼容）
   const pushChk = el('input', { type: 'checkbox' });
@@ -85,7 +86,8 @@ export function mount(container) {
         field('API 地址', baseUrlInput),
         field('API Key', apiKeyInput, '只保存在本地 config.json，不回显完整密钥。'),
         field('模型', modelInput),
-        el('div', { class: 'field' }, testBtn, ' ', engineMsg, ' ', engineSaveBtn, ' ', engineSaveMsg)
+        el('div', { class: 'field' }, testBtn, ' ', engineMsg, ' ', engineSaveBtn, ' ', engineSaveMsg),
+        dshModelHint
       ),
       el('div', { class: 'card' },
         el('h2', { text: '微信通道（iLink 扫码登录）' }),
@@ -138,6 +140,36 @@ export function mount(container) {
   }
 
   // 合并当前配置，只覆盖当前选中的 provider，避免丢掉其它 provider 和 engine 其它字段
+  // 内置 DSH 用的是「成套」的 provider 配置：模型、地址、Key 缺一不可。
+  // 这里提前把它会在 DSH 里用的模型显示出来——不然出现「DSH 里还是上一个模型 / 报 API 密钥无效」很难查。
+  function renderDshModel(engine) {
+    const providers = (engine && engine.providers) || {};
+    const usable = (name) => {
+      const p = providers[name];
+      if (!p) return null;
+      const model = String(p.model || '').trim();
+      const baseUrl = String(p.baseUrl || '').trim();
+      const apiKey = String(p.apiKey || '').trim();
+      if (!model || !baseUrl) return null;
+      if (!apiKey && name !== 'ollama') return null;
+      return { name, model };
+    };
+    const selected = usable(engine && engine.provider);
+    let hit = selected;
+    if (!hit) {
+      for (const name of ['deepseek', ...Object.keys(providers).filter((n) => n !== 'deepseek')]) {
+        hit = usable(name);
+        if (hit) break;
+      }
+    }
+    if (!hit) {
+      dshModelHint.textContent = '⚠ 内置 DSH 还没有可用模型：请至少给一个服务商填好「地址 + 模型 + API Key」，否则在 DSH 里发消息会报「API 密钥无效」。';
+      return;
+    }
+    const fromOther = selected ? '' : `（当前选中的「${(engine && engine.provider) || '未选'}」没有 Key，暂时用它）`;
+    dshModelHint.textContent = `内置 DSH 使用：${hit.name} / ${hit.model}${fromOther}`;
+  }
+
   function buildEnginePatch(cur) {
     const name = providerSel.value;
     const providers = { ...((cur && cur.engine && cur.engine.providers) || {}) };
@@ -167,8 +199,9 @@ export function mount(container) {
       pushChk.checked = !!(s.weixinPush && s.weixinPush.enabled);
       completeChk.checked = !!(s.weixinPush && s.weixinPush.notifyComplete !== false);
       lastProviders = (s.engine && s.engine.providers) || {};
-      providerSel.value = (s.engine && s.engine.provider) || 'siliconflow';
+      providerSel.value = (s.engine && s.engine.provider) || 'deepseek';
       fillProvider(lastProviders[providerSel.value] || {});
+      renderDshModel(s.engine);
       const nt = s.notify || {};
       notifyModeSel.value = nt.mode || 'weixin';
       const bark = nt.bark || {};
@@ -194,6 +227,7 @@ export function mount(container) {
       const cur = await api.settings.get();
       const r = await api.settings.save({ engine: buildEnginePatch(cur) });
       engineSaveMsg.textContent = r && r.restarting ? '已保存 ✓，服务即将自动重启' : '已保存 ✓';
+      renderDshModel(r && r.engine);
       setTimeout(() => { engineSaveMsg.textContent = ''; }, 2500);
     } catch (e) {
       engineSaveMsg.textContent = '保存失败：' + e.message;

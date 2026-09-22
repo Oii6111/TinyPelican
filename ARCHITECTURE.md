@@ -203,6 +203,25 @@ npm run dist          # = scripts/build-installer.ps1
 `patchReload` 降为 `startup`（DSH 自己的 `initProfile` 不覆盖已有文件，所以改一次就永久生效），
 这样连老版本核心也能正常拉起 DSH。
 
+**模型配置怎么进 DSH**：小鹈鹕「设置 → 模型服务」是唯一来源，`buildDshEnv()` /
+`writeGeneratedDshSettings()` 把它翻译成 `<DSH_HOME>/settings.yaml`：`agent-default-model` 指到
+`deepseek-official` 路由（DSH 的 llm-deepseek 适配任意 OpenAI 兼容端点），`llm-deepseek.baseURL` 用设置里的地址，
+Key 通过 `DEEPSEEK_API_KEY` 环境变量给 DSH（**以设置里的 Key 为准**，覆盖环境里可能残留的旧值）。
+两条硬规则：
+
+1. **模型 / 地址 / Key 必须成套**：`effectiveEngineProvider()` 只在三者齐全时才算「可用」；
+   设置里选中的那个 provider 没配 Key 时，自动退到任一配好的 provider（键名 `deepseek` 优先），
+   并在 DSH 的模型名前缀出来源（如 `Qwen/Qwen3.5-9B · SiliconFlow`）。
+   一个都没有时写回 DSH 自带默认模型 —— 绝不能留下一份「模型是 A、地址是 B、却没有对应 Key」的配置，
+   那正是 DSH 里报「API 密钥无效」的来源（打包版默认 provider 曾是空 Key 的 siliconflow）。
+2. **改了设置要生效**：DSH 常驻，核心重启不会重启它。`ensureWebReady()` 每次都会刷新 settings.yaml，
+   发现内容变化且 DSH 是自己拉起来的就重启它（DSH 自己也会热加载 settings.yaml）。
+   注意：老版本核心按 `config.engine.provider` 直接写 settings.yaml（不看 Key），
+   所以 `scripts/start-dsh.js` 在「选中 provider ≠ 可用 provider」时不把启动交给核心，改由脚本自己拉起。
+
+另外：数据目录分「开发模式=项目根目录」与「打包模式=`%APPDATA%\xiaotihu`」两套 config.json，
+两个实例同时跑会共用同一个 DSH（3080），谁的配置生效取决于谁先拉起 DSH —— 排查模型问题时先确认只跑了一个实例。
+
 **会话 id 代次**：同一条会话 key（`agent:main:webui:*` / `agent:main:weixin:*`）永远映射同一个 DSH sessionId，历史靠它续上。
 常量 `SESSION_GENERATION`（`core/agent/dsh-web-client.js`）决定代次；当前是 `v3`——`v2` 那批会话文件被从 DSH 外部删过，
 DSH 仍记着那些 id，`session/prompt` 会被接受但落盘时 `ENOENT`（表现为「本轮运行失败」），已经不可用。

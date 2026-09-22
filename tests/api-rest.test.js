@@ -27,7 +27,8 @@ test('REST 服务：健康/设置读写/静态资源/404', async () => {
 
     // 未配置时返回带默认值的设置
     const s = await (await fetch(base + '/api/settings')).json();
-    assert.strictEqual(s.engine.provider, 'siliconflow');
+    // 默认服务商是 DeepSeek（内置 DSH 的 llm-deepseek 路由、意图识别默认都走它）
+    assert.strictEqual(s.engine.provider, 'deepseek');
     assert.ok(s.engine.providers.openai);
 
     // 保存设置

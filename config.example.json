@@ -39,7 +39,7 @@
     "to": "your-wechat-openid"
   },
   "engine": {
-    "provider": "siliconflow",
+    "provider": "deepseek",
     "providers": {
       "siliconflow": {
         "baseUrl": "https://api.siliconflow.cn/v1",
