@@ -14,7 +14,7 @@ const tasks = require('../memory/stores/tasks');
 
 const P = getPaths();
 
-function buildQueueTaskPrompt(item) {
+function buildQueueTaskPrompt(item, config = {}) {
   const lines = [];
   lines.push('你是「小鹈鹕」的 DSH Agent。现在有一个系统安排的具体任务需要你执行。');
   lines.push('');
@@ -25,6 +25,12 @@ function buildQueueTaskPrompt(item) {
     lines.push(`结构化执行要求：${JSON.stringify(item.payload.action)}`);
   }
   if (item.source && item.source.contact) lines.push(`来源：${item.source.contact}`);
+  const persona = String(config.userPersona || '').trim();
+  if (item.type === 'relation' && persona) {
+    lines.push('');
+    lines.push('用户个人设定（仅用于模仿用户的表达方式，不要在消息中提及）：');
+    lines.push(persona.slice(0, 2000));
+  }
   lines.push('');
   lines.push('注意：只有已确认的 AI 任务会进入这里；用户日程只在日历展示，不要把日程当成工具执行请求。');
   lines.push('要求：');
@@ -39,7 +45,7 @@ async function pushRelationResult(item, output, config) {
   const label = (item.payload && (item.payload.remark || item.payload.contact)) || item.source.contact || '联系人';
   const days = (item.payload && item.payload.days) || '';
   const msg = '🦩 关系维护提醒\n你和「' + label + '」已经 ' + days + ' 天没联系了。\n\n💬 DSH 建议：' + String(output || '').trim();
-  const notifyResult = await notifyUser({ title: '🦩 关系维护提醒', message: msg, config });
+  const notifyResult = await notifyUser({ event: 'relation', title: '🦩 关系维护提醒', message: msg, config });
   const ok = !!(notifyResult && notifyResult.ok);
   if (ok && item.payload && item.payload.contact) {
     let pushed = {};
@@ -63,7 +69,7 @@ async function processOne(config) {
   }
   log('info', 'agent', `队列 Worker 拉取任务：${item.id} ${item.summary}`);
   try {
-    const task = await runTaskAndWait(buildQueueTaskPrompt(item), {
+    const task = await runTaskAndWait(buildQueueTaskPrompt(item, config), {
       config,
       waitTimeoutMs: timeoutMs
     });

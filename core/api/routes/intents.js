@@ -26,6 +26,7 @@ module.exports = (router, ctx) => {
       target.type = ['task', 'deadline', 'waiting_reply'].includes(body.type) ? 'todo' : body.type;
     }
     if (body.detail !== undefined) target.detail = String(body.detail);
+    if (target.type === 'profile_update' && body.profilePatch && typeof body.profilePatch === 'object') target.profilePatch = body.profilePatch;
     if (body.dueAt !== undefined) target.dueAt = body.dueAt;
     if (body.endAt !== undefined) target.endAt = body.endAt;
     if (body.dueText !== undefined) target.dueText = String(body.dueText);

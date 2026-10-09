@@ -44,5 +44,18 @@ function getContactContext(contact, options = {}) {
   return chatDb.contactContext(contact, options);
 }
 
+function findMentionedContact(message) {
+  const text = String(message || '');
+  const matches = chatDb.listMembers('').flatMap((member) => [member.remark, member.name]
+    .map((label) => String(label || '').trim())
+    .filter((label) => label.length >= 2 && text.includes(label))
+    .map((label) => ({ member, label })));
+  matches.sort((left, right) => right.label.length - left.label.length);
+  if (!matches.length) return null;
+  const best = matches.filter((match) => match.label.length === matches[0].label.length);
+  return new Set(best.map((match) => match.member.id)).size === 1 ? best[0].member : null;
+}
+
 module.exports.searchChat = searchChat;
 module.exports.getContactContext = getContactContext;
+module.exports.findMentionedContact = findMentionedContact;

@@ -121,13 +121,20 @@ function sanitize(s) {
     sourceMessage: s.sourceMessage,
     sourceSpeaker: s.sourceSpeaker || '',
     sourceIsSelf: !!s.sourceIsSelf,
+    mode: s.mode || 'reply',
+    direction: s.direction || '',
+    deep: !!s.deep,
+    summaryStatus: s.summaryStatus || '',
+    summaryAvailable: !!s.summaryAvailable,
     canPaste: !!(s.targetWindow && s.targetWindow.handle),
     anchor: computeAnchor(s.targetWindow),
     showToken: Number(s.showToken) || 1,
     hint: s.hint || '',
     plans: (s.plans || []).map((p) => ({
       tone: p.tone,
-      messages: (p.messages || []).slice()
+      messages: (p.messages || []).slice(),
+      ...(p.sources?.length ? { sources: p.sources } : {}),
+      ...(p.profileTarget ? { profileTarget: p.profileTarget } : {})
     })),
     activePlan: s.activePlan ? {
       planIndex: s.activePlan.planIndex,
@@ -148,6 +155,9 @@ function sanitizePending(p) {
     sourceSpeaker: p.sourceSpeaker || '',
     sourceIsSelf: !!p.sourceIsSelf,
     mode: p.mode || 'fast',
+    topic: !!p.topic,
+    direction: p.direction || '',
+    stage: p.stage || 'generating',
     hint: p.hint || '',
     startedAt: p.startedAt || '',
     canPaste: !!(p.targetWindow && p.targetWindow.handle),

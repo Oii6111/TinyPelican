@@ -61,6 +61,25 @@ module.exports = (router, ctx) => {
     return ctx.json(res, 200, { suggestion: store.sanitize(s) });
   });
 
+  // 主动生成新话题：复用当前联系人画像和聊天上下文，不要求重新复制聊天记录。
+  // body { deep?: boolean }
+  router.post('/api/reply-suggestions/current/new-topic', async (req, res, c) => {
+    const body = await readJsonBody(ctx, req);
+    const result = await generateReplySuggestions({
+      newTopic: true,
+      direction: body.direction || 'history',
+      deep: !!body.deep,
+      config: loadConfig()
+    });
+
+    if (!result || !result.ok) {
+      const error = (result && result.error) || '生成新话题失败';
+      log('warn', 'reply', '生成新话题失败：' + error);
+      return ctx.json(res, 200, { ok: false, error, suggestion: store.sanitize(store.getCurrent()), pending: null });
+    }
+    return ctx.json(res, 200, { ok: true, suggestion: result.suggestion, pending: null });
+  });
+
   // 换一批 / 按用户描述重写 / 深度思考：body { hint?: string, rotate?: boolean, deep?: boolean }
   // 都复用上一批建议的同一段聊天上下文，只是换参数重新问一次模型。
   router.post('/api/reply-suggestions/current/regenerate', async (req, res, c) => {

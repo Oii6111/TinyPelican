@@ -400,6 +400,13 @@ body {
 /* ---------- 设置页 ---------- */
 .settings-page { max-width: 760px; }
 .settings-page .card { max-width: none; }
+.settings-section > summary { cursor: pointer; padding: 4px 0; border-radius: 6px; }
+.settings-section > summary:focus-visible, .settings-detail > summary:focus-visible { outline: 2px solid #5875d9; outline-offset: 4px; }
+.settings-section-title { font-size: 17px; font-weight: 600; }
+.settings-section-description { display: block; margin: 6px 0 0 20px; color: #6b7280; font-size: 13px; line-height: 1.6; }
+.settings-section-content { margin-top: 18px; padding-top: 18px; border-top: 1px solid #e5e7eb; }
+.settings-detail { margin: 16px 0; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; }
+.settings-detail > summary { cursor: pointer; font-weight: 600; margin-bottom: 12px; }
 .row { display: flex; gap: 12px; }
 .row .field { flex: 1; }
 
@@ -1412,7 +1419,19 @@ body {
 .wechat-close-btn { border: 0; background: transparent; color: #888; font-size: 24px; cursor: pointer; }
 .wechat-profile-name { font-size: 20px; font-weight: 600; margin-bottom: 18px; }
 .wechat-profile-label { display: block; margin: 14px 0 6px; color: #666; font-size: 12px; }
-.wechat-profile-editor { min-height: 240px; resize: vertical; line-height: 1.7; }
+.wechat-profile-section { margin-top: 14px; }
+.wechat-profile-section > summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+.wechat-profile-group > summary { font-size: 15px; }
+.wechat-profile-children { margin: 2px 0 8px 10px; padding-left: 14px; border-left: 2px solid #e4e9ee; }
+.wechat-profile-children > .wechat-profile-section { margin-top: 0; }
+.wechat-profile-children > .wechat-profile-section > summary { padding: 8px 0; font-size: 13px; font-weight: 500; color: #596575; }
+.wechat-profile-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid #e4e9ee; }
+.wechat-profile-pane .wechat-profile-actions .btn { margin-top: 0; min-height: 40px; white-space: normal; line-height: 1.5; }
+.wechat-profile-actions .contact-profile-analyze, .wechat-profile-actions .contact-memory-state { grid-column: 1 / -1; }
+.contact-memory-state { white-space: pre-line; }
+.wechat-profile-editor { min-height: 80px; resize: vertical; line-height: 1.6; }
+.wechat-profile-meta { margin-top: 14px; color: #777; font-size: 12px; line-height: 1.5; }
+.wechat-profile-footer { padding-top: 12px; border-top: 1px solid #e4e9ee; }
 .wechat-profile-pane .btn { margin-top: 12px; }
 .wechat-no-selection, .wechat-empty { color: #aaa; text-align: center; padding: 70px 20px; width: 100%; }
 
@@ -1440,3 +1459,5 @@ body {
 .wechat-send-btn:disabled { opacity: .5; cursor: not-allowed; }
 .wechat-chat-title-name { font-size: 18px; font-weight: 600; }
 @media (max-width: 800px) { .wechat-sidebar { width: 220px; flex-basis: 220px; } .wechat-profile-pane.open { position: absolute; right: 0; top: 0; bottom: 0; width: min(360px, 90vw); z-index: 3; box-shadow: -4px 0 14px rgba(0,0,0,.12); } }
+.chat-topic-entry { margin: 10px 0; line-height: 1.6; }
+.chat-topic-time { display: block; font-size: 12px; margin-bottom: 2px; }

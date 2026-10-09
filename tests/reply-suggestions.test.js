@@ -420,6 +420,28 @@ test('换一批：不重新读剪贴板，沿用同一段聊天并累积“不�
   }
 });
 
+test('开始新话题：复用当前上下文并生成带模式标记的开场方案', async () => {
+  seedSuggestion();
+  const prompts = [];
+  const srv = await startMockModel((prompt) => {
+    prompts.push(prompt);
+    return '[{"tone":"自然","messages":["最近忙什么呢"]},{"tone":"关心","messages":["最近还好吗"]},{"tone":"轻松","messages":["突然想起你了"]}]';
+  });
+  const port = srv.address().port;
+  try {
+    const r = await generateReplySuggestions({ newTopic: true, config: mockConfig(port) });
+    assert.strictEqual(r.ok, true, r.error);
+    assert.strictEqual(r.suggestion.mode, 'new_topic');
+    assert.strictEqual(r.suggestion.plans.length, 3);
+    assert.ok(prompts[0].includes('【新话题模式】'));
+    assert.ok(prompts[0].includes('不要直接回答、复述或追问最近一条消息'));
+    assert.ok(prompts[0].includes('你明天有空吗'), '新话题应沿用当前上下文');
+    assert.strictEqual(store.getPending(), null);
+  } finally {
+    srv.close();
+  }
+});
+
 test('模型输出不可用时保留原建议，不会把卡片清空', async () => {
   seedSuggestion();
   const srv = await startMockModel(() => '我建议你说：明天见');
@@ -446,7 +468,7 @@ function deepseekMockConfig(port, rs = {}) {
   };
 }
 
-test('快速模式：关思考 + 每组 4 条以内；深度思考：开思考 + 放宽到 8 条、更长', async () => {
+test('快速明确关闭思考，深度明确开启思考且仍保持简短', async () => {
   const seen = [];
   const srv = await startMockModel((prompt, payload) => {
     seen.push({ prompt, thinking: payload.thinking });
@@ -467,9 +489,9 @@ test('快速模式：关思考 + 每组 4 条以内；深度思考：开思考 +
     assert.ok(seen[0].prompt.includes('不超过 40 个字'));
 
     // 深度思考：不传关思考参数（走模型默认的思考模式）+ 放宽上限
-    assert.strictEqual(seen[1].thinking, undefined, '深度思考不能关掉思考');
-    assert.ok(seen[1].prompt.includes('每组包含 1~8 条消息'));
-    assert.ok(seen[1].prompt.includes('不超过 120 个字'));
+    assert.deepStrictEqual(seen[1].thinking, { type: 'enabled' });
+    assert.ok(seen[1].prompt.includes('每组包含 1~4 条消息'));
+    assert.ok(seen[1].prompt.includes('不超过 40 个字'));
   } finally {
     srv.close();
   }

@@ -6,6 +6,8 @@ module.exports = (router, ctx) => {
       ok: true,
       name: 'xiaotihu-core',
       version: ctx.version,
+      projectRoot: require('path').resolve(__dirname, '../../..'),
+      pid: process.pid,
       time: new Date().toISOString()
     });
   });

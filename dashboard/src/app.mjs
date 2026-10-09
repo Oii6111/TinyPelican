@@ -5,8 +5,7 @@ import { mount as channels } from './views/channels.mjs';
 import { mount as contacts } from './views/contacts.mjs';
 import { mount as knowledge } from './views/knowledge.mjs';
 import { mount as memoryInput } from './views/memory-input.mjs';
-import { mount as proactive } from './views/proactive.mjs';
-import { mount as strategy } from './views/strategy.mjs';
+import { mount as scheduleDashboard } from './views/proactive.mjs';
 import { mount as mcp } from './views/mcp.mjs';
 import { mount as skills } from './views/skills.mjs';
 import { mount as workflows } from './views/workflows.mjs';
@@ -25,13 +24,6 @@ const NAV = [
       { id: 'contacts', label: '联系人', mount: contacts },
       { id: 'knowledge', label: '个人知识库', mount: knowledge },
       { id: 'memory-input', label: '记忆输入', mount: memoryInput }
-    ]
-  },
-  {
-    id: 'pro', group: '主动', icon: '🔥',
-    items: [
-      { id: 'proactive', label: '主动仪表盘', mount: proactive },
-      { id: 'strategy', label: '策略配置', mount: strategy }
     ]
   },
   {
@@ -74,7 +66,14 @@ chatBtn.onclick = () => show('chat');
 nav.append(chatBtn);
 mountView('chat', chat);
 
-// ---------- 中部：四个可折叠板块 ----------
+const scheduleBtn = el('button', { class: 'nav-item nav-standalone', 'data-view': 'schedule-dashboard' },
+  el('span', { text: '📅' }),
+  el('span', { text: '日历与日程' })
+);
+scheduleBtn.onclick = () => show('schedule-dashboard');
+nav.append(scheduleBtn);
+mountView('schedule-dashboard', scheduleDashboard);
+
 for (const g of NAV) {
   const sub = el('div', { class: 'nav-sub' });
   const btn = el('button', { class: 'nav-group-btn', 'data-group': g.id },
@@ -144,7 +143,6 @@ function show(id, params) {
 const hbDot = document.getElementById('hb-dot');
 const hbText = document.getElementById('hb-text');
 const hbLast = document.getElementById('hb-last');
-const hbLevel = document.getElementById('hb-level');
 const unreadCount = document.getElementById('unread-count');
 const unreadBtn = document.getElementById('unread-btn');
 const pushStatusEl = document.getElementById('push-status');
@@ -159,7 +157,6 @@ async function refreshStatus() {
     hbLast.textContent = s.heartbeat && s.heartbeat.lastBeatAt
       ? new Date(s.heartbeat.lastBeatAt).toLocaleTimeString('zh-CN', { hour12: false })
       : '--';
-    hbLevel.textContent = '主动级别 ' + ((s.proactivity && s.proactivity.level) || 'L2');
     const n = (s.unread && s.unread.count) || 0;
     unreadCount.textContent = n;
     unreadBtn.classList.toggle('has', n > 0);
@@ -173,7 +170,7 @@ async function refreshStatus() {
       pushStatusEl.textContent = '微信推送 可用';
       pushStatusEl.title = wp.updatedAt
         ? '最近激活：' + new Date(wp.updatedAt).toLocaleString('zh-CN', { hour12: false })
-        : '微信主动推送可用';
+        : '微信推送可用';
       pushStatusEl.classList.remove('push-warn');
       pushStatusEl.classList.add('push-ok');
     } else {

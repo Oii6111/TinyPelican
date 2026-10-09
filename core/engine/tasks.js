@@ -17,7 +17,7 @@ const TASKS = {
   },
   relation: {
     opts: { temperature: 0.8 },
-    buildPrompt: (ctx) => buildRelationPrompt(ctx.contact),
+    buildPrompt: (ctx) => buildRelationPrompt(ctx.contact, ctx.userPersona),
     parse: (text) => ({ ok: true, text })
   },
   reminder_text: {

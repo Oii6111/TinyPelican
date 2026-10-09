@@ -37,9 +37,14 @@ export const api = {
   unread: { read: () => post('/api/unread/read') },
 
   contacts: {
+    template: () => get('/api/profile-template'),
+    summary: (name) => get('/api/contacts/' + encodeURIComponent(name) + '/chat-summary'),
+    rebuildSummary: (name) => post('/api/contacts/' + encodeURIComponent(name) + '/chat-summary/rebuild', {}),
     list: () => get('/api/contacts'),
     get: (name) => get('/api/contacts/' + encodeURIComponent(name)),
-    messages: (name, q = '', limit = 200) => get('/api/contacts/' + encodeURIComponent(name) + '/messages?q=' + encodeURIComponent(q) + '&limit=' + limit),
+    messages: (name, q = '', limit = 200, before = '', beforeId = 0) => get('/api/contacts/' + encodeURIComponent(name) + '/messages?q=' + encodeURIComponent(q) + '&limit=' + limit + '&before=' + encodeURIComponent(before) + '&beforeId=' + beforeId),
+    archiveMessages: (name, before = '', limit = 100, beforeId = 0) => get('/api/contacts/' + encodeURIComponent(name) + '/messages?archive=1&before=' + encodeURIComponent(before) + '&limit=' + limit + '&beforeId=' + beforeId),
+    analyzeProfile: (name) => post('/api/contacts/' + encodeURIComponent(name) + '/analyze-profile', {}),
     profile: (name) => get('/api/contacts/' + encodeURIComponent(name) + '/profile'),
     saveProfile: (name, patch) => post('/api/contacts/' + encodeURIComponent(name) + '/profile', patch),
     save: (name, patch) => post('/api/contacts/' + encodeURIComponent(name), patch),
@@ -88,6 +93,10 @@ export const api = {
   engine: {
     test: (engine) => post('/api/engine/test', { engine })
   },
+  webSearch: {
+    status: () => get('/api/web-search/status'),
+    test: () => post('/api/web-search/test', {})
+  },
 
   notify: {
     test: () => post('/api/notify/test')
@@ -111,6 +120,7 @@ export const api = {
 
   replySuggestions: {
     current: () => get('/api/reply-suggestions/current'),
+    newTopic: (direction = 'history', deep = false) => post('/api/reply-suggestions/current/new-topic', { direction, deep }),
     regenerate: (hint = '', rotate = false, deep = false) => post('/api/reply-suggestions/current/regenerate', { hint, rotate, deep }),
     continuePlan: (id, deep = false) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/continue', { deep }),
     apply: (id, plan) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/apply', { plan }),

@@ -1,7 +1,7 @@
 // 小鹈鹕 TinyPelican — Electron 壳
 // 启动时后台拉起核心服务（core/index.js）；核心以退出码 42 退出时自动重启（微信登录/登出热重启）。
 // 另有一个无边框回复建议浮窗：复制聊天后自动出现在微信输入框上方，可换一批 / 按描述重写 / 逐条回填。
-const { app, BrowserWindow, dialog, ipcMain, screen, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, session, shell, Tray } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
@@ -15,6 +15,22 @@ const CORE = path.join(PROJECT_ROOT, 'core', 'index.js');
 const LOGO = path.join(PROJECT_ROOT, 'logo2.png');
 const PORT = 18791;
 const RESTART_EXIT_CODE = 42;
+
+if (!isPackaged) {
+  const workspaceId = require('crypto').createHash('sha256').update(PROJECT_ROOT).digest('hex').slice(0, 12);
+  app.setPath('userData', path.join(app.getPath('appData'), 'TinyPelican-dev', workspaceId));
+}
+const sessionDirectory = path.join(app.getPath('userData'), 'browser-session-v2');
+fs.mkdirSync(sessionDirectory, { recursive: true });
+app.setPath('sessionData', sessionDirectory);
+const ownsInstance = app.requestSingleInstanceLock();
+if (!ownsInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    showMainWindow();
+  });
+}
 
 // 数据目录：打包后放用户可写目录；开发模式不设（脚本沿用现路径）。
 if (isPackaged && !process.env.XIAOTIHU_DATA_DIR) {
@@ -41,19 +57,63 @@ if (isPackaged) {
 let coreProc = null;
 let coreCrashNotified = false;
 let win = null;
+let tray = null;
 let cardWin = null;
 let suggestionPollTimer = null;
 let currentAnchor = null;
+let lastAutomaticCardPosition = null;
 let lastSuggestionId = null;
 let lastShowToken = null;
 let lastPendingAt = null;
 let authCookie = '';
+let quitting = false;
+let coreStopped = false;
 
 const CARD_WIDTH = 340;
 const CARD_HEIGHT = 300;
 const CARD_EDGE_GAP = 24;
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+function createMainWindow() {
+  win = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 760,
+    minHeight: 560,
+    icon: LOGO,
+    title: '小鹈鹕',
+    autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false }
+  });
+  win.loadURL(`http://127.0.0.1:${PORT}`);
+  win.on('close', (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    win.hide();
+  });
+  win.on('closed', () => { win = null; });
+}
+
+function showMainWindow() {
+  if (quitting || !app.isReady()) return;
+  if (!win || win.isDestroyed()) createMainWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function createTray() {
+  const icon = nativeImage.createFromPath(LOGO).resize({ width: 16, height: 16 });
+  tray = new Tray(icon);
+  tray.setToolTip('小鹈鹕');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开小鹈鹕', click: showMainWindow },
+    { type: 'separator' },
+    { label: '停止应用', click: () => app.quit() }
+  ]));
+  tray.on('double-click', showMainWindow);
+}
 
 function readConfig() {
   try {
@@ -139,11 +199,13 @@ function coreEnv() {
 }
 
 function startCore() {
+  if (quitting) return;
   const runner = process.env.XIAOTIHU_NODE || process.execPath;
   const startedAt = Date.now();
-  coreProc = spawn(runner, [CORE], { stdio: 'ignore', windowsHide: true, env: coreEnv() });
+  coreProc = spawn(runner, [CORE], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true, env: coreEnv() });
   coreProc.on('error', () => {});
   coreProc.on('exit', (code) => {
+    if (quitting) return;
     if (code === RESTART_EXIT_CODE) {
       startCore(); // 微信登录/登出后的热重启
       return;
@@ -174,11 +236,19 @@ function positionAtScreenCorner() {
   if (!cardWin || cardWin.isDestroyed()) return;
   const area = screen.getPrimaryDisplay().workArea;
   const [width, height] = cardWin.getSize();
-  cardWin.setPosition(area.x + area.width - width - 16, area.y + area.height - height - 16);
+  const position = [area.x + area.width - width - 16, area.y + area.height - height - 16];
+  cardWin.setPosition(...position);
+  lastAutomaticCardPosition = position;
+}
+
+function cardWasManuallyMoved() {
+  if (!cardWin || cardWin.isDestroyed() || !lastAutomaticCardPosition) return false;
+  return cardWin.getPosition().some((value, index) => Math.abs(value - lastAutomaticCardPosition[index]) > 2);
 }
 
 function positionFloatingWindows(anchor = currentAnchor) {
   if (!cardWin || cardWin.isDestroyed()) return;
+  if (cardWasManuallyMoved()) return;
 
   if (!anchor || !Number.isFinite(Number(anchor.x)) || !Number.isFinite(Number(anchor.y))) {
     positionAtScreenCorner();
@@ -197,6 +267,7 @@ function positionFloatingWindows(anchor = currentAnchor) {
   const cardX = clamp(Math.round(anchorX - cardWidth + CARD_EDGE_GAP), area.x, area.x + area.width - cardWidth);
   const cardY = clamp(Math.round(anchorY - cardHeight - 12), area.y, area.y + area.height - cardHeight);
   cardWin.setPosition(cardX, cardY);
+  lastAutomaticCardPosition = [cardX, cardY];
 }
 
 async function refreshCurrentAnchor() {
@@ -221,6 +292,7 @@ async function refreshCurrentAnchor() {
 
 function hideCard() {
   if (cardWin && !cardWin.isDestroyed() && cardWin.isVisible()) cardWin.hide();
+  lastAutomaticCardPosition = null;
 }
 
 // 卡片内容高度变化时把窗口收到刚好包住卡片，避免透明区域挡住微信。
@@ -230,6 +302,8 @@ function resizeCard(size) {
   const height = clamp(Math.round(Number(size && size.height) || CARD_HEIGHT), 120, 620);
   const [curWidth, curHeight] = cardWin.getSize();
   if (curWidth === width && curHeight === height) return;
+  const previousPosition = cardWin.getPosition();
+  const manuallyMoved = cardWasManuallyMoved();
   const wasResizable = cardWin.isResizable();
   try {
     if (!wasResizable) cardWin.setResizable(true);
@@ -238,7 +312,15 @@ function resizeCard(size) {
   } catch {
     try { cardWin.setSize(width, height); } catch {}
   }
-  positionFloatingWindows(currentAnchor);
+  if (manuallyMoved) {
+    const area = screen.getDisplayNearestPoint({ x: previousPosition[0], y: previousPosition[1] }).workArea;
+    cardWin.setPosition(
+      clamp(previousPosition[0], area.x, area.x + area.width - width),
+      clamp(previousPosition[1], area.y, area.y + area.height - height)
+    );
+  } else {
+    positionFloatingWindows(currentAnchor);
+  }
 }
 
 function createFloatingWindows() {
@@ -260,6 +342,10 @@ function createFloatingWindows() {
     webPreferences: { contextIsolation: true, nodeIntegration: false, preload }
   });
   cardWin.loadURL(`http://127.0.0.1:${PORT}/suggestion-card.html`);
+  cardWin.webContents.setWindowOpenHandler(({ url }) => {
+    try { if (['http:', 'https:'].includes(new URL(url).protocol)) shell.openExternal(url); } catch {}
+    return { action: 'deny' };
+  });
   cardWin.setBackgroundColor('#00000000');
   if (typeof cardWin.setHasShadow === 'function') cardWin.setHasShadow(false);
   cardWin.setAlwaysOnTop(true, 'screen-saver');
@@ -268,6 +354,7 @@ function createFloatingWindows() {
 }
 
 async function pollSuggestions() {
+  if (quitting) return;
   try {
     const res = await desktopFetch(`http://127.0.0.1:${PORT}/api/reply-suggestions/current`);
     if (res.status === 401) {
@@ -276,6 +363,7 @@ async function pollSuggestions() {
     }
     if (!res.ok) return;
     const data = await res.json();
+    if (quitting) return;
     const s = data && data.suggestion;
     const pending = data && data.pending;
     if (!s && !pending) {
@@ -321,23 +409,33 @@ async function pollSuggestions() {
 }
 
 app.whenReady().then(async () => {
+  if (!ownsInstance || quitting) return;
   if (await portFree(PORT)) {
     startCore();
     await sleep(3000);
+  } else {
+    let health = null;
+    try {
+      const response = await fetch(`http://127.0.0.1:${PORT}/api/health`, { signal: AbortSignal.timeout(3000) });
+      if (response.ok) health = await response.json();
+    } catch {}
+    if (!health || !health.projectRoot || path.resolve(health.projectRoot).toLowerCase() !== PROJECT_ROOT.toLowerCase()) {
+      await dialog.showMessageBox({
+        type: 'error',
+        title: '小鹈鹕 · 检测到旧服务',
+        message: '端口 18791 已被旧版本或其他目录的服务占用。',
+        detail: `请先关闭原来的小鹈鹕窗口和启动终端，再重新启动。\n当前代码目录：${PROJECT_ROOT}\n已有服务目录：${health && health.projectRoot || '旧版本未提供来源信息'}`,
+        buttons: ['关闭']
+      });
+      app.quit();
+      return;
+    }
   }
   await establishDesktopSession();
+  if (quitting) return;
 
-  win = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 760,
-    minHeight: 560,
-    icon: LOGO,
-    title: '小鹈鹕',
-    autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, nodeIntegration: false }
-  });
-  win.loadURL(`http://127.0.0.1:${PORT}`);
+  createTray();
+  createMainWindow();
 
   createFloatingWindows();
 
@@ -370,17 +468,44 @@ app.whenReady().then(async () => {
   suggestionPollTimer = setInterval(pollSuggestions, 250);
   pollSuggestions();
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      win = new BrowserWindow({ width: 1280, height: 800, minWidth: 760, minHeight: 560, icon: LOGO, autoHideMenuBar: true });
-      win.loadURL(`http://127.0.0.1:${PORT}`);
-    }
-  });
+  app.on('activate', showMainWindow);
 });
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  if (quitting) app.quit();
+});
+
+app.on('before-quit', (event) => {
+  quitting = true;
+  if (suggestionPollTimer) clearInterval(suggestionPollTimer);
+  if (cardWin && !cardWin.isDestroyed()) cardWin.destroy();
+  if (coreStopped || !coreProc || coreProc.exitCode !== null || coreProc.signalCode !== null) return;
+  event.preventDefault();
+  if (coreProc.shutdownRequested) return;
+  coreProc.shutdownRequested = true;
+  const child = coreProc;
+  const timeout = setTimeout(() => {
+    try { child.kill(); } catch {}
+  }, 5000);
+  child.once('exit', () => {
+    clearTimeout(timeout);
+    coreStopped = true;
+    app.quit();
+  });
+  if (child.connected) {
+    child.send({ type: 'shutdown' }, (error) => {
+      if (error) { try { child.kill(); } catch {} }
+    });
+  } else {
+    try { child.kill(); } catch {}
+  }
+});
 
 app.on('will-quit', () => {
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
   if (suggestionPollTimer) clearInterval(suggestionPollTimer);
   if (coreProc) {
     try { coreProc.kill(); } catch {}

@@ -7,6 +7,13 @@ const { getPaths } = require('./paths');
 
 const DEFAULTS = {
   selfNicknames: [],
+  userPersona: '',
+  profileAutoUpdate: { enabled: false, days: 7, scope: 'important' },
+  webSearch: {
+    enabled: false, provider: 'searxng', fallback: '', timeoutMs: 45000, maxResults: 6,
+    searxng: { baseUrl: '' },
+    moonshot: { baseUrl: 'https://api.moonshot.cn/v1', apiKey: '', model: 'kimi-k2.6' }
+  },
   // 剪贴板轮询间隔：调小能让建议回复更快感知到复制（300ms 只比 700ms 多约 1% 单核）
   pollMs: 400,
   minMatchLines: 2,
@@ -87,9 +94,8 @@ const DEFAULTS = {
       // 快速模式（默认，关模型思考）：每组最多 4 条、每条不超过 40 字
       maxMessagesPerPlan: 4,
       maxMessageChars: 40,
-      // 深度思考模式（卡片上的 🧠 按钮）：允许更多条、更长内容，也更慢
-      deepMaxMessagesPerPlan: 8,
-      deepMaxMessageChars: 120,
+      deepMaxMessagesPerPlan: 4,
+      deepMaxMessageChars: 40,
       deepTimeoutMs: 120000,
       maxHistoryMessages: 24,
       expireSeconds: 300,
@@ -102,6 +108,16 @@ const DEFAULTS = {
   },
   notify: {
     mode: 'weixin', // weixin | weixin-then-bark | bark | off
+    channels: {
+      weixin: { enabled: true, direction: 'bidirectional', label: '微信 iLink' },
+      bark: { enabled: true, direction: 'outbound', label: 'Bark' }
+    },
+    events: {
+      captureComplete: false,
+      intent: true,
+      reminder: true,
+      relation: true
+    },
     bark: {
       server: 'https://api.day.app',
       key: '',
@@ -149,7 +165,19 @@ function loadConfig(configPath) {
   try {
     raw = JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch {}
-  return deepMerge(DEFAULTS, raw);
+  const merged = deepMerge(DEFAULTS, raw);
+  if (isPlainObject(raw.weixinPush)) {
+    const hasCanonicalEvents = isPlainObject(raw.notify) && isPlainObject(raw.notify.events)
+      && Object.prototype.hasOwnProperty.call(raw.notify.events, 'captureComplete');
+    if (!isPlainObject(raw.notify) || !hasCanonicalEvents) {
+      if (raw.weixinPush.enabled === false) merged.notify.mode = 'off';
+      else if (!isPlainObject(raw.notify)) merged.notify.mode = 'weixin';
+      if (raw.weixinPush.notifyComplete !== undefined && !hasCanonicalEvents) {
+        merged.notify.events.captureComplete = raw.weixinPush.notifyComplete === true;
+      }
+    }
+  }
+  return merged;
 }
 
 module.exports = { DEFAULTS, deepMerge, loadConfig };

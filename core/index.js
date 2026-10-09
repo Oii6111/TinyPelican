@@ -53,6 +53,9 @@ async function main() {
   startHeartbeat((cfg.heartbeat && cfg.heartbeat.intervalSec) || 30);
 
   const scheduler = new Scheduler();
+  const chatMemory = require('./memory/chat-memory');
+  chatMemory.initialize();
+  scheduler.register({ name: 'chat-memory', intervalMs: 5000, immediate: true, run: () => chatMemory.processOnce({ config: loadConfig() }) });
   scheduler.register({
     name: 'remind',
     intervalMs: 60 * 1000,
@@ -63,6 +66,12 @@ async function main() {
     name: 'relation',
     intervalMs: 24 * 60 * 60 * 1000,
     run: () => runRelationCheck({ config: cfg })
+  });
+  scheduler.register({
+    name: 'chat-archive',
+    intervalMs: 24 * 60 * 60 * 1000,
+    run: () => chatDb.archiveExpired(),
+    immediate: true
   });
   const queueCfg = (cfg.agent && cfg.agent.queue) || {};
   if (queueCfg.enabled !== false) {
@@ -199,7 +208,7 @@ async function main() {
         if (added) {
           triggerIntent();
           const newContactText = !hadContact && contact ? `\n识别到新联系人「${contact}」，请在联系人页面补充备注和描述。` : '';
-          notifyUser({ config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${contact ? `，联系人：${contact}` : ''}。${newContactText}` })
+          notifyUser({ event: 'captureComplete', config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${contact ? `，联系人：${contact}` : ''}。${newContactText}` })
             .catch((e) => log('warn', 'capture', '录入完成通知失败：' + String((e && e.message) || e)));
         }
       }
@@ -230,6 +239,13 @@ async function main() {
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  process.on('message', (message) => {
+    if (message && message.type === 'shutdown') shutdown();
+  });
+  if (process.send) {
+    process.on('disconnect', shutdown);
+    if (!process.connected) shutdown();
+  }
 }
 
 if (require.main === module) {

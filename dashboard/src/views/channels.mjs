@@ -29,8 +29,8 @@ export function mount(container, ctx) {
           el('span', { class: 'badge ' + (wxOk ? 'info' : 'warn'), text: wxOk ? '已接入' : '未接入' })
         ),
         el('div', { class: 'channel-foot' },
-          el('span', { class: 'muted', text: wxOk ? '账号 ' + (wx.accountId || '') : '扫码登录后即可收发消息与主动推送' }),
-          el('button', { class: 'btn btn-ghost btn-sm', text: wxOk ? '配置' : '去登录', onclick: () => ctx.navigate('memory-input') })
+          el('span', { class: 'muted', text: wxOk ? '账号 ' + (wx.accountId || '') : '扫码登录后即可收发消息与接收通知' }),
+          el('button', { class: 'btn btn-ghost btn-sm', text: wxOk ? '配置' : '去登录', onclick: () => ctx.navigate('settings') })
         )
       )
     );
@@ -41,6 +41,19 @@ export function mount(container, ctx) {
       ['💼', 'Slack', 'App'],
       ['☁️', '飞书', 'App']
     ];
+    let search = {};
+    try { search = await api.webSearch.status(); } catch {}
+    const result = el('span', { class: 'muted', text: search.lastTest ? (search.lastTest.ok ? '上次连接测试成功' : search.lastTest.error) : '尚未测试连接' });
+    const test = el('button', { class: 'btn btn-sm', text: '测试连接', onclick: async () => {
+      test.disabled = true; result.textContent = '测试中…';
+      try { const data = await api.webSearch.test(); result.textContent = `连接成功 · ${data.results.length} 条来源`; }
+      catch (error) { result.textContent = error.message; }
+      finally { test.disabled = false; }
+    } });
+    list.append(el('div', { class: 'channel-card' },
+      el('div', { class: 'channel-head' }, el('strong', { text: '🌐 联网搜索' }), el('span', { class: 'badge', text: search.enabled ? (search.ready ? '已启用' : '待配置') : '已关闭' })),
+      el('p', { text: `当前服务：${search.provider === 'moonshot' ? 'Kimi' : 'SearXNG'} · 为“聊点新鲜的”提供来源` }), result,
+      el('div', { class: 'channel-foot' }, test, el('button', { class: 'btn btn-sm', text: '配置', onclick: () => { sessionStorage.setItem('settings-section', 'web-search'); ctx.navigate('settings'); } }))));
     for (const [icon, name, type] of future) {
       list.append(
         el('div', { class: 'channel-card ghost' },

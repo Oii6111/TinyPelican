@@ -11,11 +11,21 @@ const { resolveProvider, normalizeChatUrl } = require('./providers');
 // 实测同一个建议提示词 5.5s -> 1.0s，所以这类任务显式关掉。
 function noThinkingBody(provider, engine = {}) {
   const custom = engine.noThinkingBody;
-  if (custom && typeof custom === 'object') return custom;
+  if (custom && typeof custom === 'object' && Object.keys(custom).length) return custom;
   const hay = `${(provider && provider.name) || ''} ${(provider && provider.baseUrl) || ''}`.toLowerCase();
   if (hay.includes('deepseek')) return { thinking: { type: 'disabled' } };
   if (hay.includes('siliconflow')) return { enable_thinking: false };
+  if (provider?.name === 'ollama') return { think: false };
   return {};
+}
+
+function thinkingBody(provider, engine = {}) {
+  if (engine.thinkingBody && typeof engine.thinkingBody === 'object' && Object.keys(engine.thinkingBody).length) return engine.thinkingBody;
+  const hay = `${provider.name} ${provider.baseUrl}`.toLowerCase();
+  if (hay.includes('deepseek')) return { thinking: { type: 'enabled' } };
+  if (hay.includes('siliconflow')) return { enable_thinking: true };
+  if (provider.name === 'ollama') return { think: true };
+  throw new Error('当前服务未配置思考开关，请在设置 → 模型服务配置思考请求参数，或使用快速模式');
 }
 
 async function chatCompletion(messages, opts = {}) {
@@ -30,7 +40,8 @@ async function chatCompletion(messages, opts = {}) {
 
   const timeoutMs = opts.timeoutMs || engine.timeoutMs || 120000;
   const maxRetries = opts.retries !== undefined ? opts.retries : (engine.retries !== undefined ? engine.retries : 2);
-  const url = normalizeChatUrl(provider.baseUrl);
+  const nativeOllama = provider.name === 'ollama' && typeof opts.thinking === 'boolean';
+  const url = nativeOllama ? provider.baseUrl.replace(/\/(?:v1(?:\/chat\/completions)?|api\/chat)\/?$/, '').replace(/\/$/, '') + '/api/chat' : normalizeChatUrl(provider.baseUrl);
   const headers = { 'Content-Type': 'application/json' };
   if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
 
@@ -39,19 +50,29 @@ async function chatCompletion(messages, opts = {}) {
     messages,
     temperature: opts.temperature !== undefined ? opts.temperature : 0.2
   };
-  if (opts.thinking === false) Object.assign(body, noThinkingBody(provider, engine));
+  const thinkingSettings = { ...engine, ...(engine.providers?.[provider.name] || {}) };
+  if (opts.thinking === false) Object.assign(body, noThinkingBody(provider, thinkingSettings));
+  if (opts.thinking === true) {
+    try { Object.assign(body, thinkingBody(provider, thinkingSettings)); }
+    catch (error) { return { ok: false, error: error.message }; }
+  }
+  if (nativeOllama) {
+    body.stream = false;
+    body.options = { temperature: body.temperature };
+    delete body.temperature;
+  }
 
   let lastErr = null;
   for (let i = 0; i <= maxRetries; i++) {
     const startedAt = Date.now();
+    let timer;
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      timer = setTimeout(() => ctrl.abort(), timeoutMs);
       const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: ctrl.signal });
-      clearTimeout(timer);
       if (res.ok) {
         const data = await res.json();
-        const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+        const content = data?.choices?.[0]?.message?.content || data?.message?.content;
         if (typeof content === 'string' && content.trim()) {
           const usage = (data && data.usage) || {};
           // 记一条耗时：以后判断「慢」是模型慢还是本地慢，看日志就够了
@@ -67,7 +88,7 @@ async function chatCompletion(messages, opts = {}) {
       }
     } catch (e) {
       lastErr = e;
-    }
+    } finally { clearTimeout(timer); }
     if (i < maxRetries) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
   }
   return { ok: false, error: lastErr ? String(lastErr.message || lastErr) : '未知错误' };
@@ -90,4 +111,4 @@ async function runTask(taskName, context, opts = {}) {
   return task.parse(r.text, context) || { ok: false, error: '模型输出无法解析' };
 }
 
-module.exports = { chatCompletion, runTask, noThinkingBody };
+module.exports = { chatCompletion, runTask, noThinkingBody, thinkingBody };

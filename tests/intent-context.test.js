@@ -33,6 +33,17 @@ const CFG = {
 
 const daysFromNow = (n) => new Date(Date.now() + n * 86400000).toISOString();
 
+test('普通意图分析等待期间新增的画像候选不会被旧列表覆盖', async () => {
+  chatDb.ingestMessages('画像并发', [{ name: '画像并发', ts: new Date().toISOString(), type: 'text', content: '新的聊天' }]);
+  await runIntentExtraction({ config: CFG, runTask: async () => {
+    intentsStore.saveIntents([...readIntents(), { id: 'concurrent-profile', type: 'profile_update', contact: '画像并发', status: 'pending_confirm', profilePatch: { 行为意向: { 爱好: '散步' } } }]);
+    return { ok: true, text: '[]', array: [] };
+  } });
+  assert.ok(readIntents().some((intent) => intent.id === 'concurrent-profile'));
+  intentsStore.saveIntents(readIntents().filter((intent) => intent.id !== 'concurrent-profile'));
+  chatDb.deleteMember('画像并发');
+});
+
 test('提示词：带当前时间、前文背景与「已完成/过期不要输出」的规则', () => {
   const prompt = buildIntentPrompt({
     chatText: '2026-09-22 09:00 阿May: 这周的周报记得交',

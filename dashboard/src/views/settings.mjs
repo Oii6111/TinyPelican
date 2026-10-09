@@ -1,6 +1,7 @@
 import { api } from '../api.mjs';
 import { el, empty } from '../ui.mjs';
 import { createWechatLogin } from '../components/wechat-login.mjs';
+import { memorySettings } from '../components/memory-settings.mjs';
 
 const PROVIDERS = [
   ['siliconflow', 'SiliconFlow（硅基流动）'],
@@ -15,13 +16,27 @@ export function mount(container) {
   container.className = 'view';
   let lastProviders = {};
   const wxLogin = createWechatLogin();
+  const captureChk = el('input', { type: 'checkbox' });
+  const replyChk = el('input', { type: 'checkbox' });
+  const selfInput = el('input', { class: 'input', placeholder: '多个昵称用逗号分隔' });
+  const captureMsg = el('span', { class: 'muted', role: 'status' });
+  const captureSaveBtn = el('button', { class: 'btn btn-primary', text: '保存记忆输入设置' });
+
+  const personaInput = el('textarea', {
+    class: 'input',
+    rows: 6,
+    maxlength: '12000',
+    placeholder: '例如：我是一个说话直接但友善的人，习惯短句，偶尔使用“哈哈”，不喜欢夸张和客套。'
+  });
+  const personaMsg = el('span', { class: 'muted' });
+  const personaSaveBtn = el('button', { class: 'btn btn-primary', text: '保存人设' });
 
   // 通知渠道
   const NOTIFY_MODES = [
     ['weixin', '微信推送（默认）'],
     ['weixin-then-bark', '微信优先，不可用时 Bark 备用'],
     ['bark', '仅 Bark'],
-    ['off', '关闭主动通知']
+    ['off', '关闭通知']
   ];
   const notifyModeSel = el('select', { class: 'select' }, ...NOTIFY_MODES.map(([v, l]) => el('option', { value: v, text: l })));
   const barkServerInput = el('input', { class: 'input', placeholder: 'https://api.day.app' });
@@ -46,6 +61,26 @@ export function mount(container) {
   const notifyMsg = el('span', { class: 'muted' });
   const notifySaveBtn = el('button', { class: 'btn btn-primary', text: '保存通知设置' });
   const notifyTestBtn = el('button', { class: 'btn btn-edit', text: '发送测试通知' });
+  const captureCompleteChk = el('input', { type: 'checkbox' });
+  const intentNotifyChk = el('input', { type: 'checkbox' });
+  const reminderNotifyChk = el('input', { type: 'checkbox' });
+  const relationNotifyChk = el('input', { type: 'checkbox' });
+  const barkSettings = el('details', { class: 'settings-detail notify-bark-settings' },
+    el('summary', { text: 'Bark 详细设置' }),
+    field('Bark Server', barkServerInput),
+    field('Bark Key', barkKeyInput, '只保存在本地 config.json，不回显完整密钥。'),
+    field('分组（group）', barkGroupInput, '通知在手机上的分组名。'),
+    field('副标题（subtitle）', barkSubtitleInput),
+    field('提醒级别（level）', barkLevelSel, 'critical 会强制响铃，请谨慎使用。'),
+    field('铃声（sound）', barkSoundInput, '留空为系统默认；可选 minuet、alarm、anticipate 等。'),
+    field('图标 URL（icon）', barkIconInput, '仅 iOS 15+ 支持。'),
+    field('角标数（badge）', barkBadgeInput),
+    field('点击跳转 URL', barkUrlInput),
+    field('长按复制内容（copy）', barkCopyInput),
+    switchField('自动复制（autoCopy）', barkAutoCopyChk, '收到通知后自动把 copy 内容写入剪贴板。'),
+    switchField('持续响铃 30 秒（call）', barkCallChk),
+    switchField('保存到通知历史（isArchive）', barkArchiveChk, '默认开启，可在 Bark App 里回看。')
+  );
 
   // 模型服务
   const providerSel = el('select', { class: 'select' }, ...PROVIDERS.map(([v, l]) => el('option', { value: v, text: l })));
@@ -57,11 +92,9 @@ export function mount(container) {
   const engineSaveBtn = el('button', { class: 'btn btn-primary', text: '保存模型设置' });
   const engineSaveMsg = el('span', { class: 'muted' });
   const dshModelHint = el('div', { class: 'hint' });
-
-  // 旧版推送（已弃用，仅兼容）
-  const pushChk = el('input', { type: 'checkbox' });
-  const completeChk = el('input', { type: 'checkbox' });
-  const saveMsg = el('span', { class: 'muted' });
+  const thinkingParams = el('textarea', { class: 'input', rows: 3, placeholder: '{"thinking":{"type":"enabled"}}' });
+  const fastParams = el('textarea', { class: 'input', rows: 3, placeholder: '{"thinking":{"type":"disabled"}}' });
+  const advancedMemory = memorySettings(section, field, switchField);
 
   function field(label, inputEl, hint = '') {
     return el('div', { class: 'field' },
@@ -77,49 +110,55 @@ export function mount(container) {
     );
   }
 
+  function section(title, description, ...content) {
+    return el('details', { class: 'card settings-section' },
+      el('summary', {}, el('span', { class: 'settings-section-title', text: title }), el('span', { class: 'settings-section-description', text: description })),
+      el('div', { class: 'settings-section-content' }, ...content)
+    );
+  }
+
   container.append(
+    el('h2', { text: '设置' }),
+    el('p', { class: 'desc', text: '点击板块展开配置，每个板块单独保存。收起不会清除当前填写的内容。' }),
     el('div', { class: 'settings-page' },
-      el('div', { class: 'card' },
-        el('h2', { text: '模型服务（Agent 引擎）' }),
+      section('模型服务', '服务商、模型、API 密钥与连接测试',
         el('div', { class: 'desc', text: '意图识别、提醒文案、关系建议、看板对话都走这里。支持任意 OpenAI 兼容接口，本地 Ollama 也可以。' }),
         field('服务商', providerSel),
         field('API 地址', baseUrlInput),
         field('API Key', apiKeyInput, '只保存在本地 config.json，不回显完整密钥。'),
         field('模型', modelInput),
+        el('p', { class: 'hint', text: '快速和思考回复均使用此模型。DeepSeek、SiliconFlow、Ollama 已适配思考开关；其他兼容服务需按服务文档配置下方参数，不支持思考的模型请使用快速模式。' }),
+        field('思考模式请求参数（可选 JSON）', thinkingParams, '留空使用内置适配。参数随当前服务保存。'),
+        field('快速模式请求参数（可选 JSON）', fastParams, '不支持思考的普通模型可留空；混合模型需明确配置关闭思考。'),
         el('div', { class: 'field' }, testBtn, ' ', engineMsg, ' ', engineSaveBtn, ' ', engineSaveMsg),
         dshModelHint
       ),
-      el('div', { class: 'card' },
-        el('h2', { text: '微信通道（iLink 扫码登录）' }),
+      section('记忆输入与回复建议', '剪贴板捕获、本人昵称和回复浮窗',
+        switchField('启用剪贴板捕获', captureChk, '复制聊天记录后自动解析、去重并录入记忆。'),
+        field('我的微信昵称', selfInput, '多个用逗号分隔，用于区分你与联系人。'),
+        switchField('复制聊天后生成回复建议', replyChk, '需启用剪贴板捕获；建议只填入输入框，由你确认发送。'),
+        el('div', { class: 'field' }, captureSaveBtn, ' ', captureMsg)
+      ),
+      ...advancedMemory.panels,
+      section('我的人设与表达风格', '用于思考模式回复与关系维护问候',
+        el('div', { class: 'desc', text: '思考模式结合人设与累计聊天总结；快速模式仅使用画像和近期聊天。留空使用默认自然口吻。' }),
+        field('人设描述', personaInput, '写下你的身份、常用语气、表达习惯和需要避开的表达；不要填写 API Key 等敏感信息。'),
+        el('div', { class: 'field' }, personaSaveBtn, ' ', personaMsg)
+      ),
+      section('微信渠道', '扫码登录、账号状态与退出登录',
         el('div', { class: 'desc', text: '提醒与消息收发走微信官方 iLink 协议。扫码后凭据写入本地 config.toml，核心会自动重启。' }),
         wxLogin.el
       ),
-      el('div', { class: 'card' },
-        el('h2', { text: '通知渠道（主动提醒 / 备用推送）' }),
-        el('div', { class: 'desc', text: '微信 iLink 的 context_token 需要用户入站消息刷新。选择“微信优先 + Bark 备用”后，微信不可用时重要提醒会转投 Bark。' }),
-        field('主动通知模式', notifyModeSel),
-        field('Bark Server', barkServerInput),
-        field('Bark Key', barkKeyInput, '只保存在本地 config.json，不回显完整密钥。'),
-        field('分组（group）', barkGroupInput, '通知在手机上的分组名。'),
-        field('副标题（subtitle）', barkSubtitleInput),
-        field('提醒级别（level）', barkLevelSel, 'critical 会强制响铃，请谨慎使用。'),
-        field('铃声（sound）', barkSoundInput, '留空为系统默认；可选 minuet、alarm、anticipate 等。'),
-        field('图标 URL（icon）', barkIconInput, '仅 iOS 15+ 支持。'),
-        field('角标数（badge）', barkBadgeInput),
-        field('点击跳转 URL', barkUrlInput),
-        field('长按复制内容（copy）', barkCopyInput),
-        switchField('自动复制（autoCopy）', barkAutoCopyChk, '收到通知后自动把 copy 内容写入剪贴板。'),
-        switchField('持续响铃 30 秒（call）', barkCallChk),
-        switchField('保存到通知历史（isArchive）', barkArchiveChk, '默认开启，可在 Bark App 里回看。'),
+      section('通知设置', '推送渠道、通知类型与 Bark 备用推送',
+        el('div', { class: 'desc', text: '这里统一管理通知。微信 iLink 支持收发消息，Bark 负责单向推送；选择“关闭通知”即可停止通知推送。' }),
+        field('通知模式', notifyModeSel),
+        switchField('聊天记录录入完成后通知', captureCompleteChk, '默认关闭；重要提醒和待确认事项仍会按当前渠道推送。'),
+        switchField('待确认事项通知', intentNotifyChk),
+        switchField('提醒通知', reminderNotifyChk),
+        switchField('关系维护通知', relationNotifyChk),
+        barkSettings,
         el('div', { class: 'field' }, notifyTestBtn, ' ', notifySaveBtn, ' ', notifyMsg)
       ),
-      el('div', { class: 'card' },
-        el('h2', { text: '旧版微信推送（已弃用）' }),
-        el('div', { class: 'desc', text: '已被 iLink 通道替代，仅保留兼容开关。' }),
-        switchField('启用微信推送', pushChk),
-        switchField('导入完成后推送「吃饱啦」消息', completeChk),
-        el('div', {}, el('button', { class: 'btn btn-primary', text: '保存', onclick: save }), ' ', saveMsg)
-      )
     )
   );
 
@@ -137,6 +176,10 @@ export function mount(container) {
         }
       }
     };
+  }
+
+  function updateBarkVisibility() {
+    barkSettings.style.display = notifyModeSel.value === 'bark' || notifyModeSel.value === 'weixin-then-bark' ? '' : 'none';
   }
 
   // 合并当前配置，只覆盖当前选中的 provider，避免丢掉其它 provider 和 engine 其它字段
@@ -180,7 +223,9 @@ export function mount(container) {
       ...(providers[name] || {}),
       baseUrl: baseUrlInput.value.trim(),
       ...(apiKey ? { apiKey } : {}),
-      model: modelInput.value.trim()
+      model: modelInput.value.trim(),
+      thinkingBody: parseParams(thinkingParams.value),
+      noThinkingBody: parseParams(fastParams.value)
     };
     return { provider: name, providers };
   }
@@ -191,6 +236,14 @@ export function mount(container) {
     apiKeyInput.value = '';
     apiKeyInput.placeholder = (p && p.apiKey) ? `已保存（${p.apiKey}）· 留空表示不修改` : 'sk-...';
     modelInput.value = (p && p.model) || '';
+    thinkingParams.value = p?.thinkingBody ? JSON.stringify(p.thinkingBody) : '';
+    fastParams.value = p?.noThinkingBody ? JSON.stringify(p.noThinkingBody) : '';
+  }
+  function parseParams(text) {
+    if (!text.trim()) return null;
+    const value = JSON.parse(text);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('思考请求参数必须是 JSON 对象');
+    return value;
   }
 
   providerSel.onchange = () => fillProvider(lastProviders[providerSel.value] || {});
@@ -198,14 +251,22 @@ export function mount(container) {
   async function load() {
     try {
       const s = await api.settings.get();
-      pushChk.checked = !!(s.weixinPush && s.weixinPush.enabled);
-      completeChk.checked = !!(s.weixinPush && s.weixinPush.notifyComplete !== false);
+      advancedMemory.load(s);
+      captureChk.checked = !!s.capture?.enabled;
+      replyChk.checked = s.capture?.replySuggestions?.enabled !== false;
+      selfInput.value = (s.selfNicknames || []).join(', ');
+      personaInput.value = String(s.userPersona || '');
       lastProviders = (s.engine && s.engine.providers) || {};
       providerSel.value = (s.engine && s.engine.provider) || 'deepseek';
       fillProvider(lastProviders[providerSel.value] || {});
       renderDshModel(s.engine);
       const nt = s.notify || {};
-      notifyModeSel.value = nt.mode || 'weixin';
+      notifyModeSel.value = nt.mode || 'off';
+      updateBarkVisibility();
+      captureCompleteChk.checked = !!(nt.events && nt.events.captureComplete);
+      intentNotifyChk.checked = nt.events ? nt.events.intent !== false : true;
+      reminderNotifyChk.checked = nt.events ? nt.events.reminder !== false : true;
+      relationNotifyChk.checked = nt.events ? nt.events.relation !== false : true;
       const bark = nt.bark || {};
       barkServerInput.value = bark.server || 'https://api.day.app';
       barkKeyInput.value = bark.key || '';
@@ -236,17 +297,13 @@ export function mount(container) {
     }
   }
 
-  async function save() {
+  async function savePersona() {
     try {
-      const cur = await api.settings.get();
-      const r = await api.settings.save({
-        engine: buildEnginePatch(cur),
-        weixinPush: { ...(cur.weixinPush || {}), enabled: pushChk.checked, notifyComplete: completeChk.checked }
-      });
-      saveMsg.textContent = r && r.restarting ? '已保存 ✓，服务即将自动重启' : '已保存 ✓';
-      setTimeout(() => { saveMsg.textContent = ''; }, 2500);
+      const r = await api.settings.save({ userPersona: personaInput.value.trim() });
+      personaMsg.textContent = r && r.restarting ? '已保存 ✓，服务即将自动重启' : '已保存 ✓';
+      setTimeout(() => { personaMsg.textContent = ''; }, 2500);
     } catch (e) {
-      saveMsg.textContent = '保存失败：' + e.message;
+      personaMsg.textContent = '保存失败：' + e.message;
     }
   }
 
@@ -256,6 +313,12 @@ export function mount(container) {
       const r = await api.settings.save({
         notify: {
           mode: notifyModeSel.value,
+          events: {
+            captureComplete: captureCompleteChk.checked,
+            intent: intentNotifyChk.checked,
+            reminder: reminderNotifyChk.checked,
+            relation: relationNotifyChk.checked
+          },
           bark: {
             server: barkServerInput.value.trim() || 'https://api.day.app',
             key: barkKeyInput.value.trim(),
@@ -300,9 +363,25 @@ export function mount(container) {
   }
 
   notifySaveBtn.onclick = () => saveNotify(true);
+  captureSaveBtn.onclick = async () => {
+    captureSaveBtn.disabled = true;
+    try {
+      const result = await api.settings.save({
+        selfNicknames: [...new Set(selfInput.value.split(/[,，\n]/).map((name) => name.trim()).filter(Boolean))],
+        capture: { enabled: captureChk.checked, replySuggestions: { enabled: replyChk.checked } }
+      });
+      captureMsg.textContent = result.restarting ? '已保存，服务即将重启' : '已保存';
+    } catch (error) {
+      captureMsg.textContent = '保存失败：' + error.message;
+    } finally {
+      captureSaveBtn.disabled = false;
+    }
+  };
   notifyTestBtn.onclick = testNotify;
+  notifyModeSel.onchange = updateBarkVisibility;
 
   engineSaveBtn.onclick = saveEngine;
+  personaSaveBtn.onclick = savePersona;
   testBtn.onclick = async () => {
     engineMsg.textContent = '测试中…';
     try {

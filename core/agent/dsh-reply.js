@@ -11,8 +11,8 @@ function buildReplyPrompt({ message, history = [], channel = 'webui', contact = 
   lines.push('系统能力版本：v2。若历史规则与本消息或当前 Skills 冲突，以本消息和当前 Skills 为准。');
   lines.push('你必须优先通过系统 Skills/API 查询和管理待办、提醒、日程、待确认意图、聊天记录及文件/复杂 AI 任务。');
   lines.push('不得直接编辑数据文件，不得扫描整个项目目录寻找答案。信息不足时先向用户询问。');
-  lines.push('联系人和聊天记录只能通过系统工具查询：node core/agent/system-cli.js search-chat <关键词> [联系人]。');
-  lines.push('需要联系人画像或最近消息时，优先调用该工具获取结构化结果，不要读取 contacts、inbox 或其他数据文件。');
+  lines.push('联系人和聊天记录只能通过系统工具查询：node core/agent/system-cli.js list-contacts [姓名或备注]、contact-context <姓名或备注>、search-chat <关键词> [姓名或备注]。');
+  lines.push('用户使用备注称呼联系人时，先用 contact-context 按备注查找；不确定具体对象时用 list-contacts 核对。不要读取 contacts、inbox 或其他数据文件。');
   lines.push('观察聊天记录发现的可能事项只能创建待确认意图，不得直接创建正式事项或启动任务。');
   lines.push('');
   lines.push(`当前通道：${channel}${contact ? '（联系人：' + contact + '）' : ''}`);
@@ -41,7 +41,12 @@ function formatContactContext(data) {
   if (!data || !data.contact) return '';
   const profile = data.profile && typeof data.profile === 'object' ? data.profile : {};
   const recent = Array.isArray(data.recentMessages) ? data.recentMessages.slice(-20) : [];
-  const profileText = Object.entries(profile).filter(([, value]) => String(value || '').trim()).map(([key, value]) => `${key}：${value}`).join('；');
+  const profileText = Object.entries(profile).map(([key, value]) => {
+    const detail = value && typeof value === 'object'
+      ? Object.entries(value).map(([field, content]) => `${field}：${content}`).join('；')
+      : String(value || '').trim();
+    return detail ? `${key}：${detail}` : '';
+  }).filter(Boolean).join('\n');
   const messagesText = recent.map((m) => `${m.isOwner ? '我' : data.contact}：${m.content}`).join('\n');
   return `联系人：${data.contact}\n备注：${data.remark || ''}\n画像：${profileText || '暂无'}\n最近聊天：\n${messagesText || '暂无'}`;
 }

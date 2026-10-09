@@ -4,7 +4,6 @@
 //  3. 点某组 = 先填入第一条，之后卡片停在该组的「下一条」上，逐条按顺序填入微信；
 //     这时「换一批」只重写这一组还没发出去的几条（会把已发的带成上下文）；
 //  4. 底部一行输入框：写下自己想表达什么，回车/点 ↵ 让模型按你的描述重写；
-//  5. 🧠 深度思考 = 打开模型思考过程重来，允许更多条、更长内容（更慢）。
 import { api } from './api.mjs';
 import { el, empty } from './ui.mjs';
 
@@ -20,6 +19,9 @@ let statusKind = '';
 let inputFocused = false;
 let lastReportedHeight = 0;
 let lastSuggestion = null;
+let topicSelectorOpen = false;
+let retryDirection = '';
+const DIRECTIONS = { casual: '随便聊聊', fresh: '聊点新鲜的', discover: '更了解对方', history: '回顾历史' };
 
 function bridge() {
   return window.suggestionsBridge || null;
@@ -49,8 +51,9 @@ function snapshotKey(s, pending) {
     plans: s && s.plans,
     active: s && s.activePlan,
     hint: s && s.hint,
+    mode: s && s.mode,
     canPaste: s && s.canPaste,
-    pending: pending ? [pending.startedAt, pending.mode, pending.contact] : null
+    pending: pending ? [pending.startedAt, pending.mode, pending.topic, pending.contact, pending.direction, pending.stage] : null
   });
 }
 
@@ -75,6 +78,7 @@ async function refresh(force = false) {
   const key = snapshotKey(s, pending);
   if (!force && key === stateKey) return;
   stateKey = key;
+  if (s && s.id !== currentId && s.mode !== 'new_topic') topicSelectorOpen = false;
   currentId = s ? s.id : currentId;
   lastSuggestion = s || lastSuggestion;
   render(lastSuggestion, pending);
@@ -94,6 +98,7 @@ function planCard(plan, index) {
     el('span', { class: 'tone-count', text: plan.messages.length > 1 ? `连着发 ${plan.messages.length} 条` : '发 1 条' })
   ));
   plan.messages.forEach((m, i) => card.append(messageRow(i + 1, m)));
+  appendPlanMetadata(card, plan);
   if (plan.messages.length > 1) {
     card.append(el('div', { class: 'plan-tip', text: '点一下先填第 1 条，剩下的按顺序跟着点' }));
   }
@@ -101,9 +106,19 @@ function planCard(plan, index) {
   return card;
 }
 
+function appendPlanMetadata(card, plan = {}) {
+  if (plan.profileTarget) card.append(el('div', { class: 'plan-meta', text: '想了解：' + plan.profileTarget.label }));
+  for (const source of plan.sources || []) {
+    const link = el('a', { class: 'plan-meta', href: source.url, target: '_blank', rel: 'noopener noreferrer', text: '来源：' + source.title + (source.publishedAt ? ' · ' + source.publishedAt.slice(0, 10) : ' · 发布时间未知') });
+    link.addEventListener('click', (event) => event.stopPropagation());
+    card.append(link);
+  }
+}
+
 function sequenceView(s) {
   const active = s.activePlan;
   const box = el('div', { class: 'sequence' });
+  appendPlanMetadata(box, s.plans[active.planIndex]);
   const total = active.sent.length + active.remaining.length;
   box.append(el('div', { class: 'seq-head', text: `这一组共 ${total} 条 · 已填入 ${active.sent.length} 条` }));
   if (active.sent.length) {
@@ -132,7 +147,10 @@ function sequenceView(s) {
 
 function loadingView(pending, suggestion) {
   const box = el('div', { class: 'loading' });
-  box.append(el('div', { class: 'loading-label', text: pending && pending.mode === 'deep' ? '深度思考中…' : '正在想怎么回…' }));
+  const loadingLabel = pending && pending.topic
+    ? (pending.stage === 'searching' ? '正在联网寻找近期有趣内容…' : `正在生成${DIRECTIONS[pending.direction] || '新话题'}…`)
+    : (pending && pending.mode === 'deep' ? '深度思考中…' : '正在想怎么回…');
+  box.append(el('div', { class: 'loading-label', text: loadingLabel }));
   for (const w of [78, 92, 64]) {
     box.append(el('div', { class: 'shimmer' }, el('span', { style: `width:${w}%` })));
   }
@@ -152,12 +170,13 @@ function render(s, pending) {
   const contact = (pending && pending.contact) || (s && s.contact) || '';
   const sourceMessage = (pending && pending.sourceMessage) || (s && s.sourceMessage) || '';
   const sourceIsSelf = pending ? !!pending.sourceIsSelf : !!(s && s.sourceIsSelf);
+  const newTopic = !!((pending && pending.topic) || (s && s.mode === 'new_topic'));
   const hint = (s && s.hint) || '';
   const inSequence = !!(s && s.activePlan && !pending);
 
   root.append(
     el('div', { class: 'card-head' },
-      el('span', { class: 'title', text: '💬 回复建议' }),
+      el('span', { class: 'title', text: newTopic ? '💡 ' + (DIRECTIONS[pending?.direction || s?.direction] || '新话题建议') : '💬 回复建议' }),
       el('span', { class: 'contact', text: '· ' + contact }),
       el('button', {
         class: 'close',
@@ -166,7 +185,10 @@ function render(s, pending) {
         onclick: collapse
       })
     ),
-    el('div', { class: 'source', text: (sourceIsSelf ? '你最后说：' : '对方最后说：') + sourceMessage })
+    el('div', {
+      class: 'source',
+      text: (newTopic ? '参考最近聊天：' : (sourceIsSelf ? '你最后说：' : '对方最后说：')) + sourceMessage
+    })
   );
 
   if (hint) {
@@ -182,6 +204,18 @@ function render(s, pending) {
     s.plans.forEach((plan, i) => body.append(planCard(plan, i)));
   }
   root.append(body);
+  if (s?.deep && (!s.summaryAvailable || ['pending', 'running', 'failed'].includes(s.summaryStatus))) {
+    root.append(el('div', { class: 'plan-meta' },
+      el('span', { text: `聊天总结${s.summaryStatus === 'running' || s.summaryStatus === 'pending' ? '更新中' : s.summaryStatus === 'failed' ? '生成失败' : '尚未生成'}，本次使用现有上下文。` }),
+      el('button', { class: 'link', text: '立即总结', onclick: async () => {
+        try { await api.contacts.rebuildSummary(s.contact); setStatus('总结已排队，可继续生成建议'); } catch (error) { setStatus(error.message, 'err'); }
+      } })
+    ));
+  }
+  if (topicSelectorOpen && !pending) {
+    root.append(el('div', { class: 'topic-directions' }, ...Object.entries(DIRECTIONS).map(([direction, label]) => el('button', { class: 'ghost', text: label, onclick: () => startNewTopic(direction) }))));
+  }
+  if (retryDirection && !pending) root.append(el('button', { class: 'link', text: '重试' + DIRECTIONS[retryDirection], onclick: () => startNewTopic(retryDirection) }));
 
   const input = el('input', {
     class: 'hint',
@@ -212,6 +246,12 @@ function render(s, pending) {
     ),
     el('div', { class: 'actions' },
       el('button', {
+        class: 'ghost topic',
+        text: '💡 开始新话题',
+        title: '先选择话题方向，再开始生成',
+        onclick: () => { topicSelectorOpen = !topicSelectorOpen; render(lastSuggestion, null); }
+      }),
+      el('button', {
         class: 'ghost',
         text: '🎲 换一批',
         title: inSequence ? '只重写这一组还没发出去的几条' : '同一段聊天换几种说法',
@@ -220,7 +260,7 @@ function render(s, pending) {
       el('button', {
         class: 'ghost deep',
         text: '🧠 深度思考',
-        title: '打开模型思考过程重来：允许更多条、更长内容，但更慢',
+        title: '结合最新画像、个人人设与累计总结，开启模型思考，仍生成简短消息',
         onclick: () => regenerate(hintDraft, !hintDraft.trim(), true)
       }),
       el('span', { class: 'status' + (statusKind ? ' ' + statusKind : ''), text: statusText })
@@ -294,6 +334,44 @@ function resetSequence() {
       await refresh(true);
     } catch (e) {
       setStatus(String((e && e.message) || e), 'err');
+    }
+  });
+}
+
+function startNewTopic(direction = 'history', deep = false) {
+  if (!currentId) return;
+  topicSelectorOpen = false;
+  retryDirection = '';
+  withBusy(async () => {
+    setStatus('正在想一个新话题…');
+    stateKey = '';
+    const previous = lastSuggestion;
+    render(previous, {
+      startedAt: 'local',
+      mode: deep ? 'deep' : 'fast',
+      topic: true,
+      direction,
+      stage: direction === 'fresh' ? 'searching' : 'generating',
+      contact: previous && previous.contact,
+      sourceMessage: previous && previous.sourceMessage,
+      sourceIsSelf: previous && previous.sourceIsSelf
+    });
+    try {
+      const r = await api.replySuggestions.newTopic(direction, deep);
+      if (r && r.ok) {
+        hintDraft = '';
+        setStatus('新话题已生成 ✓');
+      } else {
+        retryDirection = direction;
+        topicSelectorOpen = true;
+        setStatus((r && r.error) || '生成新话题失败', 'err');
+      }
+      await refresh(true);
+    } catch (e) {
+      retryDirection = direction;
+      topicSelectorOpen = true;
+      setStatus(String((e && e.message) || e), 'err');
+      await refresh(true);
     }
   });
 }

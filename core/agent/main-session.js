@@ -8,7 +8,7 @@
 
 const dshWeb = require('./dsh-web-client');
 const { buildReplyPrompt, formatContactContext } = require('./dsh-reply');
-const { getContactContext } = require('./system-tools');
+const { getContactContext, findMentionedContact } = require('./system-tools');
 
 const queues = new Map(); // conversationKey -> tail Promise
 
@@ -40,15 +40,16 @@ async function send({
   const key = String(sessionKey || 'agent:main:webui:default');
   const sessionId = sessionIdForConversation(key, cwd);
   const msg = String(message || '').trim();
+  const resolvedContact = contact || findMentionedContact(msg)?.name || '';
   let contactContext = '';
-  if (contact) {
-    try { contactContext = formatContactContext(getContactContext(contact)); } catch {}
+  if (resolvedContact) {
+    try { contactContext = formatContactContext(getContactContext(resolvedContact)); } catch {}
   }
   const initialPrompt = buildReplyPrompt({
     message: msg,
     history,
     channel: channelFor(key),
-    contact: contact || key,
+    contact: resolvedContact || key,
     context: contactContext ? `当前联系人结构化上下文：\n${contactContext}` : ''
   });
   const promptMessage = contactContext ? `当前联系人结构化上下文（来自 SQLite）：\n${contactContext}\n\n用户消息：${msg}` : msg;
@@ -78,15 +79,16 @@ async function sendStreaming({
   const key = String(sessionKey || 'agent:main:webui:default');
   const sessionId = sessionIdForConversation(key, cwd);
   const msg = String(message || '').trim();
+  const resolvedContact = contact || findMentionedContact(msg)?.name || '';
   let contactContext = '';
-  if (contact) {
-    try { contactContext = formatContactContext(getContactContext(contact)); } catch {}
+  if (resolvedContact) {
+    try { contactContext = formatContactContext(getContactContext(resolvedContact)); } catch {}
   }
   const initialPrompt = buildReplyPrompt({
     message: msg,
     history,
     channel: channelFor(key),
-    contact: contact || key,
+    contact: resolvedContact || key,
     context: contactContext ? `当前联系人结构化上下文：\n${contactContext}` : ''
   });
   const promptMessage = contactContext ? `当前联系人结构化上下文（来自 SQLite）：\n${contactContext}\n\n用户消息：${msg}` : msg;

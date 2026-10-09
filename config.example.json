@@ -2,6 +2,17 @@
   "selfNicknames": [
     "你的微信昵称"
   ],
+  "userPersona": "",
+  "profileAutoUpdate": { "enabled": false, "days": 7, "scope": "important" },
+  "webSearch": {
+    "enabled": false,
+    "provider": "searxng",
+    "fallback": "",
+    "timeoutMs": 45000,
+    "maxResults": 6,
+    "searxng": { "baseUrl": "" },
+    "moonshot": { "baseUrl": "https://api.moonshot.cn/v1", "apiKey": "", "model": "kimi-k2.6" }
+  },
   "pollMs": 700,
   "debounceMs": 5000,
   "minMatchLines": 2,
@@ -31,12 +42,6 @@
     "enabled": true,
     "start": "23:00",
     "end": "08:00"
-  },
-  "weixinPush": {
-    "enabled": false,
-    "notifyComplete": true,
-    "accountId": "your-account-id",
-    "to": "your-wechat-openid"
   },
   "engine": {
     "provider": "deepseek",
@@ -85,8 +90,8 @@
       "optionCount": 3,
       "maxMessagesPerPlan": 4,
       "maxMessageChars": 40,
-      "deepMaxMessagesPerPlan": 8,
-      "deepMaxMessageChars": 120,
+      "deepMaxMessagesPerPlan": 4,
+      "deepMaxMessageChars": 40,
       "deepTimeoutMs": 120000,
       "maxHistoryMessages": 24,
       "expireSeconds": 300,
@@ -99,6 +104,16 @@
   },
   "notify": {
     "mode": "weixin",
+    "channels": {
+      "weixin": { "enabled": true, "direction": "bidirectional", "label": "微信 iLink" },
+      "bark": { "enabled": true, "direction": "outbound", "label": "Bark" }
+    },
+    "events": {
+      "captureComplete": false,
+      "intent": true,
+      "reminder": true,
+      "relation": true
+    },
     "bark": {
       "server": "https://api.day.app",
       "key": "",

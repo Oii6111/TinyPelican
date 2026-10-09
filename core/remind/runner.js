@@ -70,7 +70,7 @@ async function runReminders(opts = {}) {
     const msg = buildTaskMessage(task);
     const notifyResult = opts.dryRun
       ? (console.log('[remind][dry-run]', msg), { ok: true })
-      : await notifyUser({ title: '⏰ 小鹈鹕提醒', message: msg, config: cfg });
+      : await notifyUser({ event: 'reminder', title: '⏰ 小鹈鹕提醒', message: msg, config: cfg });
     if (notifyResult && notifyResult.ok) {
       // 将已送达的提醒写入微信主会话，使用户随后回复时 Agent 能看到完整上下文。
       try {

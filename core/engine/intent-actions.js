@@ -4,6 +4,7 @@ const { readIntents, saveIntents } = require('../memory/stores/intents');
 const tasks = require('../memory/stores/tasks');
 const schedules = require('../memory/stores/schedules');
 const { nextCronAfter } = require('../lib/cron');
+const chatDb = require('../memory/chat-db');
 
 function canonicalType(value) {
   if (value === 'schedule') return 'schedule';
@@ -124,6 +125,16 @@ function confirmIntent(id) {
   const intent = items.find((item) => item.id === id);
   if (!intent) return { ok: false, status: 404, error: '意图不存在' };
   if (intent.status !== 'pending_confirm') return { ok: false, status: 409, error: '该意图已经处理过了' };
+
+  if (intent.type === 'profile_update') {
+    const current = chatDb.getMember(intent.contact);
+    if (!current) return { ok: false, status: 404, error: '联系人不存在' };
+    const updated = chatDb.updateMember(intent.contact, { profile: intent.profilePatch || {}, profileMeta: { source: intent.source || 'analysis', confidence: intent.confidence } });
+    if (!updated) return { ok: false, status: 404, error: '联系人不存在' };
+    const confirmed = { ...intent, status: 'confirmed', updatedAt: new Date().toISOString() };
+    saveIntents(items.map((item) => item.id === id ? confirmed : item));
+    return { ok: true, intent: confirmed, targetType: 'profile_update', target: updated };
+  }
 
   const result = materializeIntent(intent);
   if (!result.ok) return result;

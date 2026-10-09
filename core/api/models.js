@@ -17,12 +17,16 @@ function maskConfig(cur) {
     }
   }
   const bark = out.notify && out.notify.bark;
+  if (out.webSearch?.moonshot?.apiKey) out.webSearch.moonshot.apiKey = maskKey(out.webSearch.moonshot.apiKey);
   if (bark && bark.key) bark.key = maskKey(bark.key);
   return out;
 }
 
 // POST 设置时，打码后的 Key 不回写（保留原值）
 function restoreMaskedKeys(cur, patch) {
+  if (typeof patch.webSearch?.moonshot?.apiKey === 'string' && patch.webSearch.moonshot.apiKey.includes('****')) {
+    patch.webSearch.moonshot.apiKey = cur.webSearch?.moonshot?.apiKey || '';
+  }
   const provs = patch.engine && patch.engine.providers;
   if (provs && typeof provs === 'object') {
     const curProvs = cur.engine && cur.engine.providers;

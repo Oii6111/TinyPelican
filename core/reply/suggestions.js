@@ -7,6 +7,10 @@ const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
 const chatDb = require('../memory/chat-db');
 const store = require('./suggestion-store');
+const { profileGaps } = require('../memory/profile-template');
+const webSearch = require('../channels/web-search');
+const { resolveProvider } = require('../engine/providers');
+const memory = require('../memory/chat-memory');
 
 function clampInt(value, min, max, fallback) {
   const n = Number(value);
@@ -40,11 +44,12 @@ function latestTextMessage(contactDoc) {
 
 // 模型输出 -> 方案列表：[{ tone, messages: ['第一条', '第二条'] }]
 // 兼容旧的单条格式 { tone, text }（视为只有一条消息的方案）。
-function normalizePlans(rawArray, { planCount = 3, maxMessagesPerPlan = 3, maxChars = 120 } = {}) {
+function normalizePlans(rawArray, { planCount = 3, maxMessagesPerPlan = 3, maxChars = 120, direction = '', sources = [], gaps = [] } = {}) {
   const itemLimit = clampInt(planCount, 1, 6, 3);
   const messageLimit = clampInt(maxMessagesPerPlan, 1, 6, 3);
   const seen = new Set();
   const out = [];
+  const targets = new Set();
 
   for (const item of Array.isArray(rawArray) ? rawArray : []) {
     if (!item || typeof item !== 'object') continue;
@@ -65,7 +70,12 @@ function normalizePlans(rawArray, { planCount = 3, maxMessagesPerPlan = 3, maxCh
     const key = messages.join('\u0001');
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ tone, messages });
+    const selectedSources = sources.filter((source) => Array.isArray(item.sourceIds) && item.sourceIds.includes(source.id));
+    const target = gaps.find((field) => field.id === item.profileTargetId);
+    if (direction === 'fresh' && !selectedSources.length) continue;
+    if (direction === 'discover' && (!target || targets.has(target.id))) continue;
+    if (target) targets.add(target.id);
+    out.push({ tone, messages, ...(selectedSources.length ? { sources: selectedSources } : {}), ...(target ? { profileTarget: { id: target.id, label: target.label, section: target.section } } : {}) });
     if (out.length >= itemLimit) break;
   }
   return out;
@@ -85,7 +95,15 @@ function historicalContext(contact, latestText, limit = 8) {
   const rows = [];
   for (const term of unique) rows.push(...chatDb.searchMessages(term, { contact, limit: 3 }));
   const seen = new Set();
-  return rows.filter((row) => { const key = `${row.ts}|${row.name}|${row.content}`; if (seen.has(key)) return false; seen.add(key); return true; }).slice(-limit);
+  return rows
+    .filter((row) => {
+      const key = `${row.ts}|${row.name || row.sender || ''}|${row.content}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(-limit)
+    .map(normalizeMessage);
 }
 
 function normalizeTargetWindow(targetWindow) {
@@ -108,17 +126,15 @@ function planTexts(plans) {
   return (plans || []).map((p) => (p.messages || []).join(' / ')).filter(Boolean);
 }
 
-// 快速模式（默认，关思考）与深度思考模式的消息条数/长度/超时上限：
-// 快速模式限 4 条以内、每条短；深度思考放开到 8 条、每条也能更长，但更慢。
 function limitsFor(rs, deep) {
   const planCount = clampInt(rs.optionCount, 1, 4, 3);
   if (deep) {
-    const maxMessageChars = clampInt(rs.deepMaxMessageChars, 8, 400, 120);
+    const maxMessageChars = clampInt(rs.maxMessageChars, 8, 400, 40);
     return {
       planCount,
-      maxMessagesPerPlan: clampInt(rs.deepMaxMessagesPerPlan, 1, 12, 8),
+      maxMessagesPerPlan: clampInt(rs.maxMessagesPerPlan, 1, 12, 4),
       maxMessageChars,
-      maxChars: clampInt(rs.deepMaxOptionChars, 20, 2000, 600),
+      maxChars: clampInt(rs.maxOptionChars, 20, 400, 120),
       timeoutMs: clampInt(rs.deepTimeoutMs, 5000, 600000, 120000)
     };
   }
@@ -136,20 +152,21 @@ function limitsFor(rs, deep) {
 //  - 普通路径：contact + targetWindow 来自新复制的聊天；
 //  - hint：用户自己描述想表达什么，按描述重写；
 //  - rotate：换一批（同一上下文重新生成，避开已给过的说法）；
-//  - deep：深度思考模式（打开模型思考过程，条数与字数上限也放开）。
 async function generateReplySuggestions({
   contact = '',
   targetWindow = null,
   config = null,
   hint = '',
   rotate = false,
+  newTopic = false,
+  direction = '',
   deep = false
 } = {}) {
   const cfg = config || loadConfig();
   const capture = (cfg.capture) || {};
   const rs = capture.replySuggestions || {};
   const userHint = String(hint || '').trim();
-  const rewrite = !!userHint || !!rotate;
+  const rewrite = !!userHint || !!rotate || !!newTopic;
   const expireMs = clampInt(rs.expireSeconds, 30, 3600, 300) * 1000;
 
   const old = store.getCurrent();
@@ -170,10 +187,13 @@ async function generateReplySuggestions({
       remark: base.remark,
       profile: base.profile,
       socialGoal: base.socialGoal,
+      mode: newTopic ? 'new_topic' : (base.mode || 'reply'),
+      topicDirection: newTopic ? (direction || 'history') : (base.topicDirection || 'history'),
       history: base.history,
       olderConversationContext: base.olderConversationContext,
       latestMessage: base.latestMessage,
       selfNicknames: base.selfNicknames,
+      userPersona: base.userPersona || '',
       sourceFingerprint: base.sourceFingerprint,
       avoid: base.avoid || []
     };
@@ -183,7 +203,7 @@ async function generateReplySuggestions({
       return { ok: false, error: '未启用回复建议或没有识别到联系人' };
     }
     const maxHistory = clampInt(rs.maxHistoryMessages, 6, 40, 16);
-    const doc = chatDb.contactContext(contact, { limit: maxHistory });
+    const doc = chatDb.contactContext(contact, { limit: maxHistory, hotOnly: true });
     if (!doc) {
       store.invalidate();
       return { ok: false, error: '没有找到该联系人的聊天记录' };
@@ -195,12 +215,13 @@ async function generateReplySuggestions({
     }
 
     const selfNicknames = Array.isArray(cfg.selfNicknames) ? cfg.selfNicknames : [];
+    const userPersona = typeof cfg.userPersona === 'string' ? cfg.userPersona.trim() : '';
     const isSelf = selfNicknames.includes(latest.name) || (selfNicknames.length === 0 && latest.name === '我');
     // 消息指纹：联系人 + 发送者 + 时间 + 类型 + 内容
     const fingerprint = [contact, latest.name, latest.ts, latest.type, latest.content].join('|');
 
     // 同一条消息（指纹相同）不重复生成
-    if (old && old.contact === contact &&
+    if (old && old.mode !== 'new_topic' && old.contact === contact &&
         (old.sourceFingerprint === fingerprint || (!old.sourceFingerprint && old.sourceMessage === latest.content))) {
       // 用户又复制了一次同一段聊天：把既有建议原样还给浮窗（收起过也能重新弹出来），
       // 顺便刷新定位（可能换了窗口）与有效期；这样重复复制不会多花一次模型调用。
@@ -216,6 +237,7 @@ async function generateReplySuggestions({
       remark: doc.remark || '',
       profile,
       socialGoal,
+      mode: 'reply',
       history: (doc.recentMessages || []).slice(-maxHistory).map(normalizeMessage),
       olderConversationContext: historicalContext(contact, latest.content, rs.maxHistoricalMessages || 8),
       latestMessage: {
@@ -225,10 +247,27 @@ async function generateReplySuggestions({
         timestamp: latest.ts
       },
       selfNicknames,
+      userPersona,
       sourceFingerprint: fingerprint,
       avoid: []
     };
   }
+
+  const latestContext = chatDb.contactContext(ctx.contact, { limit: clampInt(rs.maxHistoryMessages, 6, 40, 24), hotOnly: true });
+  if (latestContext) {
+    ctx.profile = latestContext.profile;
+    ctx.socialGoal = latestContext.socialGoal;
+    ctx.remark = latestContext.remark;
+    ctx.profileSkipped = latestContext.profileSkipped;
+  }
+  ctx.userPersona = deep ? String(cfg.userPersona || '') : '';
+  ctx.chatSummary = deep ? (latestContext?.chatSummary || {}) : {};
+  ctx.summaryStatus = deep ? (memory.getStatus(ctx.contact)?.jobs.find((job) => job.kind === 'summary')?.status || 'missing') : '';
+  ctx.deep = !!deep;
+  ctx.topicDirection = ctx.mode === 'new_topic' ? (ctx.topicDirection || 'history') : '';
+  if (ctx.topicDirection && !['casual', 'fresh', 'discover', 'history'].includes(ctx.topicDirection)) return { ok: false, error: '新话题方向无效' };
+  ctx.profileGaps = ctx.topicDirection === 'discover' ? profileGaps(ctx.profile, ctx.profileSkipped, { includeBusiness: /商务|业务|合作|采购|预算|客户|产品|生意|销售/.test(userHint) }).filter((field) => field.eligible) : [];
+  ctx.searchSources = [];
 
   // 新复制：旧建议立刻失效，避免用户看到过期建议；
   // 换一批/按描述重写：保留当前卡片到新方案返回，期间卡片显示“正在重写”。
@@ -245,11 +284,23 @@ async function generateReplySuggestions({
     sourceSpeaker: ctx.latestMessage?.speaker || '',
     sourceIsSelf: !!ctx.latestMessage?.isSelf,
     mode: deep ? 'deep' : 'fast',
+    topic: ctx.mode === 'new_topic',
+    direction: ctx.topicDirection,
+    stage: ctx.topicDirection === 'fresh' ? 'searching' : 'generating',
     hint: userHint,
     targetWindow: target
   });
 
   try {
+    if (ctx.topicDirection === 'discover' && !ctx.profileGaps.length) throw new Error('暂时没有适合继续询问的画像缺口，请选择其他话题方向');
+    if (ctx.topicDirection === 'fresh') {
+      const result = await webSearch.search(webSearch.topicQuery(ctx.profile), cfg);
+      const used = new Set(old?.context?.usedSourceUrls || []);
+      const fresh = result.results.filter((source) => !used.has(source.url));
+      ctx.searchSources = fresh.length ? fresh : result.results;
+      if (store.isLatestGeneration(token) && store.getPending()) store.getPending().stage = 'generating';
+    }
+    if (!store.isLatestGeneration(token)) return { ok: false, error: '建议已被更新的聊天覆盖' };
     const r = await runTask('reply_suggestions', {
       ...ctx,
       userHint,
@@ -260,7 +311,8 @@ async function generateReplySuggestions({
       config: cfg,
       timeoutMs: lim.timeoutMs,
       // thinking: false = 关掉模型思考（快速模式默认）；深度思考模式才打开
-      thinking: !!deep
+      thinking: !!deep,
+      model: resolveProvider(cfg).model
     });
 
     if (!store.isLatestGeneration(token)) return { ok: false, error: '建议已被更新的聊天覆盖' };
@@ -270,7 +322,7 @@ async function generateReplySuggestions({
       return { ok: false, error: r.error || '模型调用失败' };
     }
 
-    const plans = normalizePlans(r.array, { planCount, maxMessagesPerPlan, maxChars });
+    const plans = normalizePlans(r.array, { planCount, maxMessagesPerPlan, maxChars, direction: ctx.topicDirection, sources: ctx.searchSources, gaps: ctx.profileGaps });
     if (!plans.length) {
       store.clearPending();
       log('warn', 'reply', '回复建议模型输出为空或无法解析');
@@ -285,21 +337,26 @@ async function generateReplySuggestions({
       sourceSpeaker: ctx.latestMessage.speaker,
       sourceIsSelf: !!ctx.latestMessage.isSelf,
       sourceFingerprint: ctx.sourceFingerprint,
+      mode: ctx.mode || 'reply',
+      direction: ctx.topicDirection,
+      deep: !!deep,
+      summaryStatus: ctx.summaryStatus,
+      summaryAvailable: !!ctx.chatSummary.summary,
       hint: userHint,
       plans,
       activePlan: null,
       showToken: 1,
-      context: { ...ctx, avoid: nextAvoid },
+      context: { ...ctx, avoid: nextAvoid, usedSourceUrls: [...new Set([...(old?.context?.usedSourceUrls || []), ...plans.flatMap((plan) => (plan.sources || []).map((source) => source.url))])].slice(-40) },
       targetWindow: target,
       createdAt: new Date().toISOString(),
       expiresAt: Date.now() + expireMs
     };
     store.replaceSuggestion(suggestion);
     const total = plans.reduce((n, p) => n + p.messages.length, 0);
-    log('info', 'reply', `已生成回复建议：${ctx.contact}（${plans.length} 组 / ${total} 条${userHint ? '，按用户描述' : rotate ? '，换一批' : ''}${deep ? '，深度思考' : ''}）`);
+    log('info', 'reply', `已生成${ctx.mode === 'new_topic' ? '新话题' : '回复'}建议：${ctx.contact}（${plans.length} 组 / ${total} 条${userHint ? '，按用户描述' : rotate ? '，换一批' : ''}${deep ? '，深度思考' : ''}）`);
     return { ok: true, suggestion: store.sanitize(suggestion) };
   } catch (e) {
-    store.clearPending();
+    if (store.isLatestGeneration(token)) store.clearPending();
     log('warn', 'reply', '回复建议生成异常：' + String((e && e.message) || e));
     return { ok: false, error: String((e && e.message) || e) };
   }
@@ -320,6 +377,8 @@ async function regenerateRemaining({ deep = false, config = null } = {}) {
 
   const lim = limitsFor(rs, deep);
   const sent = (active.sent || []).slice();
+  const latest = chatDb.contactContext(s.contact, { limit: 24, hotOnly: true }) || {};
+  const context = { ...s.context, profile: latest.profile || {}, remark: latest.remark || '', socialGoal: latest.socialGoal || '', deep: !!deep, userPersona: deep ? String(cfg.userPersona || '') : '', chatSummary: deep ? latest.chatSummary || {} : {} };
   // 已经试过的「剩下的几条」也算不要重复
   const avoid = [...(active.avoid || []), active.remaining.join(' / ')].filter(Boolean);
 
@@ -331,12 +390,15 @@ async function regenerateRemaining({ deep = false, config = null } = {}) {
     sourceIsSelf: s.sourceIsSelf,
     mode: deep ? 'deep' : 'fast',
     hint: '',
+    topic: s.mode === 'new_topic',
+    direction: s.direction || '',
+    stage: 'generating',
     targetWindow: s.targetWindow
   });
 
   try {
     const r = await runTask('reply_followup', {
-      ...s.context,
+      ...context,
       sent,
       avoid,
       maxMessagesPerPlan: lim.maxMessagesPerPlan,
@@ -344,7 +406,8 @@ async function regenerateRemaining({ deep = false, config = null } = {}) {
     }, {
       config: cfg,
       timeoutMs: lim.timeoutMs,
-      thinking: !!deep
+      thinking: !!deep,
+      model: resolveProvider(cfg).model
     });
 
     if (!store.isLatestGeneration(token)) return { ok: false, error: '建议已被更新的聊天覆盖' };
@@ -354,7 +417,7 @@ async function regenerateRemaining({ deep = false, config = null } = {}) {
       return { ok: false, error: r.error || '模型调用失败' };
     }
 
-    const plans = normalizePlans(r.array, { planCount: 1, maxMessagesPerPlan: lim.maxMessagesPerPlan, maxChars: lim.maxChars });
+    const plans = normalizePlans(r.array, { planCount: 1, maxMessagesPerPlan: lim.maxMessagesPerPlan, maxChars: lim.maxChars, direction: context.topicDirection, sources: context.searchSources, gaps: context.profileGaps });
     if (!plans.length) {
       store.clearPending();
       log('warn', 'reply', '续写剩余消息为空或无法解析');
@@ -363,10 +426,15 @@ async function regenerateRemaining({ deep = false, config = null } = {}) {
 
     store.clearPending();
     store.replaceRemaining(s.id, plans[0].messages, avoid);
+    if (Number.isInteger(active.planIndex)) s.plans[active.planIndex] = { ...s.plans[active.planIndex], ...plans[0] };
+    s.context = context;
+    s.deep = !!deep;
+    s.summaryAvailable = !!context.chatSummary.summary;
+    s.summaryStatus = deep ? memory.getStatus(s.contact)?.jobs.find((job) => job.kind === 'summary')?.status || 'missing' : '';
     log('info', 'reply', `已重写「${s.contact}」剩余的 ${plans[0].messages.length} 条消息（已发 ${sent.length} 条作为上下文）${deep ? '，深度思考' : ''}`);
     return { ok: true, suggestion: store.sanitize(store.getCurrent()) };
   } catch (e) {
-    store.clearPending();
+    if (store.isLatestGeneration(token)) store.clearPending();
     log('warn', 'reply', '续写剩余消息异常：' + String((e && e.message) || e));
     return { ok: false, error: String((e && e.message) || e) };
   }

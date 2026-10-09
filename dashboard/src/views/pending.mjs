@@ -72,7 +72,9 @@ export function mount(container) {
           it.detail ? el('div', { class: 'meta', text: it.detail }) : null,
       it.action && it.action.instruction ? el('div', { class: 'meta', text: '🤖 可由 AI 处理：' + it.action.instruction }) : null,
           it.dueText ? el('div', { class: 'meta', text: '⏳ ' + it.dueText + (it.dueAt ? ' → ' + fmtTime(it.dueAt) : '') }) : null,
-          el('div', { class: 'meta', text: '来自 ' + ((it.source && it.source.contact) || '未知') + ' · ' + fmtTime(it.createdAt) + (it.reason ? ' · 理由：' + it.reason : '') }),
+          it.type === 'profile_update' ? el('div', { class: 'meta', text: '画像候选：' + (it.contact || '未知联系人') }) : null,
+          it.type === 'profile_update' ? el('div', { class: 'meta' }, ...Object.entries(it.profilePatch || {}).flatMap(([section, fields]) => fields && typeof fields === 'object' ? Object.entries(fields).map(([field, value]) => el('div', { text: `${section} / ${field} → ${String(value ?? '')}` })) : [el('div', { text: `${section} → ${String(fields ?? '')}` })])) : null,
+          el('div', { class: 'meta', text: '来自 ' + (it.contact || (it.source && it.source.contact) || '未知') + ' · ' + fmtTime(it.createdAt) + (it.reason ? ' · 理由：' + it.reason : '') }),
           actions
         )
       );
@@ -113,6 +115,7 @@ export function mount(container) {
 
   async function edit(it) {
     closeModal();
+    if (it.type === 'profile_update') return editProfile(it);
     const summary = el('input', { class: 'input', value: it.summary || '', placeholder: '一句话概括要做什么' });
     const detail = el('textarea', { class: 'input', placeholder: '背景、要求或执行细节（可选）' });
     detail.value = it.detail || '';
@@ -175,6 +178,39 @@ export function mount(container) {
     modal = mask;
   }
 
+  function editProfile(it) {
+    const fields = [];
+    const rows = [];
+    for (const [section, value] of Object.entries(it.profilePatch || {})) {
+      const entries = value && typeof value === 'object' ? Object.entries(value) : [['', value]];
+      for (const [name, current] of entries) {
+        const include = el('input', { type: 'checkbox', checked: true });
+        const input = el('textarea', { class: 'input', rows: 2 });
+        input.value = String(current ?? '');
+        fields.push({ section, name, include, input });
+        rows.push(el('div', { class: 'field' }, el('label', {}, include, ' ' + section + (name ? ' / ' + name : '')), input));
+      }
+    }
+    const msg = el('span', { class: 'muted' });
+    const parse = () => {
+      const patch = {};
+      for (const { section, name, include, input } of fields) {
+        if (!include.checked) continue;
+        if (name) { patch[section] ||= {}; patch[section][name] = input.value.trim(); }
+        else patch[section] = input.value.trim();
+      }
+      return patch;
+    };
+    const saveBtn = el('button', { class: 'btn btn-primary', text: '保存修改' });
+    const cancelBtn = el('button', { class: 'btn btn-ghost', text: '取消' });
+    const mask = el('div', { class: 'modal-mask' });
+    mask.append(el('div', { class: 'modal' }, el('h3', { text: '修改联系人画像候选' }), el('div', { class: 'hint', text: '逐项修改内容，取消勾选可移除该项候选。保存后再确认；同板块其他手工字段会保留。' }), ...rows, el('div', { class: 'row', style: 'justify-content:flex-end;margin-top:14px;' }, cancelBtn, saveBtn, ' ', msg)));
+    saveBtn.onclick = async () => { try { await api.intents.update(it.id, { profilePatch: parse() }); closeModal(); load(); } catch (e) { msg.textContent = '保存失败：' + ((e && e.message) || e); } };
+    cancelBtn.onclick = closeModal;
+    mask.onclick = (e) => { if (e.target === mask) closeModal(); };
+    document.body.append(mask); modal = mask;
+  }
+
   function localDateTime(iso) {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '';
@@ -188,6 +224,7 @@ export function mount(container) {
   }
 
   function confirmLabel(item) {
+    if (item.type === 'profile_update') return '👤 确认画像';
     if (item.type === 'schedule') return '📅 加入日程';
     if (item.type === 'reminder') return '🔔 创建提醒';
     return '📌 加入待办';

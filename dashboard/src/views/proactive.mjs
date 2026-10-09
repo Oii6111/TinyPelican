@@ -1,5 +1,5 @@
 import { api } from '../api.mjs';
-import { el, empty, fmtTime } from '../ui.mjs';
+import { el, empty } from '../ui.mjs';
 import { mount as calendarMount } from './calendar.mjs';
 import { mount as tasksMount } from './tasks.mjs';
 import { mount as pendingMount } from './pending.mjs';
@@ -15,8 +15,6 @@ export function mount(container, ctx) {
   empty(container);
   container.className = 'view proactive-dashboard';
 
-  // 顶部状态
-  const heartbeatBox = el('div', { class: 'card proactive-heart' });
   const statGrid = el('div', { class: 'stat-grid' });
   const calendarBox = el('div', { class: 'proactive-calendar' });
 
@@ -48,10 +46,9 @@ export function mount(container, ctx) {
   container.append(
     el('div', { class: 'proactive-hero' },
       el('div', {},
-        el('h2', { text: '主动仪表盘' }),
+        el('h2', { text: '日历与日程' }),
         el('div', { class: 'desc', text: '先在日历查看安排，再在下方统一处理待办、待确认意图和思考/行动记录。' })
-      ),
-      heartbeatBox
+      )
     ),
     el('div', { class: 'proactive-stats' }, statGrid),
     calendarBox,
@@ -78,21 +75,6 @@ export function mount(container, ctx) {
     const btn = el('button', { class: 'proactive-tab', 'data-tab': t.id, text: t.label });
     btn.onclick = () => switchTab(t.id);
     tabBtns.append(btn);
-  }
-
-  async function loadHeartbeat() {
-    let st = null;
-    try { st = await api.status(); } catch {}
-    const on = !!(st && st.heartbeat && st.heartbeat.online);
-    empty(heartbeatBox);
-    heartbeatBox.append(
-      el('div', { class: 'hb-line' },
-        el('span', { class: 'hb-dot' + (on ? ' on' : '') }),
-        el('span', { class: 'strong', text: on ? 'Agent 在线' : 'Agent 离线' }),
-        el('span', { class: 'muted', text: ' · 主动级别 ' + ((st && st.proactivity && st.proactivity.level) || 'L2') })
-      ),
-      el('div', { class: 'meta', text: '最后心跳 ' + (st && st.heartbeat.lastBeatAt ? fmtTime(st.heartbeat.lastBeatAt) : '--') })
-    );
   }
 
   async function loadStats() {
@@ -125,7 +107,6 @@ export function mount(container, ctx) {
   }
 
   function loadAll() {
-    loadHeartbeat();
     loadStats();
     if (calendarView && typeof calendarView.show === 'function') calendarView.show();
     switchTab('tasks');

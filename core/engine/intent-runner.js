@@ -161,10 +161,11 @@ async function notifyNewIntents(intents, cfg) {
   const MEDIUM_CONF = intentCfg.mediumConfidence !== undefined ? intentCfg.mediumConfidence : 0.5;
   let changed = false;
   for (const intent of intents) {
+    if (intent.type === 'profile_update') continue;
     if (intent.notified) continue;
     if (intent.status === 'pending_confirm' && intent.confidence >= MEDIUM_CONF) {
       const msg = `🔍 发现疑似${typeLabel(intent.type)}：${intent.summary}（来自 ${intent.source.contact || '未知'}）。请在 Dashboard「待确认意图」中确认进入任务或日程，或忽略。`;
-      const notifyResult = await notifyUser({ title: '🔍 小鹈鹕发现待确认事项', message: msg, config: cfg });
+      const notifyResult = await notifyUser({ event: 'intent', title: '🔍 小鹈鹕发现待确认事项', message: msg, config: cfg });
       const ok = !!(notifyResult && notifyResult.ok);
       if (ok) {
         intent.notified = true;
@@ -176,7 +177,12 @@ async function notifyNewIntents(intents, cfg) {
       }
     }
   }
-  if (changed) saveIntents(intents);
+  if (changed) saveExtractedIntents(intents);
+}
+
+function saveExtractedIntents(intents) {
+  const currentProfiles = readIntents().filter((intent) => intent.type === 'profile_update');
+  saveIntents([...intents.filter((intent) => intent.type !== 'profile_update'), ...currentProfiles]);
 }
 
 async function runIntentExtraction(opts = {}) {
@@ -277,7 +283,7 @@ async function runIntentExtractionInternal(opts = {}) {
     // 只有成功处理后才推进游标
     state[key] = page.cursor;
     saveState(state);
-    saveIntents(intents);
+    saveExtractedIntents(intents);
   }
 
   // 顺手清理：之前生成的待确认事项里，截止时间已经过去太久的，不要再留在「待确认」里刷屏
@@ -292,7 +298,7 @@ async function runIntentExtractionInternal(opts = {}) {
     expired++;
   }
   if (expired) {
-    saveIntents(intents);
+    saveExtractedIntents(intents);
     log('info', 'intent', `自动过期 ${expired} 条过期的待确认事项（改为已忽略）`);
   }
 

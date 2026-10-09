@@ -52,7 +52,7 @@ async function serveStatic(res, relPath) {
     return false;
   }
   const ext = path.extname(abs).toLowerCase();
-  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
   res.end(await fs.promises.readFile(abs));
   return true;
 }
@@ -66,6 +66,7 @@ function createRestServer({ config = null, onRestart = null } = {}) {
   require('./routes/status')(router, ctx);
   require('./routes/contacts')(router, ctx);
   require('./routes/search')(router, ctx);
+  require('./routes/web-search')(router, ctx);
   require('./routes/intents')(router, ctx);
   require('./routes/tasks')(router, ctx);
   require('./routes/schedules')(router, ctx);
