@@ -5,12 +5,12 @@
 #   - 内置 DSH（@deepseek-ai/dsh 及其依赖，约 220MB），首次启动由它自己在用户数据目录生成 profile
 #   - 只带 config.example.json；用户自己的 config.json 在首次运行时生成（绝不打包开发者的 Key）
 #
-# 前置：Node 18+ / npm，首次构建需要联网（下载 DSH 依赖 + electron-builder 的 NSIS 工具）
+# 前置：Node 22.13+ / npm，首次构建需要联网（下载运行依赖 + electron-builder 的 NSIS 工具）
 # 用法：powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
 # 本文件必须保存为 UTF-8 with BOM（Windows PowerShell 5.1 无 BOM 会按 ANSI 解码中文并解析失败）。
 
 param(
-  [string]$DshVersion = '0.1.5-rc.2',
+  [string]$DshVersion = '0.1.5-rc.3',
   [switch]$SkipVendorInstall,
   [switch]$SkipAppInstall
 )
@@ -26,11 +26,10 @@ function Step($text) { Write-Host ''; Write-Host ("== " + $text) }
 $dshBin = Join-Path $vendor 'node_modules\@deepseek-ai\dsh\lib\bin.js'
 if ($SkipVendorInstall) {
   Write-Host '跳过 vendor 安装'
-} elseif (Test-Path $dshBin) {
-  Write-Host "vendor 已存在（$dshBin）"
 } else {
   Step "安装内置 DSH（@deepseek-ai/dsh@$DshVersion）"
-  npm install --prefix $vendor "@deepseek-ai/dsh@$DshVersion"
+  npm install --prefix $vendor "@deepseek-ai/dsh@$DshVersion" --save-exact
+  if ($LASTEXITCODE -ne 0) { throw 'vendor 依赖安装失败' }
 }
 if (-not (Test-Path $dshBin)) { throw "内置 DSH 未就绪：$dshBin" }
 
@@ -38,6 +37,7 @@ if (-not (Test-Path $dshBin)) { throw "内置 DSH 未就绪：$dshBin" }
 if (-not $SkipAppInstall) {
   Step '安装 app 依赖（electron / electron-builder）'
   npm install --prefix $app
+  if ($LASTEXITCODE -ne 0) { throw 'app 依赖安装失败' }
 }
 
 # 2.5) 生成安装包图标（electron-builder 要求 ≥256×256；源图 logo2.png 非正方形，这里居中缩放到 512）
@@ -70,6 +70,7 @@ Step 'electron-builder 构建安装包'
 Push-Location $app
 try {
   npm run dist
+  if ($LASTEXITCODE -ne 0) { throw 'electron-builder 构建失败' }
 } finally {
   Pop-Location
 }

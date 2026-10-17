@@ -156,4 +156,4 @@ MIT License — free for personal learning and open-source use. See [LICENSE](LI
 
 **Repository:** [github.com/Oii6111/TinyPelican](https://github.com/Oii6111/TinyPelican)
 
-新电脑部署请参阅 [部署说明](docs/deployment.md)。
+新电脑部署请参阅 [部署说明](docs/deployment.md)。安装版数据默认位于 `%APPDATA%/TinyPelican/data`，不会自动读取旧版 `%APPDATA%/xiaotihu`。

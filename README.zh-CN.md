@@ -157,3 +157,5 @@ MIT License —— 个人学习与开源使用免费。详见 [LICENSE](LICENSE)
 > ⭐ 如果这个项目对你有启发，欢迎点 star 支持项目发展。
 
 [GitHub 仓库](https://github.com/Oii6111/TinyPelican)
+
+安装版数据默认位于 `%APPDATA%/TinyPelican/data`，不会自动读取旧版 `%APPDATA%/xiaotihu`。详细部署步骤见 [新电脑部署说明](docs/deployment.md)。

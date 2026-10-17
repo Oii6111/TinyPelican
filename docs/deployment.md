@@ -15,7 +15,7 @@
 
     $env:XIAOTIHU_DATA_DIR = "$env:LOCALAPPDATA/TinyPelican-dev/data"
 
-Electron 会在默认用户目录不可写时回退到其他可写目录。也可以显式设置 XIAOTIHU_USER_DATA_DIR。DSH_HOME 同样必须可写。
+Electron 会在默认用户目录不可写时回退到其他可写目录。安装版默认把数据隔离在 `%APPDATA%/TinyPelican/data`，不会自动读取旧版 `%APPDATA%/xiaotihu`；也可以显式设置 XIAOTIHU_DATA_DIR 或 XIAOTIHU_USER_DATA_DIR。DSH_HOME 同样必须可写。
 
 ## 一键启动
 

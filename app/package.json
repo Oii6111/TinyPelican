@@ -1,6 +1,6 @@
 {
   "name": "xiaotihu",
-  "version": "0.5.1",
+  "version": "0.1.0",
   "description": "小鹈鹕 V3 用户端",
   "main": "main.js",
   "engines": {

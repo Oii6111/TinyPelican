@@ -28,6 +28,9 @@ try {
   const userData = selectWritableDirectory(candidates, { label: 'XIAOTIHU_USER_DATA_DIR', childDirectory: 'browser-session-v2' });
   app.setPath('userData', userData);
   app.setPath('sessionData', path.join(userData, 'browser-session-v2'));
+  if (isPackaged && !process.env.XIAOTIHU_DATA_DIR) {
+    process.env.XIAOTIHU_DATA_DIR = path.join(userData, 'data');
+  }
   initializeRuntime({ root: PROJECT_ROOT, packaged: isPackaged });
 } catch (error) {
   if (dialog && typeof dialog.showErrorBox === 'function') {
@@ -200,6 +203,7 @@ function coreEnv(runner) {
   if (runner === process.execPath) env.ELECTRON_RUN_AS_NODE = '1';
   else delete env.ELECTRON_RUN_AS_NODE;
   if (isPackaged) {
+    env.NODE_PATH = [path.join(PROJECT_ROOT, 'vendor', 'node_modules'), env.NODE_PATH].filter(Boolean).join(path.delimiter);
     env.XIAOTIHU_DATA_DIR = process.env.XIAOTIHU_DATA_DIR || '';
     env.DSH_HOME = process.env.DSH_HOME || path.join(env.XIAOTIHU_DATA_DIR, 'dsh-home');
     if (process.env.XIAOTIHU_DSH_BIN) env.XIAOTIHU_DSH_BIN = process.env.XIAOTIHU_DSH_BIN;
