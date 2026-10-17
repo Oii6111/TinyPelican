@@ -76,13 +76,12 @@
 
 ## 快速开始
 
-**环境要求：** Windows、Node.js 18+、DSH WebUI（默认 `http://127.0.0.1:3080`）、至少一个 OpenAI 兼容模型 Provider。
+**环境要求：** Windows、Node.js **22.13+**（推荐 Node 24 LTS；`node:sqlite` 需要无需实验开关的版本）、DSH WebUI（默认 `http://127.0.0.1:3080`）、至少一个 OpenAI 兼容模型 Provider。
 
 ```powershell
 git clone https://github.com/Oii6111/TinyPelican.git
 cd TinyPelican
 npm install
-Copy-Item config.example.json config.json
 npm run daemon
 ```
 

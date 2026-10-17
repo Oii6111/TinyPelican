@@ -7,6 +7,7 @@ module.exports = (router, ctx) => {
       name: 'xiaotihu-core',
       version: ctx.version,
       projectRoot: require('path').resolve(__dirname, '../../..'),
+      dataDir: require('../../lib/paths').getPaths().dataDir,
       pid: process.pid,
       time: new Date().toISOString()
     });

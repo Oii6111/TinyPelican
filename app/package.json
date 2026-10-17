@@ -3,6 +3,9 @@
   "version": "0.5.1",
   "description": "小鹈鹕 V3 用户端",
   "main": "main.js",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder"

@@ -93,6 +93,7 @@ function createRestServer({ config = null, onRestart = null, emailService = null
       const publicPaths = new Set([
         '/login', '/logo.png',
         '/api/auth/login', '/api/auth/logout', '/api/auth/status',
+        '/api/health',
         '/api/reply-suggestions/current', '/api/reply-suggestions/current/refresh-position',
         '/suggestion-card.html', '/suggestion-card.css'
       ]);

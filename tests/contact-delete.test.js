@@ -6,13 +6,25 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-test('联系人删除与清空聊天记录', () => {
+test('联系人删除与清空聊天记录', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaotihu-contacts-'));
+  const previousDataDir = process.env.XIAOTIHU_DATA_DIR;
+  let chatDb;
+  t.after(() => {
+    try {
+      if (chatDb) chatDb.db.close();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } finally {
+      if (previousDataDir === undefined) delete process.env.XIAOTIHU_DATA_DIR;
+      else process.env.XIAOTIHU_DATA_DIR = previousDataDir;
+    }
+  });
   process.env.XIAOTIHU_DATA_DIR = tmp;
   delete require.cache[require.resolve('../core/lib/paths')];
   delete require.cache[require.resolve('../core/memory/stores/contacts')];
   const P = require('../core/lib/paths').getPaths();
   const contacts = require('../core/memory/stores/contacts');
+  chatDb = require('../core/memory/chat-db');
 
   fs.mkdirSync(P.contacts, { recursive: true });
   const doc = contacts.readContact('张三');
@@ -40,7 +52,4 @@ test('联系人删除与清空聊天记录', () => {
   const removed = contacts.deleteContact('张三');
   assert.strictEqual(removed.removed, true);
   assert.ok(!fs.existsSync(contacts.contactFile('张三')));
-
-  fs.rmSync(tmp, { recursive: true, force: true });
-  delete process.env.XIAOTIHU_DATA_DIR;
 });

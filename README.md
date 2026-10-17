@@ -76,13 +76,12 @@ This project is maintained by an undergraduate student, so multi-channel support
 
 ## Quick start
 
-**Requirements:** Windows, Node.js 18+, DSH WebUI (`http://127.0.0.1:3080`), one OpenAI-compatible model provider.
+**Requirements:** Windows, Node.js **22.13+** (Node 24 LTS recommended; `node:sqlite` needs this unflagged runtime), DSH WebUI (`http://127.0.0.1:3080`), one OpenAI-compatible model provider.
 
 ```powershell
 git clone https://github.com/Oii6111/TinyPelican.git
 cd TinyPelican
 npm install
-Copy-Item config.example.json config.json
 npm run daemon
 ```
 
@@ -156,3 +155,5 @@ MIT License — free for personal learning and open-source use. See [LICENSE](LI
 > ⭐ If this project inspires you, a star helps the project grow. Thank you!
 
 **Repository:** [github.com/Oii6111/TinyPelican](https://github.com/Oii6111/TinyPelican)
+
+新电脑部署请参阅 [部署说明](docs/deployment.md)。

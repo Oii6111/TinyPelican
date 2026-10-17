@@ -4,7 +4,7 @@
   "private": true,
   "description": "小鹈鹕 V3 — 长记忆 + 主动关系 个人 AI 助手",
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13.0"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.5-rc.3",

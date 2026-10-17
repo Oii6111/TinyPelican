@@ -16,13 +16,25 @@ const LOGO = path.join(PROJECT_ROOT, 'logo2.png');
 const PORT = 18791;
 const RESTART_EXIT_CODE = 42;
 
-if (!isPackaged) {
-  const workspaceId = require('crypto').createHash('sha256').update(PROJECT_ROOT).digest('hex').slice(0, 12);
-  app.setPath('userData', path.join(app.getPath('appData'), 'TinyPelican-dev', workspaceId));
+const { initializeRuntime, selectWritableDirectory, userDirectories, workspaceId } = require(path.join(PROJECT_ROOT, 'core/lib/startup'));
+const { waitForCore } = require(path.join(PROJECT_ROOT, 'core/lib/readiness'));
+try {
+  const id = workspaceId(PROJECT_ROOT);
+  const preferred = isPackaged ? app.getPath('userData') : path.join(app.getPath('appData'), 'TinyPelican-dev', id);
+  const candidates = process.env.XIAOTIHU_USER_DATA_DIR ? [process.env.XIAOTIHU_USER_DATA_DIR] : [
+    preferred,
+    ...userDirectories().map(directory => path.join(directory, isPackaged ? 'TinyPelican' : 'TinyPelican-dev', ...(isPackaged ? [] : [id]), 'electron'))
+  ];
+  const userData = selectWritableDirectory(candidates, { label: 'XIAOTIHU_USER_DATA_DIR', childDirectory: 'browser-session-v2' });
+  app.setPath('userData', userData);
+  app.setPath('sessionData', path.join(userData, 'browser-session-v2'));
+  initializeRuntime({ root: PROJECT_ROOT, packaged: isPackaged });
+} catch (error) {
+  if (dialog && typeof dialog.showErrorBox === 'function') {
+    dialog.showErrorBox('小鹈鹕 · 启动目录不可用', error.message + '\n可用 XIAOTIHU_DATA_DIR、XIAOTIHU_USER_DATA_DIR 和 DSH_HOME 指定可写目录。');
+    if (typeof app.exit === 'function') app.exit(1);
+  }
 }
-const sessionDirectory = path.join(app.getPath('userData'), 'browser-session-v2');
-fs.mkdirSync(sessionDirectory, { recursive: true });
-app.setPath('sessionData', sessionDirectory);
 const ownsInstance = app.requestSingleInstanceLock();
 if (!ownsInstance) {
   app.quit();
@@ -32,26 +44,10 @@ if (!ownsInstance) {
   });
 }
 
-// 数据目录：打包后放用户可写目录；开发模式不设（脚本沿用现路径）。
-if (isPackaged && !process.env.XIAOTIHU_DATA_DIR) {
-  process.env.XIAOTIHU_DATA_DIR = path.join(process.env.APPDATA || '', 'xiaotihu');
-}
 if (isPackaged) {
-  const dataDir = process.env.XIAOTIHU_DATA_DIR;
-  fs.mkdirSync(dataDir, { recursive: true });
-  // DSH 自己的 home 放在用户数据目录：首次运行由 DSH 自己生成 web profile（实测 4 秒完成，不需要联网）
-  const dshHome = path.join(dataDir, 'dsh-home');
-  fs.mkdirSync(dshHome, { recursive: true });
-  process.env.DSH_HOME = dshHome;
   // 随包内置的 DSH（找不到时核心会退回系统安装的 / npx 缓存里的那份）
   const bundledDsh = path.join(PROJECT_ROOT, 'vendor', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
   if (fs.existsSync(bundledDsh)) process.env.XIAOTIHU_DSH_BIN = bundledDsh;
-  // 首次运行：只拷配置模板（绝不打包开发者自己的 config.json，里面可能有 API Key）
-  const cfgSrc = path.join(PROJECT_ROOT, 'config.example.json');
-  const cfgDst = path.join(dataDir, 'config.json');
-  if (fs.existsSync(cfgSrc) && !fs.existsSync(cfgDst)) {
-    fs.copyFileSync(cfgSrc, cfgDst);
-  }
 }
 
 let coreProc = null;
@@ -123,7 +119,7 @@ function createTray() {
 function readConfig() {
   try {
     const dataDir = process.env.XIAOTIHU_DATA_DIR;
-    const configPath = isPackaged && dataDir
+    const configPath = dataDir
       ? path.join(dataDir, 'config.json')
       : path.join(PROJECT_ROOT, 'config.json');
     return JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -425,24 +421,21 @@ app.whenReady().then(async () => {
   if (!ownsInstance || quitting) return;
   if (await portFree(PORT)) {
     startCore();
-    await sleep(3000);
-  } else {
-    let health = null;
-    try {
-      const response = await fetch(`http://127.0.0.1:${PORT}/api/health`, { signal: AbortSignal.timeout(3000) });
-      if (response.ok) health = await response.json();
-    } catch {}
-    if (!health || !health.projectRoot || path.resolve(health.projectRoot).toLowerCase() !== PROJECT_ROOT.toLowerCase()) {
-      await dialog.showMessageBox({
-        type: 'error',
-        title: '小鹈鹕 · 检测到旧服务',
-        message: '端口 18791 已被旧版本或其他目录的服务占用。',
-        detail: `请先关闭原来的小鹈鹕窗口和启动终端，再重新启动。\n当前代码目录：${PROJECT_ROOT}\n已有服务目录：${health && health.projectRoot || '旧版本未提供来源信息'}`,
-        buttons: ['关闭']
-      });
-      app.quit();
-      return;
-    }
+  }
+  try {
+    if (process.versions && process.versions.node) await waitForCore({
+      base: `http://127.0.0.1:${PORT}`, root: PROJECT_ROOT, dataDir: process.env.XIAOTIHU_DATA_DIR,
+      isRunning: () => !quitting && (!coreProc || (coreProc.exitCode === null && coreProc.signalCode === null)),
+      fetchImpl: fetch
+    });
+  } catch (error) {
+    await dialog.showMessageBox({
+      type: 'error', title: '小鹈鹕 · 核心服务未就绪', message: error.message,
+      detail: '启动日志：' + path.join(process.env.XIAOTIHU_DATA_DIR, 'core-startup.log'),
+      buttons: ['关闭']
+    });
+    app.quit();
+    return;
   }
   await establishDesktopSession();
   if (quitting) return;
@@ -453,7 +446,7 @@ app.whenReady().then(async () => {
   createFloatingWindows();
 
   // 首次运行引导：没配模型 Key 时直接告诉用户去哪儿填
-  if (isPackaged) {
+  {
     try {
       const cfg = readConfig();
       const providerName = (cfg.engine && cfg.engine.provider) || '';

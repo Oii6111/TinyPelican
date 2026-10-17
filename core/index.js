@@ -2,6 +2,8 @@
 // 拉起 HTTP 服务、剪贴板监听、微信通道、进程内定时调度；退出码 42 表示请求重启（由 launcher 接管）。
 'use strict';
 
+require('./lib/startup').initializeRuntime();
+
 const { loadConfig } = require('./lib/config');
 const { log } = require('./lib/log');
 const { startHeartbeat, stopHeartbeat } = require('./status');

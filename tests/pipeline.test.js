@@ -1,16 +1,28 @@
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaotihu-test-'));
+const previousDataDir = process.env.XIAOTIHU_DATA_DIR;
 process.env.XIAOTIHU_DATA_DIR = tmp;
 
 const { processAllBatches, ingestMessages } = require('../core/ingest/pipeline');
 const { readContact } = require('../core/memory/stores/contacts');
+const chatDb = require('../core/memory/chat-db');
+
+after(() => {
+  try {
+    chatDb.db.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  } finally {
+    if (previousDataDir === undefined) delete process.env.XIAOTIHU_DATA_DIR;
+    else process.env.XIAOTIHU_DATA_DIR = previousDataDir;
+  }
+});
 
 test('批次归档：按 contact 建档并删除批次', () => {
   fs.mkdirSync(path.join(tmp, 'batches'), { recursive: true });
@@ -30,7 +42,7 @@ test('批次归档：按 contact 建档并删除批次', () => {
   assert.strictEqual(doc.messages[1].name, '六壹');
 });
 
-test('通道实时消息：去重归档 + 全量流水', () => {
+test('通道实时消息：SQLite 归档与重复导入去重', () => {
   const msgs = [
     { name: 'Hank', ts: '2026-08-17 10:00', type: 'text', content: '第二条' },
     { name: 'Hank', ts: '2026-08-17 10:00', type: 'text', content: '第二条' }
@@ -39,6 +51,13 @@ test('通道实时消息：去重归档 + 全量流水', () => {
   assert.strictEqual(added, 1);
   assert.strictEqual(readContact('Hank').messages.length, 3);
 
-  const inbox = fs.readFileSync(path.join(tmp, 'inbox.jsonl'), 'utf8').trim().split(/\r?\n/).filter(Boolean);
-  assert.strictEqual(inbox.length, 1);
+  const messages = chatDb.messages('Hank', '', 10).messages;
+  assert.strictEqual(messages.length, 3);
+  const persisted = messages.filter(message => message.ts === msgs[0].ts);
+  assert.strictEqual(persisted.length, 1);
+  assert.strictEqual(persisted[0].sender, msgs[0].name);
+  assert.strictEqual(persisted[0].type, msgs[0].type);
+  assert.strictEqual(persisted[0].content, msgs[0].content);
+  assert.strictEqual(ingestMessages(msgs, 'Hank'), 0);
+  assert.strictEqual(chatDb.messages('Hank', '', 10).messages.length, 3);
 });

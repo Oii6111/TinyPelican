@@ -1,6 +1,8 @@
 // 小鹈鹕核心 — HTTP 服务入口（装配见 core/api/rest.js）
 'use strict';
 
+if (require.main === module) require('./lib/startup').initializeRuntime();
+
 const { createRestServer, VERSION } = require('./api/rest');
 
 const PORT = parseInt(process.env.V3_PORT || '18791', 10);

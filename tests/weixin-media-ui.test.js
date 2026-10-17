@@ -16,6 +16,7 @@ class Element {
   setAttribute(name, value) { this.attributes[name] = value; if (name === 'disabled') this.disabled = true; }
   getAttribute(name) { return this.attributes[name] ?? null; }
   addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
+  dispatchEvent(event) { return this.dispatch(event.type, event); }
   async dispatch(name, event = {}) { for (const callback of this.listeners[name] || []) await callback(event); }
   async click() { if (this.disabled) return; if (this.onclick) await this.onclick(); await this.dispatch('click', { stopPropagation() {} }); }
   focus() {}
@@ -123,14 +124,17 @@ test('微信附件只渲染本地媒体链接，失败可见，不使用服务�
 test('对话直接嵌入 DSH：连接状态、切页保留及失败重试', async () => {
   const previous = { document: global.document, fetch: global.fetch, location: global.location };
   installDocument();
-  global.location = { hostname: '127.0.0.1' };
+  const sidebarHost = new Element('div');
+  global.document.getElementById = (id) => id === 'dsh-sidebar-host' ? sidebarHost : null;
+  global.location = { hostname: '127.0.0.1', origin: 'http://127.0.0.1:18791' };
   const calls = [];
   let fail = false;
+  let malicious = false;
   global.fetch = async (url) => {
     calls.push(url);
     if (url === '/api/agent/webui') return fail
       ? new Response(JSON.stringify({ error: 'DSH 尚未就绪' }), { status: 503 })
-      : new Response(JSON.stringify({ url: 'http://127.0.0.1:3080/' }));
+      : new Response(JSON.stringify({ url: malicious ? 'https://evil.example/dsh/' : 'http://127.0.0.1:18791/dsh/' }));
     return new Response(JSON.stringify({ ok: true }));
   };
   let view;
@@ -143,9 +147,13 @@ test('对话直接嵌入 DSH：连接状态、切页保留及失败重试', asyn
     await settle();
     const frame = root.all().find((entry) => entry.tagName === 'iframe');
     const status = root.all().find((entry) => entry.attributes.role === 'status');
-    assert.equal(frame.getAttribute('src'), 'http://127.0.0.1:3080/');
+    assert.equal(frame.getAttribute('src'), 'http://127.0.0.1:18791/dsh/');
     assert.equal(frame.hidden, true);
+    frame.contentWindow = { __TP_EMBED__: true };
+    frame.contentDocument = { body: { textContent: '' } };
     await frame.dispatch('load');
+    assert.equal(status.hidden, false);
+    await sidebarHost.dispatch('dsh-sidebar-ready');
     assert.equal(frame.hidden, false);
     assert.equal(status.hidden, true);
     view.hide();
@@ -155,14 +163,20 @@ test('对话直接嵌入 DSH：连接状态、切页保留及失败重试', asyn
     await frame.dispatch('error');
     assert.equal(status.hidden, false);
     const retry = root.all().find((entry) => entry.textContent === '重新连接');
+    malicious = true;
+    await retry.click();
+    await settle();
+    assert.ok(root.all().some((entry) => /页面地址与当前应用不匹配/.test(entry.textContent)));
     fail = true;
     await retry.click();
     await settle();
     assert.ok(root.all().some((entry) => entry.textContent === 'DSH 尚未就绪'));
     fail = false;
+    malicious = false;
     await retry.click();
     await settle();
     await frame.dispatch('load');
+    await sidebarHost.dispatch('dsh-sidebar-ready');
     assert.equal(frame.hidden, false);
     assert.equal(calls.some((url) => url.startsWith('/api/chat') || url.startsWith('/api/conversations')), false);
   } finally { view?.hide(); Object.assign(global, previous); }
