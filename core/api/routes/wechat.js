@@ -3,12 +3,16 @@
 const {
   startLogin, stepStart, stepCheck, stepConfirm, readCredentials, clearCredentials
 } = require('../../channels/weixin/login');
+const { registerWechatMedia } = require('./wechat-media');
+const { MAX_MEDIA_BYTES } = require('../../channels/weixin/media');
 
 module.exports = (router, ctx) => {
+  registerWechatMedia(router, ctx);
   router.get('/api/wechat/status', (req, res) => {
     const creds = readCredentials();
     return ctx.json(res, 200, {
       configured: !!creds,
+      media: { images: true, files: true, maxBytes: MAX_MEDIA_BYTES },
       accountId: creds ? creds.account_id : '',
       userId: creds ? creds.user_id : ''
     });

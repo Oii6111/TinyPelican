@@ -42,8 +42,10 @@ function getPaths() {
     configToml: path.join(b, 'config.toml'),
     weixinCursor: path.join(b, 'weixin-cursor.json'),
     weixinContext: path.join(b, 'weixin-context.json'),
+    weixinMedia: path.join(b, 'media', 'weixin'),
     // 登录会话（会话 token，重启核心后仍然有效，避免每次保存配置都被踢下线）
-    sessions: path.join(b, 'sessions.json')
+    sessions: path.join(b, 'sessions.json'),
+    emailDatabase: path.join(b, 'email.sqlite')
   };
 }
 

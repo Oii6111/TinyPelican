@@ -5,6 +5,7 @@ const mainSession = require('../../agent/main-session');
 const { createTask } = require('../../agent/tasks');
 const { sanitizeEventList, historyEventList } = require('../../agent/event-utils');
 const { handleConversationIntent } = require('../../engine/chat-intent');
+const { publicAttachment } = require('../../channels/weixin/media');
 
 module.exports = (router, ctx) => {
   router.get('/api/history', (req, res, c, p, url) => {
@@ -13,6 +14,7 @@ module.exports = (router, ctx) => {
     return ctx.json(res, 200, msgs.map((m) => ({
       role: m.role === 'bot' ? 'bot' : 'user',
       text: m.text,
+      ...(Array.isArray(m.attachments) ? { attachments: m.attachments.map(publicAttachment) } : {}),
       ...(Array.isArray(m.agentEvents) ? { agentEvents: sanitizeEventList(m.agentEvents) } : {}),
       ...(m.executionSummary ? { executionSummary: m.executionSummary } : {}),
       ...(m.taskId ? { taskId: m.taskId } : {})

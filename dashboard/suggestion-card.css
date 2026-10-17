@@ -1,3 +1,10 @@
+:root {
+  --accent: #efad42;
+  --accent-strong: #805d1c;
+  --accent-soft: #fff5db;
+  --border: #e7e7df;
+}
+
 html, body {
   margin: 0;
   padding: 0;
@@ -11,10 +18,10 @@ html, body {
 #card {
   width: 340px;
   box-sizing: border-box;
-  background: #fff;
+  background: #fdfdfa;
   border-radius: 14px;
   box-shadow: none;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border);
   overflow: hidden;
   animation: pop 0.18s ease-out;
 }
@@ -37,7 +44,7 @@ html, body {
 .card-head .title {
   font-weight: 700;
   font-size: 14px;
-  color: #1f2937;
+  color: #373830;
 }
 
 .card-head .contact {
@@ -67,7 +74,7 @@ html, body {
   padding: 8px 14px;
   font-size: 12px;
   color: #6b7280;
-  background: #f9fafb;
+  background: #f9f9f5;
   border-bottom: 1px solid #f3f4f6;
   word-break: break-word;
   max-height: 52px;
@@ -77,9 +84,9 @@ html, body {
 .hint-chip {
   padding: 6px 14px;
   font-size: 11px;
-  color: #1d4ed8;
-  background: #eff6ff;
-  border-bottom: 1px solid #dbeafe;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
   word-break: break-word;
 }
 
@@ -95,7 +102,7 @@ html, body {
   transition: background 0.12s ease;
 }
 
-.plan:hover { background: #f5f7ff; }
+.plan:hover { background: #f9f9f5; }
 
 .plan .tone {
   display: flex;
@@ -107,7 +114,7 @@ html, body {
 .plan .tone-name {
   font-size: 11px;
   font-weight: 700;
-  color: #3b82f6;
+  color: var(--accent-strong);
 }
 
 .plan .tone-count {
@@ -128,8 +135,8 @@ html, body {
   height: 15px;
   margin-top: 2px;
   border-radius: 50%;
-  background: #eef2ff;
-  color: #4f46e5;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
   font-size: 10px;
   line-height: 15px;
   text-align: center;
@@ -174,14 +181,14 @@ html, body {
 
 .msg.next {
   padding: 8px 10px;
-  border: 1px solid #c7d2fe;
+  border: 1px solid #d1d1c5;
   border-radius: 10px;
-  background: #f5f7ff;
+  background: #f9f9f5;
   cursor: pointer;
   transition: background 0.12s ease;
 }
 
-.msg.next:hover { background: #eef2ff; }
+.msg.next:hover { background: var(--accent-soft); }
 
 .msg.preview { opacity: 0.55; }
 
@@ -270,8 +277,8 @@ html, body {
 }
 
 .compose .hint:focus {
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .compose .hint-btn {
@@ -280,13 +287,13 @@ html, body {
   height: 30px;
   border: none;
   border-radius: 9px;
-  background: #3b82f6;
-  color: #fff;
+  background: var(--accent);
+  color: #373830;
   font-size: 14px;
   cursor: pointer;
 }
 
-.compose .hint-btn:hover { background: #2563eb; }
+.compose .hint-btn:hover { background: #b77a1b; color: #fff; }
 
 .actions {
   display: flex;
@@ -308,6 +315,12 @@ html, body {
 }
 
 .actions .ghost:hover { background: #f9fafb; }
+
+button, input { font-family: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 
 .actions .ghost.deep {
   color: #4f46e5;

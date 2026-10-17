@@ -12,8 +12,11 @@ const { runRelationCheck } = require('./memory/relations');
 const { runIntentExtraction } = require('./engine/intent-runner');
 const { ClipboardWatcher } = require('./capture/clipboard');
 const { WeChatChannel } = require('./channels/weixin/channel');
+const { publicAttachment } = require('./channels/weixin/media');
+const { prepareReply, deliverReply } = require('./channels/weixin/delivery');
 const { ingestMessages } = require('./ingest/pipeline');
 const { answerWechatMessage } = require('./agent/wechat-reply');
+const { formatAttachmentContext, WEIXIN_MEDIA_INSTRUCTIONS } = require('./agent/dsh-reply');
 const { historyEventList } = require('./agent/event-utils');
 const mainSession = require('./agent/main-session');
 const conversations = require('./memory/stores/conversations');
@@ -22,15 +25,20 @@ const { notifyUser } = require('./notify');
 const chatDb = require('./memory/chat-db');
 const agentQueue = require('./agent/queue');
 const { drainOnce } = require('./agent/queue-runner');
+const { EmailService } = require('./email/service');
 
 const RESTART_EXIT_CODE = 42;
 const PORT = parseInt(process.env.V3_PORT || '18791', 10);
 
 async function main() {
   const cfg = loadConfig();
+  const emailService = new EmailService({ config: cfg, resolveContact: (address) => {
+    return chatDb.findMembersByEmail(address);
+  } });
 
   const server = createServer({
     config: cfg,
+    emailService,
     onRestart: () => {
       log('info', 'core', '收到重启请求，即将重启核心');
       setTimeout(() => process.exit(RESTART_EXIT_CODE), 600);
@@ -61,6 +69,11 @@ async function main() {
     intervalMs: 60 * 1000,
     run: () => runReminders({ config: cfg }),
     immediate: true
+  });
+  scheduler.register({
+    name: 'email-analysis',
+    intervalMs: 5000,
+    run: () => emailService.processJobs(2)
   });
   scheduler.register({
     name: 'relation',
@@ -106,6 +119,7 @@ async function main() {
   }
 
   scheduler.start();
+  emailService.start().catch((error) => log('warn', 'email', '邮件服务启动失败：' + ((error && error.message) || error)));
 
   // 确保 DSH WebUI（默认 3080）可用；不可用则由小鹈鹕自动拉起。
   try {
@@ -125,12 +139,31 @@ async function main() {
   let wechat = null;
   const handleChannelMessage = async (m) => {
     const replyCfg = (cfg.agent && cfg.agent.reply) || {};
-    if (replyCfg.enabled === false || !m.content || !wechat) return;
+    if (!m.content) return;
 
     // 微信通道消息定位为「主对话」：长期保存在 conversations，
     // 并拥有稳定 DSH Web 会话 agent:main:weixin:<user>；不写入联系人记忆归档。
     const session = 'agent:main:weixin:' + (m.from || 'default');
-    conversations.append(session, { role: 'user', text: m.content });
+    conversations.append(session, {
+      role: 'user',
+      text: m.content,
+      attachments: (m.attachments || []).map(publicAttachment)
+    });
+    if (replyCfg.enabled === false || !wechat) return;
+
+    try {
+      const steered = await mainSession.steer({
+        sessionKey: session,
+        message: m.content,
+        attachments: m.attachments || []
+      });
+      if (steered && steered.ok) {
+        log('info', 'weixin', '微信后续消息已插入当前 Agent 生成');
+        return;
+      }
+    } catch (error) {
+      log('warn', 'agent', '微信消息插话失败，将作为下一轮处理：' + String((error && error.message) || error));
+    }
     const full = conversations.get(session);
     const history = full.slice(-20, -1).map((e) => ({
       role: e.role === 'bot' ? 'bot' : 'user',
@@ -144,6 +177,7 @@ async function main() {
       r = await mainSession.send({
         sessionKey: session,
         message: m.content,
+        attachments: m.attachments || [],
         history,
         timeoutMs: 180000
       });
@@ -155,7 +189,7 @@ async function main() {
     if (!r || !r.ok) {
       try {
         r = await answerWechatMessage({
-          message: m.content,
+          message: [WEIXIN_MEDIA_INSTRUCTIONS, formatAttachmentContext(m.attachments), m.content].filter(Boolean).join('\n\n'),
           history,
           userId: m.from || 'default',
           config: cfg
@@ -166,17 +200,16 @@ async function main() {
     }
 
     if (r && r.ok && r.text) {
-      const text = r.text;
-      conversations.append(session, {
-        role: 'bot',
-        text,
-        agentEvents: historyEventList((r && r.events) || [])
-      });
-      let delivery = await wechat.send({ to: m.from, text, contextToken: m.contextToken || '' });
-      // 入站消息携带的 token 可能在 Agent 执行期间失效，使用通道保存的最新 token 重试一次。
-      if (!delivery || !delivery.ok) {
-        log('warn', 'weixin', `微信回复首次发送失败：${(delivery && delivery.error) || '未知错误'}，准备重试`);
-        delivery = await wechat.send({ to: m.from, text });
+      const prepared = await prepareReply(r.text);
+      const text = prepared.text;
+      const delivery = await deliverReply(wechat, { to: m.from, text, attachments: prepared.attachments, contextToken: m.contextToken || '' });
+      if (delivery && (delivery.text || (delivery.attachments || []).length)) {
+        conversations.append(session, {
+          role: 'bot',
+          text: delivery.text || '',
+          attachments: delivery.attachments || [],
+          agentEvents: historyEventList((r && r.events) || [])
+        });
       }
       if (delivery && delivery.ok) {
         log('info', 'weixin', `微信 Agent 回复成功（${r.mode || 'unknown'}）`);
@@ -231,6 +264,7 @@ async function main() {
     log('info', 'core', '正在停止...');
     watcher.stop();
     wechat.stop();
+    emailService.stop().catch(() => {});
     scheduler.stop();
     mainSession.stop();
     stopHeartbeat();

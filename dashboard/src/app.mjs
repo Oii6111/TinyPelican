@@ -3,47 +3,50 @@ import { el } from './ui.mjs';
 import { mount as chat } from './views/chat.mjs';
 import { mount as channels } from './views/channels.mjs';
 import { mount as contacts } from './views/contacts.mjs';
-import { mount as knowledge } from './views/knowledge.mjs';
-import { mount as memoryInput } from './views/memory-input.mjs';
+import { mount as email } from './views/email.mjs';
 import { mount as scheduleDashboard } from './views/proactive.mjs';
-import { mount as mcp } from './views/mcp.mjs';
-import { mount as skills } from './views/skills.mjs';
-import { mount as workflows } from './views/workflows.mjs';
 import { mount as settings } from './views/settings.mjs';
+document.documentElement.classList.toggle('desktop-shell', /Windows/.test(navigator.userAgent) && /Electron\//.test(navigator.userAgent));
+
+const NAV_ICONS = {
+  channels: '<svg viewBox="0 0 24 24"><path d="M5 5.5h14v10H9l-4 3v-13Z"/><path d="M8 9h8M8 12h5"/></svg>',
+  memory: '<svg viewBox="0 0 24 24"><path d="M12 4a7.5 7.5 0 0 0-7.2 9.5L4 18l4.2-.8A7.5 7.5 0 1 0 12 4Z"/><circle cx="12" cy="11.5" r="2.2"/><path d="M12 8v1"/></svg>',
+  agent: '<svg viewBox="0 0 24 24"><path d="M14.3 6.5a4.5 4.5 0 0 0-5.6 5.6L3.6 17.2a2.2 2.2 0 0 0 3.2 3.2l5.1-5.1a4.5 4.5 0 0 0 5.6-5.6l-3.2 3.2-3.2-3.2Z"/><path d="m17.5 3 .6 2.4L20.5 6l-2.4.6-.6 2.4-.6-2.4L14.5 6l2.4-.6ZM5 3v4M3 5h4"/></svg>',
+  chat: '<svg viewBox="0 0 24 24"><path d="M5 18.5 4 21l3.3-1.3A8 8 0 1 0 5 18.5Z"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="15" rx="2"/><path d="M8 3.5v4M16 3.5v4M4 10h16M8 14h2M14 14h2M8 17.5h2"/></svg>'
+};
+
+function navIcon(name) {
+  return el('span', { class: 'nav-icon', 'aria-hidden': 'true', html: NAV_ICONS[name] || '' });
+}
 
 const NAV = [
   {
-    id: 'msg', group: '消息渠道', icon: '📨',
+    id: 'msg', group: '消息渠道', icon: 'channels',
     items: [
       { id: 'channels', label: '渠道列表', mount: channels }
     ]
   },
   {
-    id: 'mem', group: '记忆', icon: '🧠',
+    id: 'mem', group: '记忆', icon: 'memory',
     items: [
-      { id: 'contacts', label: '联系人', mount: contacts },
-      { id: 'knowledge', label: '个人知识库', mount: knowledge },
-      { id: 'memory-input', label: '记忆输入', mount: memoryInput }
-    ]
-  },
-  {
-    id: 'agt', group: 'Agent 功能', icon: '🛠️',
-    items: [
-      { id: 'mcp', label: 'MCP 工具', mount: mcp },
-      { id: 'skills', label: 'Skill 管理', mount: skills },
-      { id: 'workflows', label: 'Workflow', mount: workflows }
+      { id: 'contacts', label: '联系人', mount: contacts }
     ]
   }
 ];
 
+NAV.find((group) => group.id === 'mem').items.push({ id: 'email', label: '邮件', mount: email });
+
 const nav = document.getElementById('nav');
+const channelNavigation = NAV.find(group => group.id === 'msg');
+NAV.splice(NAV.indexOf(channelNavigation), 1);
 const viewBox = document.getElementById('view');
 const foot = document.getElementById('sidebar-foot');
 const instances = {};
 const viewParams = {};
 let currentId = null;
 
-const ctx = { navigate: (id, params) => show(id, params) };
+const ctx = { navigate: (id, params) => id === 'settings' ? openSettings(params) : show(id, params), closeSettings: () => closeSettings() };
 
 function mountView(id, mount, params) {
   const sec = el('section', { class: 'view', 'data-view': id, style: 'display:none;' });
@@ -58,28 +61,57 @@ function mountView(id, mount, params) {
 }
 
 // ---------- 顶部：对话板块（独立，默认启动页） ----------
-const chatBtn = el('button', { class: 'nav-item nav-standalone', 'data-view': 'chat' },
-  el('span', { text: '💬' }),
-  el('span', { text: '对话' })
+const chatBtn = el('button', { class: 'nav-item nav-standalone chat-nav-toggle', 'data-view': 'chat', 'aria-expanded': 'true', 'aria-controls': 'dsh-sidebar-panel' },
+  navIcon('chat'),
+  el('span', { text: '对话' }),
+  el('span', { class: 'caret', 'aria-hidden': 'true', html: '<svg viewBox="0 0 16 16"><path d="m6 4 4 4-4 4"/></svg>' })
 );
-chatBtn.onclick = () => show('chat');
-nav.append(chatBtn);
+const chatSidebarStatus = el('div', { class: 'chat-sidebar-status', text: '正在连接对话…', role: 'status' });
+const chatSidebarHost = el('div', { id: 'dsh-sidebar-host' });
+const chatSidebarPanel = el('div', { id: 'dsh-sidebar-panel', class: 'chat-sidebar-panel' }, chatSidebarStatus, chatSidebarHost);
+const chatNavGroup = el('div', { class: 'chat-nav-group open' }, chatBtn, chatSidebarPanel);
+let chatExpanded = true;
+function setChatExpanded(open) {
+  chatExpanded = open;
+  chatNavGroup.classList.toggle('open', open);
+  chatSidebarPanel.hidden = !open;
+  chatBtn.setAttribute('aria-expanded', String(open));
+}
+chatSidebarHost.addEventListener('dsh-sidebar-ready', () => { chatSidebarStatus.hidden = true; });
+chatSidebarHost.addEventListener('dsh-sidebar-disconnected', () => { chatSidebarStatus.hidden = false; });
+chatSidebarHost.addEventListener('dsh-sidebar-error', (event) => {
+  chatSidebarStatus.hidden = false;
+  chatSidebarStatus.textContent = event.detail || '连接暂不可用，请在右侧重试';
+});
+chatBtn.onclick = () => {
+  if (currentId === 'chat') setChatExpanded(!chatExpanded);
+  else show('chat');
+};
+nav.append(chatNavGroup);
 mountView('chat', chat);
 
 const scheduleBtn = el('button', { class: 'nav-item nav-standalone', 'data-view': 'schedule-dashboard' },
-  el('span', { text: '📅' }),
+  navIcon('calendar'),
   el('span', { text: '日历与日程' })
 );
 scheduleBtn.onclick = () => show('schedule-dashboard');
 nav.append(scheduleBtn);
 mountView('schedule-dashboard', scheduleDashboard);
 
+const channelsBtn = el('button', { class: 'nav-item nav-standalone', 'data-view': 'channels' },
+  navIcon('channels'),
+  el('span', { text: channelNavigation.group })
+);
+channelsBtn.onclick = () => show('channels');
+nav.append(channelsBtn);
+mountView('channels', channels);
+
 for (const g of NAV) {
-  const sub = el('div', { class: 'nav-sub' });
-  const btn = el('button', { class: 'nav-group-btn', 'data-group': g.id },
-    el('span', { text: g.icon }),
+  const sub = el('div', { class: 'nav-sub', id: 'nav-sub-' + g.id });
+  const btn = el('button', { class: 'nav-group-btn', 'data-group': g.id, 'aria-expanded': 'false', 'aria-controls': 'nav-sub-' + g.id },
+    navIcon(g.icon),
     el('span', { text: g.group }),
-    el('span', { class: 'caret', text: '▸' })
+    el('span', { class: 'caret', 'aria-hidden': 'true', html: '<svg viewBox="0 0 16 16"><path d="m6 4 4 4-4 4"/></svg>' })
   );
   for (const item of g.items) {
     const ibtn = el('button', { class: 'nav-item', 'data-view': item.id }, el('span', { text: item.label }));
@@ -95,29 +127,52 @@ for (const g of NAV) {
 
 // ---------- 左下角：设置（独立入口） ----------
 const settingsBtn = document.getElementById('nav-settings');
-settingsBtn.onclick = () => show('settings');
+settingsBtn.onclick = () => openSettings();
 mountView('settings', settings);
+
+let settingsOpen = false;
+function openSettings(params) {
+  if (params) viewParams.settings = params;
+  const sec = viewBox.querySelector('[data-view="settings"]');
+  if (!sec) return;
+  settingsOpen = true;
+  sec.style.display = '';
+  settingsBtn.classList.add('active');
+  settingsBtn.setAttribute('aria-expanded', 'true');
+  instances.settings?.show?.(params);
+}
+
+function closeSettings() {
+  if (!settingsOpen) return;
+  settingsOpen = false;
+  instances.settings?.hide?.();
+  const sec = viewBox.querySelector('[data-view="settings"]');
+  if (sec) sec.style.display = 'none';
+  settingsBtn.classList.remove('active');
+  settingsBtn.removeAttribute('aria-expanded');
+}
 
 function setGroupOpen(g, open) {
   g._sub.classList.toggle('open', open);
   g._btn.classList.toggle('open', open);
-  g._btn.querySelector('.caret').textContent = open ? '▾' : '▸';
+  g._btn.setAttribute('aria-expanded', String(open));
 }
 
 function toggleGroup(id) {
   const g = NAV.find((x) => x.id === id);
   const wasOpen = g._sub.classList.contains('open');
   for (const other of NAV) setGroupOpen(other, false);
-  if (wasOpen) {
-    show('chat');
-  } else {
+  if (!wasOpen) {
     setGroupOpen(g, true);
     show(g.items[0].id);
   }
 }
 
 function show(id, params) {
+  if (settingsOpen) closeSettings();
   if (params) viewParams[id] = params;
+  setChatExpanded(id === 'chat');
+  if (id === 'chat') for (const group of NAV) setGroupOpen(group, false);
   // 打开所属分组
   const g = NAV.find((x) => x.items.some((it) => it.id === id));
   if (g && !g._sub.classList.contains('open')) {
@@ -132,59 +187,17 @@ function show(id, params) {
   if (prev) prev.style.display = 'none';
 
   currentId = id;
-  nav.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === id));
+  document.querySelectorAll('.sidebar .nav-item').forEach((button) => {
+    const active = button.dataset.view === id;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
 
   const sec = viewBox.querySelector('[data-view="' + id + '"]');
   if (sec) sec.style.display = '';
   if (instances[id] && instances[id].show) instances[id].show(viewParams[id]);
 }
-
-// ---------- 顶部状态栏 ----------
-const hbDot = document.getElementById('hb-dot');
-const hbText = document.getElementById('hb-text');
-const hbLast = document.getElementById('hb-last');
-const unreadCount = document.getElementById('unread-count');
-const unreadBtn = document.getElementById('unread-btn');
-const pushStatusEl = document.getElementById('push-status');
-unreadBtn.onclick = () => show('chat');
-
-async function refreshStatus() {
-  try {
-    const s = await api.status();
-    const on = !!(s.heartbeat && s.heartbeat.online);
-    hbDot.classList.toggle('on', on);
-    hbText.textContent = on ? 'Agent 在线' : 'Agent 离线';
-    hbLast.textContent = s.heartbeat && s.heartbeat.lastBeatAt
-      ? new Date(s.heartbeat.lastBeatAt).toLocaleTimeString('zh-CN', { hour12: false })
-      : '--';
-    const n = (s.unread && s.unread.count) || 0;
-    unreadCount.textContent = n;
-    unreadBtn.classList.toggle('has', n > 0);
-
-    const wp = s.weixin && s.weixin.push;
-    if (!wp || !wp.configured) {
-      pushStatusEl.style.display = 'none';
-      pushStatusEl.classList.remove('push-ok', 'push-warn');
-    } else if (wp.ready) {
-      pushStatusEl.style.display = '';
-      pushStatusEl.textContent = '微信推送 可用';
-      pushStatusEl.title = wp.updatedAt
-        ? '最近激活：' + new Date(wp.updatedAt).toLocaleString('zh-CN', { hour12: false })
-        : '微信推送可用';
-      pushStatusEl.classList.remove('push-warn');
-      pushStatusEl.classList.add('push-ok');
-    } else {
-      pushStatusEl.style.display = '';
-      pushStatusEl.textContent = '微信推送 需激活';
-      pushStatusEl.title = wp.reason || '请给 bot 发一条消息重新激活';
-      pushStatusEl.classList.remove('push-ok');
-      pushStatusEl.classList.add('push-warn');
-    }
-  } catch {}
-}
-
-setInterval(refreshStatus, 5000);
-refreshStatus();
 
 (async () => {
   try {

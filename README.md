@@ -36,8 +36,24 @@ Traditional personal CRMs like [Monica](https://github.com/monicahq/monica) requ
 | Reply drafts | Relationship-aware suggestions, one-click fill, never auto-sent | ✅ Live |
 | Agent execution | DSH Agent with structured Skills and auditable event stream | ✅ Live |
 | Spoken diary via bot | Tell the WeChat bot; memory is settled by the Agent | 🚧 In progress |
-| More social channels | QQ, Feishu / DingTalk, Telegram, email, calendar | ⏳ In development |
+| Email | IMAP sync, classification and summaries, SMTP sending, contact email links | ✅ Basic |
+| More social channels | QQ, Feishu / DingTalk, Telegram | ⏳ In development |
 | Wearable activity import | AI glasses / cameras / watches as future memory inputs | ⏳ Planned |
+
+## Contact history and profiles
+
+The contact workspace uses an avatar-free, three-column layout: contact list, read-only chat history, and a collapsible profile sidebar. Messages are grouped by date with fewer repeated timestamps. Profile cards show saved fields, topic summaries, and analysis status, with an explicit editing and saving workflow.
+
+Date filtering and text export apply to **currently loaded messages only**; load older history first to include it. Clearing history and deleting a contact are separate data-management actions with confirmation. See the [contact workspace guide](docs/contacts-ui.md) for usage and implementation details (Chinese).
+
+## Recent updates
+
+- Native DSH conversations and settings share session state through a same-origin proxy. See the [conversation guide](docs/dsh-webui.md).
+- WeChat supports image and file transfers, previews, and partial-send feedback. See the [media guide](docs/weixin-media.md).
+- Email adds IMAP synchronization, message classification and summaries, SMTP sending, and contact email links.
+- Channels, contacts, tasks, review queues, records, and settings receive UI updates alongside model configuration, Agent context, and startup improvements.
+
+See the [recent changes](docs/recent-changes.md) for implementation and validation notes (Chinese).
 
 ## Why it's different
 
@@ -53,7 +69,7 @@ Traditional personal CRMs like [Monica](https://github.com/monicahq/monica) requ
 
 Current input is WeChat-first (clipboard auto-detection + experimental iLink). More social channels are under active planning/development:
 
-- QQ, Feishu / DingTalk, Telegram, email, calendar
+- QQ, Feishu / DingTalk, Telegram
 - Wearable activity import (AI glasses / cameras / watches)
 
 This project is maintained by an undergraduate student, so multi-channel support will take time. Every channel follows a simple `connect / stop / send` contract — if you are interested in channel adapters, Agent Skills, or the relationship-reasoning core, **you are very welcome to join as a contributor**. See [CONTRIBUTING.md](CONTRIBUTING.md).

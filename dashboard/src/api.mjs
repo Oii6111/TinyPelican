@@ -22,7 +22,9 @@ async function request(method, url, body) {
       const p = location.pathname;
       if (p === '/' || p === '/index.html') location.href = '/login';
     }
-    throw new ApiError((data && data.error) || `请求失败（${res.status}）`, res.status);
+    const error = new ApiError((data && data.error) || `请求失败（${res.status}）`, res.status);
+    if (data?.textSent === true) error.textSent = true;
+    throw error;
   }
   return data;
 }
@@ -30,6 +32,20 @@ async function request(method, url, body) {
 const get = (u) => request('GET', u);
 const post = (u, b) => request('POST', u, b);
 const del = (u) => request('DELETE', u);
+
+async function uploadWechatMedia(file) {
+  if (!file || !Number.isFinite(file.size) || file.size <= 0) throw new ApiError('请选择非空图片或文件', 400);
+  if (file.size > 104857600) throw new ApiError('文件大小不能超过 100 MB', 413);
+  const res = await fetch('/api/wechat/media', {
+    method: 'POST',
+    headers: { 'X-Filename': encodeURIComponent(file.name || 'attachment'), 'Content-Type': file.type || 'application/octet-stream' },
+    body: file
+  });
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok || !data?.ok || !data.attachment?.id) throw new ApiError(data?.error || '附件上传失败，请重试', res.status);
+  return data;
+}
 
 export const api = {
   health: () => get('/api/health'),
@@ -48,6 +64,9 @@ export const api = {
     profile: (name) => get('/api/contacts/' + encodeURIComponent(name) + '/profile'),
     saveProfile: (name, patch) => post('/api/contacts/' + encodeURIComponent(name) + '/profile', patch),
     save: (name, patch) => post('/api/contacts/' + encodeURIComponent(name), patch),
+    emails: (name) => get('/api/contacts/' + encodeURIComponent(name) + '/emails'),
+    linkEmail: (name, address) => post('/api/contacts/' + encodeURIComponent(name) + '/email-links', { address }),
+    unlinkEmail: (name, address) => del('/api/contacts/' + encodeURIComponent(name) + '/email-links/' + encodeURIComponent(address)),
     setImportant: (name, important) => post('/api/contacts/' + encodeURIComponent(name) + '/important', { important }),
     remove: (name) => del('/api/contacts/' + encodeURIComponent(name)),
     clearMessages: (name) => del('/api/contacts/' + encodeURIComponent(name) + '/messages')
@@ -98,6 +117,23 @@ export const api = {
     test: () => post('/api/web-search/test', {})
   },
 
+  email: {
+    status: () => get('/api/email/status'),
+    test: (config) => post('/api/email/test', config || {}),
+    sync: () => post('/api/email/sync', {}),
+    messages: (params = {}) => {
+      const q = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null && value !== '') q.set(key, value);
+      }
+      const suffix = q.toString();
+      return get('/api/email/messages' + (suffix ? '?' + suffix : ''));
+    },
+    message: (id) => get('/api/email/messages/' + encodeURIComponent(id)),
+    draft: (draft) => post('/api/email/drafts', draft),
+    send: (message) => post('/api/email/send', message)
+  },
+
   notify: {
     test: () => post('/api/notify/test')
   },
@@ -112,6 +148,8 @@ export const api = {
 
   wechat: {
     status: () => get('/api/wechat/status'),
+    upload: (file) => uploadWechatMedia(file),
+    send: (attachmentId, text = '') => post('/api/wechat/send', { attachmentId, ...(text ? { text } : {}) }),
     loginStart: () => post('/api/wechat/login/start'),
     loginCheck: (session) => get('/api/wechat/login/check?session=' + encodeURIComponent(session)),
     loginConfirm: (session) => post('/api/wechat/login/confirm', { session }),
@@ -129,6 +167,7 @@ export const api = {
   },
 
   agent: {
+    webui: () => post('/api/agent/webui'),
     list: (limit = 50) => get('/api/agent/tasks?limit=' + limit),
     create: (task, cwd = '') => post('/api/agent/tasks', { task, cwd: cwd || null }),
     get: (id, afterSeq = 0) => get('/api/agent/tasks/' + encodeURIComponent(id) + (afterSeq ? '?afterSeq=' + afterSeq : '')),

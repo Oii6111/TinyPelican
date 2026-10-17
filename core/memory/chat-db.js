@@ -67,6 +67,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_message_content ON message(content);
   CREATE INDEX IF NOT EXISTS idx_member_name ON member(name);
 `);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS member_email (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL REFERENCES member(id) ON DELETE CASCADE,
+    normalized_address TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'manual',
+    verified INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(member_id, normalized_address)
+  );
+  CREATE INDEX IF NOT EXISTS idx_member_email_address ON member_email(normalized_address);
+`);
 try { db.exec('ALTER TABLE message ADD COLUMN conversation_id INTEGER REFERENCES conversation(id)'); } catch {}
 try { db.exec("ALTER TABLE member ADD COLUMN profile_meta_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
 try { db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(content, content="message", content_rowid="id")'); } catch {}
@@ -268,6 +281,27 @@ function messagesSince(name, cursor = '', limit = 50) {
   return { contact: member.name, messages: result, cursor: last ? { id: last.id, ts: last.ts } : (cursor && typeof cursor === 'object' ? cursor : { ts: cursorTs }) };
 }
 
+function normalizeEmailAddress(value) { return String(value || '').trim().toLowerCase(); }
+function listMemberEmails(name) {
+  const member = getMember(name); if (!member) return null;
+  return db.prepare('SELECT normalized_address AS address,source,verified,created_at AS createdAt,updated_at AS updatedAt FROM member_email WHERE member_id=? ORDER BY normalized_address').all(member.id).map((row) => ({ ...row, verified: !!row.verified }));
+}
+function findMembersByEmail(address) {
+  const normalized = normalizeEmailAddress(address); if (!normalized) return [];
+  return db.prepare('SELECT member.name,member.remark,member_email.normalized_address AS address,member_email.source,member_email.verified FROM member_email JOIN member ON member.id=member_email.member_id WHERE member_email.normalized_address=? ORDER BY member.name').all(normalized).map((row) => ({ ...row, verified: !!row.verified }));
+}
+function linkMemberEmail(name, address, { source = 'manual', verified = false } = {}) {
+  const member = getMember(name); const normalized = normalizeEmailAddress(address);
+  if (!member || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) return null;
+  const stamp = new Date().toISOString();
+  db.prepare('INSERT INTO member_email(member_id,normalized_address,source,verified,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(member_id,normalized_address) DO UPDATE SET source=excluded.source,verified=excluded.verified,updated_at=excluded.updated_at').run(member.id, normalized, String(source), verified ? 1 : 0, stamp, stamp);
+  return { address: normalized, source: String(source), verified: !!verified, member: member.name };
+}
+function unlinkMemberEmail(name, address) {
+  const member = getMember(name); if (!member) return false;
+  const result = db.prepare('DELETE FROM member_email WHERE member_id=? AND normalized_address=?').run(member.id, normalizeEmailAddress(address));
+  return Number(result.changes || 0) > 0;
+}
 function deleteMember(name) { const member = getMember(name); if (!member) return false; const result = db.prepare('DELETE FROM member WHERE id=?').run(member.id); archive.remove(member.name); return Number(result.changes || 0) > 0; }
 function clearMemberMessages(name) {
   const member = getMember(name);
@@ -328,4 +362,4 @@ function contactContext(name, { limit = 20, hotOnly = false } = {}) {
   return { contact: member.name, remark: member.remark || '', important: !!member.important, socialGoal: member.socialGoal || '', profile: member.profile || {}, profileSkipped: member.profileSkipped || [], chatSummary: member.chatSummary || {}, recentMessages: result ? result.messages : [] };
 }
 
-module.exports = { db, syncLegacy, listMembers, getMember, findUnannotatedMember, messages, archiveMessages, allMessages, historyPages, archiveExpired, messagesSince, searchMessages, contactContext, updateMember, deleteMember, clearMemberMessages, ingestMessages, updateMessageContent };
+module.exports = { db, syncLegacy, listMembers, getMember, findUnannotatedMember, messages, archiveMessages, allMessages, historyPages, archiveExpired, messagesSince, searchMessages, contactContext, updateMember, deleteMember, clearMemberMessages, ingestMessages, updateMessageContent, normalizeEmailAddress, listMemberEmails, findMembersByEmail, linkMemberEmail, unlinkMemberEmail };

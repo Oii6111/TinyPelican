@@ -6,6 +6,8 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { dataDir } = require('../lib/paths');
+const { ensureSystemPromptPatch, systemPromptEnv } = require('./system-prompt');
 
 const STREAM_MARKER = '@@DSH_EVENT@@';
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -86,7 +88,9 @@ function effectiveEngineProvider(config) {
     const baseUrl = String(p.baseUrl || '').trim();
     const apiKey = String(p.apiKey || '').trim();
     if (!model || !baseUrl) return null;
-    return { name, model, baseUrl, apiKey };
+    // entry 是这条 provider 的原始设置：能力开关（imageInput / inHistorySystemPrompt）
+    // 也读这里，见 routeModelFacts。
+    return { name, model, baseUrl, apiKey, entry: p };
   };
   // 选中的 provider：Ollama 本地服务本来就不需要 Key，显式选中就算可用
   const selected = read(engine.provider);
@@ -101,17 +105,127 @@ function effectiveEngineProvider(config) {
   return null;
 }
 
+// 显式列出 `models` 会整份替换 DSH 内置目录，所以「能力声明」得由我们补回来——
+// 但只能声明上游真的支持的：声明错了，图片和新版 system prompt 会一路发到不支持它的
+// 上游、由上游报错，比本地直接拒绝更难查。
+//
+// 判定顺序：config.json 里 engine.providers.<名称> 的显式布尔 > 已知模型表 > 纯文本（安全默认）。
+// 已知表对齐 DSH 内置目录（@deepseek-ai/dsh-llm-deepseek 的 DEFAULT_MODELS）：
+// deepseek-flash 声明了图片输入 + in-history，deepseek-v4-flash-vision-exp 只声明图片。
+const KNOWN_MODEL_FACTS = {
+  'deepseek-flash': { image: true, inHistorySystemPrompt: true },
+  'deepseek-v4-flash-vision-exp': { image: true, inHistorySystemPrompt: false }
+};
+
+// 其余 provider（siliconflow / openai / ollama / custom）的名字和模型都是用户自填的，
+// 我们无从判断，一律按纯文本写。真接了视觉模型 / 支持 in-history 的网关，就在
+// config.json 里显式打开（设置界面保存 provider 时是展开合并的，这两个键不会被抹掉）：
+//   engine.providers.<名称>.imageInput = true             → 声明 inputModalities: [text, image]
+//   engine.providers.<名称>.inHistorySystemPrompt = true  → 声明 systemPromptUpdate: in-history
+function routeModelFacts(prov) {
+  const known = (prov && prov.name === 'deepseek' && KNOWN_MODEL_FACTS[prov.model])
+    || { image: false, inHistorySystemPrompt: false };
+  const entry = (prov && prov.entry) || {};
+  const pick = (key, fallback) => (typeof entry[key] === 'boolean' ? entry[key] : fallback);
+  return {
+    image: pick('imageInput', known.image),
+    inHistorySystemPrompt: pick('inHistorySystemPrompt', known.inHistorySystemPrompt)
+  };
+}
+
+// 我们自己拥有、每次按「设置 → 模型服务」**重写**的顶层键。其余顶层键一律原样保留：
+// DSH 自己也会往 settings.yaml 里写（欢迎声明的确认、权限默认值、插件设置……），
+// 早先这里是整份重写，等于把用户在 DSH 界面里改过的东西静默抹掉——
+// 最明显的一个后果是「内测声明」会反复弹回来。
+const OWNED_SETTINGS_KEYS = new Set(['agent-default-model', 'llm-deepseek']);
+// DSH 的「内测声明」（welcome notice）靠这个键与前端资源里的版本号**精确相等**来判定已确认
+const WELCOME_ACK_NAMESPACE = 'ui-onboarding';
+const WELCOME_ACK_KEY = 'welcomeNoticeVersion';
+// 注意：DSH 的 bin 在 `<...>/node_modules/@deepseek-ai/dsh/lib/bin.js`，
+// 「往上两级」正好是 `@deepseek-ai/` 那一层，所以下面这段不能再带 `@deepseek-ai/` 前缀。
+const WELCOME_NOTICE_ASSET = path.join('dsh-client-ui-settings-models', 'lib', 'client.js');
+
+// 从随包的前端资源里读当前欢迎声明版本号。
+// 写上前就等于「已确认」——那段声明是写给 DSH 插件开发者看的，出现在终端用户的界面上
+// 只会显得莫名其妙。读不到就不写：用户点一次"继续"之后，上面的保留逻辑会让它一直生效。
+// （不想要这个行为，把本函数返回空字符串即可。）
+function welcomeNoticeVersion() {
+  const candidates = [];
+  try {
+    const bin = findDshBin();
+    candidates.push(path.resolve(path.dirname(bin), '..', '..', WELCOME_NOTICE_ASSET));
+  } catch {}
+  try {
+    candidates.push(require.resolve('@deepseek-ai/dsh-client-ui-settings-models/lib/client.js'));
+  } catch {}
+  for (const candidate of candidates) {
+    try {
+      const match = /WELCOME_NOTICE_VERSION\s*=\s*"([^"]+)"/.exec(fs.readFileSync(candidate, 'utf8'));
+      if (match) return match[1];
+    } catch {}
+  }
+  return '';
+}
+
+// 把 settings.yaml 里「不属于我们」的顶层块按原文切出来（含缩进子行与块内注释）。
+// 只做最小解析：DSH 写的都是 `key:` + 缩进 的普通顶层标量，够用。
+function preservedSettingsBlocks(file) {
+  if (!fs.existsSync(file)) return [];
+  const blocks = [];
+  let current = null;
+  for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const line = raw.replace(/\r$/, '');
+    if (line.startsWith(SETTINGS_MARKER)) continue;
+    const top = /^([A-Za-z0-9_.-]+):/.exec(line);
+    if (top) {
+      current = { key: top[1], lines: [line] };
+      blocks.push(current);
+      continue;
+    }
+    if (current) current.lines.push(line);
+  }
+  return blocks
+    .filter((block) => !OWNED_SETTINGS_KEYS.has(block.key))
+    .map((block) => {
+      const text = block.lines.join('\n').replace(/\s+$/, '');
+      return { key: block.key, text };
+    })
+    .filter((block) => block.text !== '');
+}
+
+// `agent-default-model` 是我们拥有的键（provider / model 由「设置 → 模型服务」决定），
+// 但 DSH 自己也往里写：dsh-agent-default-model 插件把用户选的推理等级存在
+// reasoningEffort 里。整块重写会把这一项抹掉——表现是模型菜单里的 High 自己变回默认。
+// 所以这里把该键下不属于我们的子键按原文接回来。
+function preservedSubKeys(file, key, ownedSubKeys) {
+  if (!fs.existsSync(file)) return [];
+  const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/).map((raw) => raw.replace(/\r$/, ''));
+  const start = lines.findIndex((line) => line.startsWith(`${key}:`));
+  if (start < 0) return [];
+  const kept = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^[A-Za-z0-9_.-]+:/.test(line)) break;   // 到了下一个顶层键
+    if (!line.trim()) continue;
+    if (ownedSubKeys.some((sub) => line.startsWith(`  ${sub}:`))) continue;
+    kept.push(line);
+  }
+  return kept;
+}
+
 function writeGeneratedDshSettings(dshHome, config) {
   if (!dshHome) return false;
   const file = path.join(dshHome, 'settings.yaml');
   const prov = effectiveEngineProvider(config);
   const label = prov ? (PROVIDER_LABELS[prov.name] || prov.name) : '';
+  const facts = routeModelFacts(prov);
   const lines = prov
     ? [
       SETTINGS_MARKER,
       'agent-default-model:',
       '  provider: deepseek-official',
       `  model: ${yamlQuote(prov.model)}`,
+      // DSH 自己写进来的推理等级等子键原样保留（见 preservedSubKeys）
+      ...preservedSubKeys(file, 'agent-default-model', ['provider', 'model']),
       'llm-deepseek:',
       `  baseURL: ${yamlQuote(prov.baseUrl)}`,
       '  apiKeyEnv: DEEPSEEK_API_KEY',
@@ -119,10 +233,23 @@ function writeGeneratedDshSettings(dshHome, config) {
       `    - id: ${yamlQuote(prov.model)}`,
       // 名字里带上来源，免得 DSH 的模型列表里出现一个来源不明的模型名
       `      name: ${yamlQuote(`${prov.model} · ${label}`)}`,
-      '      contextWindow: 1000000'
+      '      contextWindow: 1000000',
+      // 能力声明按 provider/模型区分（见 routeModelFacts）：
+      // 只有上游真的支持时才写，否则图片/新 system prompt 会被直接发过去、由上游报错。
+      ...(facts.image ? ['      inputModalities: [text, image]'] : []),
+      ...(facts.inHistorySystemPrompt ? ['      systemPromptUpdate: in-history'] : [])
     ]
-    : FALLBACK_SETTINGS_LINES;
+    : FALLBACK_SETTINGS_LINES.slice();
   try {
+    const ack = welcomeNoticeVersion();
+    // 读得到版本号就由我们写这份确认；读不到就保留 DSH 自己写的那份原样。
+    for (const block of preservedSettingsBlocks(file)) {
+      if (ack && block.key === WELCOME_ACK_NAMESPACE) continue;
+      lines.push('', block.text);
+    }
+    if (ack) {
+      lines.push('', `${WELCOME_ACK_NAMESPACE}:`, `  ${WELCOME_ACK_KEY}: ${yamlQuote(ack)}`);
+    }
     fs.mkdirSync(dshHome, { recursive: true });
     const next = lines.join('\n') + '\n';
     // 内容没变就不动文件：DSH 会监听 settings.yaml，反复写会让它一直热重载
@@ -191,7 +318,10 @@ function buildDshEnv(dshHome, config) {
   writeGeneratedDshSettings(dshHome, config);
   const env = {
     ...process.env,
-    DSH_HOME: dshHome
+    ...systemPromptEnv(),
+    DSH_HOME: dshHome,
+    TINYPELICAN_DATA_DIR: path.resolve(dataDir() || PROJECT_ROOT),
+    TINYPELICAN_EMAIL_CONFIG: path.resolve(dataDir() || PROJECT_ROOT)
   };
   if (config && config.engine) {
     // 不管 provider 名字是什么，都通过 DEEPSEEK_API_KEY 传给 DSH 的 deepseek-official 路由。
@@ -329,7 +459,8 @@ function runDshTaskWithPipes({
       return reject(new Error('任务文本不能为空'));
     }
 
-    const child = spawn(process.execPath, [bin, '--profile', profile, String(task)], {
+    const patch = ensureSystemPromptPatch({ dshHome });
+    const child = spawn(process.execPath, [bin, '--profile', profile, ...patch ? ['--patch', patch] : [], String(task)], {
       cwd: workdir,
       env: buildDshEnv(dshHome, config),
       windowsHide: true,
@@ -425,7 +556,8 @@ function runDshTaskWithFiles({
     const outFd = fs.openSync(outFile, 'w');
     const errFd = fs.openSync(errFile, 'w');
 
-    const child = spawn(process.execPath, [bin, '--profile', profile, String(task)], {
+    const patch = ensureSystemPromptPatch({ dshHome });
+    const child = spawn(process.execPath, [bin, '--profile', profile, ...patch ? ['--patch', patch] : [], String(task)], {
       cwd: workdir,
       env: buildDshEnv(dshHome, config),
       windowsHide: true,
@@ -527,6 +659,7 @@ module.exports = {
   buildDshEnv,
   writeGeneratedDshSettings,
   effectiveEngineProvider,
+  routeModelFacts,
   parseEventLine,
   ensureLocalProfileDependencies,
   DEFAULT_DSH_HOME,

@@ -14,6 +14,18 @@ const DEFAULTS = {
     searxng: { baseUrl: '' },
     moonshot: { baseUrl: 'https://api.moonshot.cn/v1', apiKey: '', model: 'kimi-k2.6' }
   },
+  email: {
+    enabled: false,
+    accountId: 'default',
+    address: '',
+    initialDays: 30,
+    importantPush: false,
+    folder: 'INBOX',
+    reconnectMinMs: 1000,
+    reconnectMaxMs: 300000,
+    imap: { host: '', port: 993, secure: true, rejectUnauthorized: true, username: '', password: '' },
+    smtp: { host: '', port: 465, secure: true, rejectUnauthorized: true, username: '', password: '' }
+  },
   // 剪贴板轮询间隔：调小能让建议回复更快感知到复制（300ms 只比 700ms 多约 1% 单核）
   pollMs: 400,
   minMatchLines: 2,
@@ -116,7 +128,8 @@ const DEFAULTS = {
       captureComplete: false,
       intent: true,
       reminder: true,
-      relation: true
+      relation: true,
+      emailImportant: false
     },
     bark: {
       server: 'https://api.day.app',

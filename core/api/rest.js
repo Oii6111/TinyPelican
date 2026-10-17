@@ -7,6 +7,7 @@ const path = require('path');
 const { createRouter } = require('./router');
 const auth = require('../auth');
 const { loadConfig } = require('../lib/config');
+const { createDshProxy } = require('./dsh-proxy');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const DASHBOARD = path.join(ROOT, 'dashboard');
@@ -57,9 +58,10 @@ async function serveStatic(res, relPath) {
   return true;
 }
 
-function createRestServer({ config = null, onRestart = null } = {}) {
+function createRestServer({ config = null, onRestart = null, emailService = null } = {}) {
   const router = createRouter();
-  const ctx = { config, onRestart, json, readBody, version: VERSION };
+  const ctx = { config, onRestart, emailService, json, readBody, version: VERSION };
+  const dshProxy = createDshProxy({ config });
 
   require('./routes/auth')(router, ctx);
   require('./routes/health')(router, ctx);
@@ -67,6 +69,7 @@ function createRestServer({ config = null, onRestart = null } = {}) {
   require('./routes/contacts')(router, ctx);
   require('./routes/search')(router, ctx);
   require('./routes/web-search')(router, ctx);
+  require('./routes/email')(router, ctx);
   require('./routes/intents')(router, ctx);
   require('./routes/tasks')(router, ctx);
   require('./routes/schedules')(router, ctx);
@@ -78,10 +81,11 @@ function createRestServer({ config = null, onRestart = null } = {}) {
   require('./routes/wechat')(router, ctx);
   require('./routes/chat')(router, ctx);
   require('./routes/agent')(router, ctx);
+  require('./routes/dsh-webui')(router, ctx);
   require('./routes/reply-suggestions')(router, ctx);
   require('./routes/import')(router, ctx);
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
     try {
       const p = url.pathname;
@@ -96,11 +100,13 @@ function createRestServer({ config = null, onRestart = null } = {}) {
       // 未登录时：API 返回 401；页面请求统一显示登录页
       const localSuggestionApi = p.startsWith('/api/reply-suggestions/');
       if (authOn && !publicPaths.has(p) && !localSuggestionApi && !auth.checkRequest(req)) {
-        if (p.startsWith('/api/')) return json(res, 401, { error: 'unauthorized' });
+        if (p.startsWith('/api/') || p.startsWith('/dsh/')) return json(res, 401, { error: 'unauthorized' });
         const loginHtml = await fs.promises.readFile(path.join(DASHBOARD, 'login.html'), 'utf8');
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(loginHtml);
       }
+
+      if (await dshProxy.handle(req, res)) return;
 
       if (p === '/login') {
         const loginHtml = await fs.promises.readFile(path.join(DASHBOARD, 'login.html'), 'utf8');
@@ -117,10 +123,11 @@ function createRestServer({ config = null, onRestart = null } = {}) {
         res.writeHead(200, { 'Content-Type': 'image/png' });
         return res.end(data);
       }
-      if (p === '/favicon.ico' || p === '/styles.css' ||
+      if (p === '/favicon.ico' || p === '/styles.css' || p === '/sidebar-landscape.svg' ||
           p === '/suggestion-card.html' ||
           p === '/suggestion-card.css' ||
-          p.startsWith('/src/')) {
+          p.startsWith('/src/') ||
+          p.startsWith('/assets/')) {
         if (await serveStatic(res, p.slice(1))) return;
       }
       if (await router.match(req, res, ctx)) return;
@@ -129,6 +136,20 @@ function createRestServer({ config = null, onRestart = null } = {}) {
       return json(res, 500, { error: String((e && e.message) || e) });
     }
   });
+  server.on('upgrade', (req, socket, head) => {
+    if (auth.isEnabled(ctx.config || loadConfig()) && !auth.checkRequest(req)) {
+      socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      return;
+    }
+    dshProxy.upgrade(req, socket, head);
+  });
+  server.on('close', () => dshProxy.close());
+  const close = server.close;
+  server.close = function(...args) {
+    dshProxy.close();
+    return close.apply(this, args);
+  };
+  return server;
 }
 
 module.exports = { createRestServer, VERSION };

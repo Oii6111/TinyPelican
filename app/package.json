@@ -24,6 +24,18 @@
     ],
     "extraResources": [
       {
+        "from": "../agent/Agent.md",
+        "to": "content/agent/Agent.md"
+      },
+      {
+        "from": "../agent/skills",
+        "to": "content/agent/skills"
+      },
+      {
+        "from": "../licenses",
+        "to": "content/licenses"
+      },
+      {
         "from": "../dashboard",
         "to": "content/dashboard"
       },

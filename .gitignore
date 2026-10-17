@@ -41,6 +41,7 @@ weixin-cursor.json
 weixin-context.json
 dsh-web-auth.json
 conversations.json
+media/weixin/
 unread.json
 sessions.json
 
@@ -77,3 +78,10 @@ packaging/share-target/**/obj/
 packaging/vendor/node_modules/
 app/dist/
 app/build/
+
+# 本地临时材料与界面预览产物
+/tmp/
+/output/
+
+# 由安装脚本获取的上游邮件插件仓库
+/agent/dsh-email/

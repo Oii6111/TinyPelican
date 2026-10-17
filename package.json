@@ -1,13 +1,16 @@
 {
   "name": "tinypelican-v3",
-  "version": "0.5.1",
+  "version": "0.1.0",
   "private": true,
   "description": "小鹈鹕 V3 — 长记忆 + 主动关系 个人 AI 助手",
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "^0.1.5-rc.2"
+    "@deepseek-ai/dsh": "0.1.5-rc.3",
+    "imapflow": "^1.0.181",
+    "mailparser": "^3.7.4",
+    "nodemailer": "^7.0.9"
   },
   "scripts": {
     "start": "node core/launcher.js",

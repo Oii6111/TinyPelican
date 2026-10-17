@@ -75,6 +75,7 @@ function eventEnabled(config, event) {
   if (!event || event === 'system') return true;
   const events = (config && config.notify && config.notify.events) || {};
   if (event === 'captureComplete') return events.captureComplete === true;
+  if (event === 'emailImportant') return events.emailImportant === true && config?.email?.importantPush === true;
   return events[event] !== false;
 }
 

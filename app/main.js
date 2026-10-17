@@ -84,6 +84,11 @@ function createMainWindow() {
     icon: LOGO,
     title: '小鹈鹕',
     autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    ...(process.platform === 'win32' ? {
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: '#ffffff', symbolColor: '#373830', height: 32 }
+    } : {}),
     webPreferences: { contextIsolation: true, nodeIntegration: false }
   });
   win.loadURL(`http://127.0.0.1:${PORT}`);
@@ -187,9 +192,17 @@ function portFree(port) {
 
 // 运行核心：默认用 Electron 自带的 Node（ELECTRON_RUN_AS_NODE=1，进程即 node），
 // 这样用户机器上不需要另外安装 Node；开发时可用 XIAOTIHU_NODE 指定系统 Node。
-function coreEnv() {
+function coreRunner() {
+  if (process.env.XIAOTIHU_NODE) return process.env.XIAOTIHU_NODE;
+  const npmNode = process.env.npm_node_execpath;
+  if (!isPackaged && npmNode && fs.existsSync(npmNode)) return npmNode;
+  return process.execPath;
+}
+
+function coreEnv(runner) {
   const env = { ...process.env };
-  if (!process.env.XIAOTIHU_NODE) env.ELECTRON_RUN_AS_NODE = '1';
+  if (runner === process.execPath) env.ELECTRON_RUN_AS_NODE = '1';
+  else delete env.ELECTRON_RUN_AS_NODE;
   if (isPackaged) {
     env.XIAOTIHU_DATA_DIR = process.env.XIAOTIHU_DATA_DIR || '';
     env.DSH_HOME = process.env.DSH_HOME || path.join(env.XIAOTIHU_DATA_DIR, 'dsh-home');
@@ -200,9 +213,9 @@ function coreEnv() {
 
 function startCore() {
   if (quitting) return;
-  const runner = process.env.XIAOTIHU_NODE || process.execPath;
+  const runner = coreRunner();
   const startedAt = Date.now();
-  coreProc = spawn(runner, [CORE], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true, env: coreEnv() });
+  coreProc = spawn(runner, [CORE], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true, env: coreEnv(runner) });
   coreProc.on('error', () => {});
   coreProc.on('exit', (code) => {
     if (quitting) return;

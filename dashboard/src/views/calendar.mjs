@@ -103,7 +103,7 @@ export function mount(container, options = {}) {
     let schedules = [];
     try { tasks = await api.tasks.list(); } catch {}
     try { schedules = await api.schedules.list('open'); } catch {}
-    todos = tasks.filter((task) => task.type !== 'reminder');
+    todos = tasks.filter((task) => task.type !== 'reminder' && task.status === 'open');
     const map = {};
     const add = (item, iso, entity) => {
       if (!iso) return;

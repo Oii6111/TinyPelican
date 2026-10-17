@@ -131,8 +131,12 @@ test('REST 服务：健康/设置读写/静态资源/404', async () => {
     assert.ok(html.includes('小鹈鹕'));
     const css = await (await fetch(base + '/styles.css')).text();
     assert.ok(css.includes('--accent'));
+    assert.strictEqual((await fetch(base + '/sidebar-landscape.svg')).status, 200);
     const src = await fetch(base + '/src/app.mjs');
     assert.strictEqual(src.status, 200);
+    const channelIcon = await fetch(base + '/assets/channels/icons/wechat.png');
+    assert.strictEqual(channelIcon.status, 200);
+    assert.match(channelIcon.headers.get('content-type') || '', /image\/png/);
     assert.strictEqual((await fetch(base + '/suggestion-card.html')).status, 200);
     // 悬浮小图标已取消：卡片直接出现，不再有独立图标窗口
     assert.strictEqual((await fetch(base + '/suggestion-icon.html')).status, 404);

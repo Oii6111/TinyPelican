@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 const { getPaths } = require('../../lib/paths');
 const { readJson, writeJson } = require('../../lib/store');
+const { uploadMedia } = require('./media');
 
 const DEFAULT_ENTRY = 'https://ilinkai.weixin.qq.com';
 const APP_CLIENT_VERSION = '132102'; // 2.4.6 对应版本号
@@ -127,6 +128,39 @@ class WeChatClient {
   }
 
   async sendText(toUserId, text, contextToken, { clientId = null } = {}) {
+    return this.sendItem(toUserId, { type: 1, text_item: { text: String(text) } }, contextToken, { clientId });
+  }
+
+  async getUploadUrl(body) {
+    const result = await this._post('/ilink/bot/getuploadurl', { ...body, base_info: baseInfo() });
+    if (!result.ok) return result;
+    const data = result.data;
+    if ((data.ret !== undefined && data.ret !== 0) || (data.errcode !== undefined && data.errcode !== 0)) {
+      return { ok: false, error: `getuploadurl ret=${data.ret || 0} errcode=${data.errcode || 0}`, staleToken: data.ret === -14 || data.errcode === -14 };
+    }
+    return result;
+  }
+
+  async sendMedia(toUserId, record, contextToken, { text = '' } = {}) {
+    if (!contextToken) return { ok: false, error: '缺少微信会话上下文，请先给机器人发送一条消息。' };
+    try {
+      const uploaded = await uploadMedia(this, { record, to: toUserId });
+      const media = { encrypt_query_param: uploaded.encryptQueryParam, aes_key: uploaded.aesKey, encrypt_type: 1 };
+      const item = record.kind === 'image'
+        ? { type: 2, image_item: { media, mid_size: uploaded.ciphertextSize } }
+        : { type: 4, file_item: { media, file_name: record.name, len: String(uploaded.size) } };
+      if (text) {
+        const caption = await this.sendText(toUserId, text, contextToken);
+        if (!caption.ok) return caption;
+      }
+      const result = await this.sendItem(toUserId, item, contextToken);
+      return { ...result, textSent: !!text };
+    } catch (error) {
+      return { ok: false, error: String(error.message || '微信媒体上传失败') };
+    }
+  }
+
+  async sendItem(toUserId, item, contextToken, { clientId = null } = {}) {
     const msg = {
       from_user_id: '',
       to_user_id: toUserId,
@@ -134,15 +168,15 @@ class WeChatClient {
       message_type: 2,
       message_state: 2,
       context_token: contextToken,
-      item_list: [{ type: 1, text_item: { text: String(text) } }]
+      item_list: [item]
     };
     const r = await this._post('/ilink/bot/sendmessage', { msg, base_info: baseInfo() }, { timeoutMs: 15000 });
     if (!r.ok) return r;
     const d = r.data;
-    if (d.ret !== undefined && d.ret !== 0) {
+    if ((d.ret !== undefined && d.ret !== 0) || (d.errcode !== undefined && d.errcode !== 0)) {
       // -14 是登录态失效；ret=-2 + prepare failed 在 iLink 中通常代表 context_token
       // 过期/不可用（不是限流），需要用户重新给 bot 发消息刷新。
-      const stale = d.ret === -14 || (d.ret === -2 && /prepare failed/i.test(String(d.errmsg || '')));
+      const stale = d.ret === -14 || d.errcode === -14 || (d.ret === -2 && /prepare failed/i.test(String(d.errmsg || '')));
       return { ok: false, error: `sendmessage ret=${d.ret} errmsg=${d.errmsg || ''}`, staleToken: stale, data: d };
     }
     return { ok: true, data: d };

@@ -17,6 +17,8 @@ function maskConfig(cur) {
     }
   }
   const bark = out.notify && out.notify.bark;
+  if (out.email?.imap?.password) out.email.imap.password = maskKey(out.email.imap.password);
+  if (out.email?.smtp?.password) out.email.smtp.password = maskKey(out.email.smtp.password);
   if (out.webSearch?.moonshot?.apiKey) out.webSearch.moonshot.apiKey = maskKey(out.webSearch.moonshot.apiKey);
   if (bark && bark.key) bark.key = maskKey(bark.key);
   return out;
@@ -43,6 +45,14 @@ function restoreMaskedKeys(cur, patch) {
     const curBark = cur.notify && cur.notify.bark;
     if (curBark && curBark.key) bark.key = curBark.key;
     else delete bark.key;
+  }
+  for (const protocol of ['imap', 'smtp']) {
+    const value = patch.email && patch.email[protocol] && patch.email[protocol].password;
+    if (typeof value === 'string' && value.includes('****')) {
+      const current = cur.email && cur.email[protocol];
+      if (current && current.password) patch.email[protocol].password = current.password;
+      else delete patch.email[protocol].password;
+    }
   }
 }
 

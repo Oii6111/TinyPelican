@@ -4,10 +4,11 @@ import { el, empty, fmtTime } from '../ui.mjs';
 const PAGE_SIZE = 10;
 
 const TYPE_LABELS = {
-  todo: '📌 待办',
-  reminder: '🔔 提醒',
-  schedule: '📅 日程'
+  todo: '待办',
+  reminder: '提醒',
+  schedule: '日程'
 };
+const TYPE_ORDER = { todo: 0, reminder: 1, schedule: 2 };
 
 function localDateTime(iso) {
   if (!iso) return '';
@@ -28,21 +29,125 @@ export function mount(container, options = {}) {
   let modal = null;
   let page = 1;
   let refreshTimer = null;
+  let searchTimer = null;
+  let loadVersion = 0;
+  let category = 'all';
+  let query = '';
+  let sort = 'latest';
+  const selected = new Set();
+  const expandedRows = new Set();
+  const itemCache = new Map();
 
-  const list = el('div', { class: 'todo-list' });
+  const list = el('div', { class: 'task-table' });
   const pager = el('div', { class: 'list-pager' });
   const newBtn = el('button', { class: 'btn btn-primary', text: '＋ 新建事项' });
+  const search = el('input', { class: 'task-search', placeholder: '搜索安排…', 'aria-label': '搜索安排' });
+  const filters = el('div', { class: 'task-filters' });
+  const batch = el('div', { class: 'task-batch', hidden: true });
+  const sortSelect = el('select', { class: 'task-sort', 'aria-label': '排序方式' },
+    el('option', { value: 'latest', text: '最新优先' }),
+    el('option', { value: 'time', text: '时间优先' }),
+    el('option', { value: 'title', text: '名称优先' })
+  );
+  const filterButtons = new Map();
+  const filterOptions = [['all', '全部安排'], ['todo', '待办'], ['reminder', '提醒'], ['schedule', '日程'], ['open', '未完成'], ['done', '已完成']];
+  for (const [value, label] of filterOptions) {
+    const button = el('button', { class: 'chip' + (value === category ? ' active' : '') },
+      el('span', { class: 'chip-label', text: label }),
+      el('span', { class: 'chip-count', text: '0' })
+    );
+    filterButtons.set(value, button);
+    button.onclick = () => {
+      category = value;
+      page = 1;
+      selected.clear();
+      updateBatch();
+      filters.querySelectorAll('.chip').forEach((item) => item.classList.toggle('active', item === button));
+      load();
+    };
+    filters.append(button);
+  }
+  search.oninput = () => {
+    query = search.value.trim().toLowerCase();
+    page = 1;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(load, 120);
+  };
+  sortSelect.onchange = () => { sort = sortSelect.value; page = 1; load(); };
   container.append(
-    el('div', { class: 'board-head' },
+    el('div', { class: 'board-head task-board-head' },
       el('div', {},
-        el('h2', { text: '待办与安排' }),
-        el('div', { class: 'desc', text: '这里集中展示每一条待办、提醒和日程。列表较长时可以翻页查看，点击编辑可回到对应的编辑面板。' })
+        el('h2', { text: '全部安排' }),
+        el('div', { class: 'desc', text: '集中处理待办、提醒和日程。确认完成后，事项会保留在记录中。' })
       ),
-      newBtn
+      el('div', { class: 'task-head-actions' }, search, newBtn)
     ),
+    el('div', { class: 'task-toolbar' }, filters, el('label', { class: 'task-sort-wrap' }, '排序：', sortSelect)),
+    batch,
     list,
     pager
   );
+
+  function itemKey(item) { return `${item._entity}:${item.id}`; }
+  function updateBatch() {
+    const count = selected.size;
+    batch.hidden = count === 0;
+    empty(batch);
+    if (!count) return;
+    const selectedItems = [...selected].map((key) => itemCache.get(key)).filter(Boolean);
+    const hasCompletable = selectedItems.some((item) => item._entity === 'todo' && item.status !== 'done');
+    batch.append(
+      el('span', { class: 'task-batch-count', text: `已选 ${count} 项` }),
+      el('button', { class: 'btn btn-confirm btn-sm', text: '批量完成', disabled: !hasCompletable, title: hasCompletable ? '' : '提醒和日程不能批量完成', onclick: bulkComplete }),
+      el('button', { class: 'btn btn-danger btn-sm', text: '批量删除', onclick: bulkDelete }),
+      el('button', { class: 'btn btn-ghost btn-sm', text: '清除选择', onclick: () => { selected.clear(); updateBatch(); load(); } })
+    );
+  }
+  function selectionBox(item) {
+    const checkbox = el('input', { type: 'checkbox', class: 'task-select', checked: selected.has(itemKey(item)), 'aria-label': `选择${item.title || '安排'}` });
+    checkbox.onchange = () => { const key = itemKey(item); if (checkbox.checked) selected.add(key); else selected.delete(key); updateBatch(); };
+    return checkbox;
+  }
+  function detailPanel(parts) {
+    const panel = el('div', { class: 'task-expanded-detail', hidden: true });
+    parts.filter(Boolean).forEach((part) => panel.append(part));
+    return panel;
+  }
+
+  function rowWrap(row, panel, toggleButton, key) {
+    row.setAttribute('tabindex', '0');
+    row.setAttribute('aria-expanded', 'false');
+    const setExpanded = (isExpanded) => {
+      row.classList.toggle('is-expanded', isExpanded);
+      panel.hidden = !isExpanded;
+      row.setAttribute('aria-expanded', String(isExpanded));
+      toggleButton.textContent = isExpanded ? '⌃' : '⋯';
+      toggleButton.setAttribute('aria-label', isExpanded ? '收起详情' : '展开详情');
+      if (isExpanded) expandedRows.add(key);
+      else expandedRows.delete(key);
+    };
+    const toggle = () => setExpanded(!row.classList.contains('is-expanded'));
+    setExpanded(expandedRows.has(key));
+    row.onclick = (event) => {
+      if (event.target.closest('button, input, select, textarea, a, .task-actions')) return;
+      toggle();
+    };
+    row.onkeydown = (event) => {
+      if ((event.key === 'Enter' || event.key === ' ') && event.target === row) {
+        event.preventDefault();
+        toggle();
+      }
+    };
+    toggleButton.onclick = (event) => { event.stopPropagation(); toggle(); };
+    return el('div', { class: 'task-row-wrap' }, row, panel);
+  }
+
+  function statusClass(item) {
+    if (item.status === 'done' || item.status === 'completed') return 'done';
+    if (item.executionStatus === 'queued' || item.executionStatus === 'running') return 'running';
+    if (item.executionStatus === 'failed') return 'failed';
+    return item._entity === 'schedule' ? 'scheduled' : 'open';
+  }
 
   function buildModal(task = null, defaultDate = null) {
     editingId = task ? task.id : null;
@@ -302,7 +407,7 @@ export function mount(container, options = {}) {
   }
 
   function statusBadge(task) {
-    if (task.status === 'done') return el('span', { class: 'badge success', text: '已完成' });
+    if (task.status === 'done' || task.status === 'completed') return el('span', { class: 'badge success', text: '已完成' });
     if (task.executionStatus === 'queued' || task.executionStatus === 'running') return el('span', { class: 'badge info', text: '进行中' });
     if (task.executionStatus === 'failed') return el('span', { class: 'badge error', text: '执行失败' });
     return el('span', { class: 'badge warn', text: '待处理' });
@@ -313,7 +418,7 @@ export function mount(container, options = {}) {
     const running = task.executionStatus === 'queued' || task.executionStatus === 'running';
     if (running) {
       actions.append(el('button', { class: 'btn btn-ghost btn-sm', text: '进行中', disabled: true }));
-    } else if (task.status === 'done') {
+    } else if (task.status === 'done' || task.status === 'completed') {
       actions.append(el('button', { class: 'btn btn-ghost btn-sm', text: '↩ 重开', onclick: () => reopen(task) }));
     } else if (task.executionMode === 'dsh' && task.action) {
       actions.append(el('button', { class: 'btn btn-primary btn-sm', text: '开始 AI 处理', onclick: () => start(task) }));
@@ -322,24 +427,32 @@ export function mount(container, options = {}) {
     }
     actions.append(el('button', { class: 'btn btn-edit btn-sm', text: '编辑', onclick: () => buildModal(task) }));
     actions.append(el('button', { class: 'btn btn-danger btn-sm', text: '删除', onclick: () => remove(task) }));
-
-    return el('div', { class: 'task-card' },
-      el('div', { class: 'task-card-head' },
-        el('div', { class: 'task-title', text: task.title }),
-        statusBadge(task)
+    const toggleButton = el('button', { class: 'task-more', type: 'button', text: '⋯', 'aria-label': '展开详情' });
+    const panel = detailPanel([
+      task.detail ? el('div', { class: 'task-expanded-line', text: task.detail }) : null,
+      task.executionMode === 'dsh' ? el('div', { class: 'task-expanded-line', text: '可由 AI 处理' }) : null,
+      task.executionError ? el('div', { class: 'task-expanded-line error-text', text: task.executionError }) : null,
+      el('div', { class: 'task-expanded-actions' }, ...actions.childNodes)
+    ]);
+    const row = el('div', { class: 'task-row status-' + statusClass(task) },
+      el('div', { class: 'task-main' },
+        selectionBox(task),
+        el('span', { class: 'task-type-dot todo' }),
+        el('div', {},
+          el('div', { class: 'task-title', text: task.title })
+        )
       ),
-      task.executionMode === 'dsh' ? el('div', { class: 'meta', text: '🤖 可由 AI 处理' }) : null,
-      task.detail ? el('div', { class: 'meta', text: task.detail }) : null,
-      el('div', { class: 'meta', text: timeText(task) }),
-      task.executionError ? el('div', { class: 'meta error-text', text: task.executionError }) : null,
-      actions
+      el('div', { class: 'task-time', text: timeText(task) }),
+      el('div', { class: 'task-status' }, statusBadge(task)),
+      toggleButton
     );
+    return rowWrap(row, panel, toggleButton, itemKey(task));
   }
 
   function unifiedCard(item) {
     if (item._entity === 'todo') return card(item);
     const isReminder = item._entity === 'reminder';
-    const done = item.status === 'done';
+    const done = item.status === 'done' || item.status === 'completed';
     const time = isReminder
       ? (item.kind === 'cron' ? `下次提醒：${fmtTime(item.nextAt)}` : `提醒时间：${fmtTime(item.dueAt)}`)
       : `开始时间：${fmtTime(item.startAt)}${item.endAt ? ` · 结束时间：${fmtTime(item.endAt)}` : ''}`;
@@ -353,45 +466,146 @@ export function mount(container, options = {}) {
     if (isReminder && item.kind === 'cron') {
       actions.append(el('button', { class: 'btn btn-danger btn-sm', text: '删除', onclick: () => remove(item) }));
     }
-    return el('div', { class: 'task-card unified-item-card' },
-      el('div', { class: 'task-card-head' },
-        el('div', { class: 'task-title' },
-          el('span', { class: 'badge info unified-type-badge', text: TYPE_LABELS[isReminder ? 'reminder' : 'schedule'] }),
-          ' ', item.title
-        ),
-        el('span', { class: 'badge ' + (done ? 'success' : isReminder ? 'warn' : 'info'), text: done ? '已完成' : isReminder && item.kind === 'cron' ? '周期提醒' : '已安排' })
+    const toggleButton = el('button', { class: 'task-more', type: 'button', text: '⋯', 'aria-label': '展开详情' });
+    const panel = detailPanel([
+      item.detail ? el('div', { class: 'task-expanded-line', text: item.detail }) : null,
+      el('div', { class: 'task-expanded-line', text: isReminder ? '由系统触发，不会调用 Agent' : '仅展示在日历，不会调用 Agent' }),
+      el('div', { class: 'task-expanded-actions' }, ...actions.childNodes)
+    ]);
+    const row = el('div', { class: 'task-row status-' + statusClass(item) },
+      el('div', { class: 'task-main' },
+        selectionBox(item),
+        el('span', { class: 'task-type-dot ' + (isReminder ? 'reminder' : 'schedule') }),
+        el('div', {},
+          el('div', { class: 'task-title' },
+            el('span', { class: 'task-type-label', text: TYPE_LABELS[isReminder ? 'reminder' : 'schedule'] }),
+            item.title
+          )
+        )
       ),
-      item.detail ? el('div', { class: 'meta', text: item.detail }) : null,
-      el('div', { class: 'meta', text: time }),
-      isReminder ? el('div', { class: 'meta', text: '提醒由系统触发，不会调用 Agent。' }) : el('div', { class: 'meta', text: '日程仅展示在日历，不会调用 Agent。' }),
-      actions
+      el('div', { class: 'task-time', text: time }),
+      el('div', { class: 'task-status' }, el('span', { class: 'badge ' + (done ? 'success' : isReminder ? 'warn' : 'info'), text: done ? '已完成' : isReminder && item.kind === 'cron' ? '周期提醒' : '已安排' })),
+      toggleButton
     );
+    return rowWrap(row, panel, toggleButton, itemKey(item));
+  }
+
+  async function bulkComplete() {
+    const items = [...selected].map((key) => itemCache.get(key)).filter(Boolean);
+    const todos = items.filter((item) => item._entity === 'todo' && item.status !== 'done' && item.status !== 'completed');
+    try {
+      await Promise.all(todos.map((item) => api.tasks.complete(item.id)));
+      selected.clear();
+      window.dispatchEvent(new CustomEvent('tasks:changed'));
+      load();
+    } catch (e) {
+      alert('批量完成失败：' + e.message);
+      load();
+    }
+  }
+
+  async function bulkDelete() {
+    const items = [...selected].map((key) => itemCache.get(key)).filter(Boolean);
+    if (!items.length || !confirm(`确定删除已选的 ${items.length} 项安排？`)) return;
+    try {
+      await Promise.all(items.map((item) => item._entity === 'schedule' ? api.schedules.remove(item.id) : api.tasks.remove(item.id)));
+      selected.clear();
+      window.dispatchEvent(new CustomEvent('tasks:changed'));
+      window.dispatchEvent(new CustomEvent('calendar:changed'));
+      load();
+    } catch (e) {
+      alert('批量删除失败：' + e.message);
+      load();
+    }
   }
 
   async function load() {
+    const version = ++loadVersion;
     let tasks = [];
     let schedules = [];
     try { tasks = await api.tasks.list(); } catch {}
     try { schedules = await api.schedules.list(); } catch {}
+    if (version !== loadVersion) return;
     const items = [
       ...tasks.map((task) => ({ ...task, _entity: task.type === 'reminder' ? 'reminder' : 'todo' })),
       ...schedules.map((schedule) => ({ ...schedule, _entity: 'schedule' }))
     ];
-    items.sort((a, b) => {
+    const counts = {
+      all: items.filter((item) => item.status !== 'done' && item.status !== 'completed').length,
+      todo: items.filter((item) => item._entity === 'todo' && item.status !== 'done' && item.status !== 'completed').length,
+      reminder: items.filter((item) => item._entity === 'reminder' && item.status !== 'done' && item.status !== 'completed').length,
+      schedule: items.filter((item) => item._entity === 'schedule' && item.status !== 'done' && item.status !== 'completed').length,
+      open: items.filter((item) => item.status !== 'done' && item.status !== 'completed').length,
+      done: items.filter((item) => item.status === 'done' || item.status === 'completed').length
+    };
+    for (const [value] of filterOptions) {
+      const count = filterButtons.get(value)?.querySelector('.chip-count');
+      if (count) count.textContent = String(counts[value] || 0);
+    }
+    itemCache.clear();
+    items.forEach((item) => itemCache.set(itemKey(item), item));
+    for (const key of selected) {
+      if (!itemCache.has(key)) selected.delete(key);
+    }
+    for (const key of expandedRows) {
+      if (!itemCache.has(key)) expandedRows.delete(key);
+    }
+    const filtered = items.filter((item) => {
+      const isDone = item.status === 'done' || item.status === 'completed';
+      const matchesCategory = category === 'done'
+        ? isDone
+        : !isDone && (category === 'all' || category === item._entity || category === 'open');
+      const haystack = `${item.title || ''} ${item.detail || ''}`.toLowerCase();
+      return matchesCategory && (!query || haystack.includes(query));
+    });
+    filtered.sort((a, b) => {
+      if (TYPE_ORDER[a._entity] !== TYPE_ORDER[b._entity]) return TYPE_ORDER[a._entity] - TYPE_ORDER[b._entity];
+      if (sort === 'title') return String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN');
+      if (sort === 'time') {
+        const aTime = a.scheduledStartAt || a.startAt || a.dueAt || a.nextAt || a.createdAt || '';
+        const bTime = b.scheduledStartAt || b.startAt || b.dueAt || b.nextAt || b.createdAt || '';
+        return String(aTime).localeCompare(String(bTime));
+      }
       if (a.status !== b.status) return a.status === 'done' || a.status === 'completed' ? 1 : -1;
       return String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt));
     });
     empty(list);
-    if (!items.length) {
-      list.append(el('div', { class: 'empty', text: '还没有待办、提醒或日程' }));
+    if (!filtered.length) {
+      list.append(el('div', { class: 'empty', text: category === 'done' ? '还没有已完成的安排' : '没有待处理的安排' }));
       empty(pager);
+      updateBatch();
       return;
     }
-    const totalPages = Math.ceil(items.length / PAGE_SIZE);
+    const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
     page = Math.min(page, totalPages);
     const start = (page - 1) * PAGE_SIZE;
-    for (const item of items.slice(start, start + PAGE_SIZE)) list.append(unifiedCard(item));
-    renderPager(items.length, totalPages);
+    const pageItems = filtered.slice(start, start + PAGE_SIZE);
+    const selectAll = el('input', { type: 'checkbox', class: 'task-select', checked: pageItems.length > 0 && pageItems.every((item) => selected.has(itemKey(item))), 'aria-label': '选择当前页全部安排' });
+    selectAll.onchange = () => {
+      for (const item of pageItems) {
+        const key = itemKey(item);
+        if (selectAll.checked) selected.add(key);
+        else selected.delete(key);
+      }
+      updateBatch();
+      load();
+    };
+    list.append(el('div', { class: 'task-table-head' },
+      el('span', {}, selectAll, '事项'),
+      el('span', { text: '时间' }),
+      el('span', { text: '状态' }),
+      el('span', { text: '操作' })
+    ));
+    let group = '';
+    for (const item of pageItems) {
+      if (item._entity !== group) {
+        group = item._entity;
+        list.append(el('div', { class: 'task-group-label', text: TYPE_LABELS[group] || '安排' }));
+      }
+      list.append(unifiedCard(item));
+    }
+    renderPager(filtered.length, totalPages);
+    updateBatch();
   }
 
   function renderPager(total, totalPages) {
@@ -461,7 +675,7 @@ export function mount(container, options = {}) {
 
   return {
     show() { startPolling(); load(); },
-    hide() { stopPolling(); close(); },
+    hide() { stopPolling(); clearTimeout(searchTimer); close(); },
     openCreate(date) { buildCreateModal(date); },
     openEdit(task) { buildModal(task); }
   };

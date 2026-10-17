@@ -1,138 +1,212 @@
 import { api } from '../api.mjs';
-import { el, empty, fmtTime } from '../ui.mjs';
+import { el, empty } from '../ui.mjs';
 
-const TYPE_MAP = { todo: '📌 待办', task: '📌 待办', deadline: '📌 待办', schedule: '📅 日程', reminder: '🔔 提醒', waiting_reply: '📌 待办' };
-const STATUS_MAP = { auto_added: '✅ 已添加', pending_confirm: '🔍 待确认', confirmed: '👍 已确认', ignored: '🚫 已忽略' };
-const PAGE_SIZE = 20;
+const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_RECENT_EVENTS = 5;
 
-// 思考和行动记录：行动轨迹 + 思考日志 合并为一个时间线
-export function mount(container) {
-  empty(container);
-  container.className = 'view';
-  let filter = 'all';
-  let kw = '';
-  let page = 1;
+const INTENT_STATUS = {
+  pending_confirm: { title: '识别到待确认意图', status: '待你确认', tone: 'intent', icon: '?' },
+  confirmed: { title: '已确认安排', status: '已确认', tone: 'done', icon: '✓' },
+  ignored: { title: '已忽略意图', status: '已忽略', tone: 'muted', icon: '×' },
+  auto_added: { title: '已自动添加安排', status: '已添加', tone: 'schedule', icon: '＋' },
+  auto_created: { title: '已自动添加安排', status: '已添加', tone: 'schedule', icon: '＋' }
+};
 
-  const list = el('div');
-  const pager = el('div', { class: 'list-pager' });
-  const chips = el('div', { class: 'chips' });
-  const search = el('input', { class: 'input', placeholder: '搜索记录…' });
+function dateOf(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
-  for (const [val, label] of [['all', '全部'], ['action', '行动'], ['think', '思考']]) {
-    const chip = el('button', { class: 'chip' + (val === filter ? ' active' : ''), text: label });
-    chip.onclick = () => {
-      filter = val;
-      page = 1;
-      chips.querySelectorAll('.chip').forEach((x) => x.classList.remove('active'));
-      chip.classList.add('active');
-      load();
-    };
-    chips.append(chip);
-  }
+function pad(value) { return String(value).padStart(2, '0'); }
 
-  container.append(
-    el('div', { class: 'card' },
-      el('h2', { text: '思考和行动记录' }),
-      el('div', { class: 'desc', text: 'Agent 的思考过程与已采取的行动，按时间倒序合并展示；「行动」是需要你确认或已执行的动作，「思考」是后台观察与决策过程。' }),
-      el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;' },
-        chips,
-        el('div', { style: 'flex:1;min-width:180px;' }, search)
-      ),
-      list,
-      pager
+function activityTime(value) {
+  const date = dateOf(value);
+  if (!date) return '';
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function activityRange(start, end) {
+  const begin = dateOf(start);
+  if (!begin) return '';
+  const startText = `${begin.getMonth() + 1}月${begin.getDate()}日 ${pad(begin.getHours())}:${pad(begin.getMinutes())}`;
+  const finish = dateOf(end);
+  if (!finish) return startText;
+  const finishText = begin.toDateString() === finish.toDateString()
+    ? `${pad(finish.getHours())}:${pad(finish.getMinutes())}`
+    : `${finish.getMonth() + 1}月${finish.getDate()}日 ${pad(finish.getHours())}:${pad(finish.getMinutes())}`;
+  return `${startText} – ${finishText}`;
+}
+
+function quote(value) {
+  const text = String(value || '').trim();
+  return text ? `“${text}”` : '';
+}
+
+function eventSearchText(event) {
+  return [event.title, event.quote, event.detail, event.status].filter(Boolean).join(' ').toLowerCase();
+}
+
+function makeIntentEvent(intent) {
+  const memoryUpdate = intent.type === 'profile_update' && intent.status === 'confirmed';
+  const state = memoryUpdate
+    ? { title: '已保存到记忆', status: '已保存', tone: 'memory', icon: '◇' }
+    : (INTENT_STATUS[intent.status] || INTENT_STATUS.pending_confirm);
+  const timestamp = intent.updatedAt || intent.createdAt;
+  const detail = intent.dueText || activityRange(intent.dueAt, intent.endAt);
+  const summary = intent.summary || (intent.source && intent.source.contact) || '';
+  return {
+    id: `intent:${intent.id}`,
+    timestamp,
+    tone: state.tone,
+    icon: state.icon,
+    title: state.title,
+    quote: quote(summary),
+    detail,
+    status: state.status,
+    search: eventSearchText({ ...state, quote: summary, detail })
+  };
+}
+
+function makeTaskEvent(task) {
+  const isReminder = task.type === 'reminder';
+  const completed = task.status === 'done';
+  const notified = isReminder && task.lastNotifiedAt;
+  const timestamp = isReminder
+    ? (notified || (completed && task.lastCompletedAt) || task.createdAt || task.updatedAt)
+    : completed
+      ? (task.lastCompletedAt || task.updatedAt || task.createdAt)
+      : (task.createdAt || task.updatedAt);
+  const title = isReminder ? (notified || completed ? '发送提醒' : '已创建提醒') : completed ? '已完成待办' : '已创建待办';
+  const tone = isReminder ? 'reminder' : completed ? 'done' : 'task';
+  const status = isReminder ? (notified || completed ? '已发送' : '进行中') : completed ? '已完成' : '进行中';
+  const detail = task.dueText || activityRange(task.scheduledStartAt || task.dueAt, task.scheduledEndAt) || String(task.detail || '').trim();
+  return {
+    id: `task:${task.id}`,
+    timestamp,
+    tone,
+    icon: completed ? '✓' : isReminder ? '!' : '•',
+    title,
+    quote: quote(task.title),
+    detail,
+    status,
+    search: eventSearchText({ title, quote: task.title, detail, status })
+  };
+}
+
+function makeScheduleEvent(schedule) {
+  const completed = schedule.status === 'done' || schedule.status === 'completed';
+  const title = completed ? '已完成日程' : '已创建日程';
+  const detail = activityRange(schedule.startAt, schedule.endAt);
+  return {
+    id: `schedule:${schedule.id}`,
+    timestamp: schedule.createdAt || schedule.updatedAt || schedule.startAt,
+    tone: completed ? 'done' : 'schedule',
+    icon: completed ? '✓' : '□',
+    title,
+    quote: quote(schedule.title),
+    detail,
+    status: completed ? '已完成' : '',
+    search: eventSearchText({ title, quote: schedule.title, detail })
+  };
+}
+
+function eventDate(event) {
+  const date = dateOf(event.timestamp);
+  return date ? date.getTime() : 0;
+}
+
+function renderEvent(event) {
+  const detail = event.detail ? el('div', { class: 'activity-event-detail', text: event.detail }) : null;
+  const status = event.status ? el('div', { class: 'activity-event-status', text: event.status }) : null;
+  return el('article', { class: `activity-event activity-event-${event.tone}` },
+    el('div', { class: 'activity-event-marker', 'aria-hidden': 'true' }, el('span', { class: 'activity-event-icon', text: event.icon })),
+    el('div', { class: 'activity-event-card' },
+      el('div', { class: 'activity-event-time', text: activityTime(event.timestamp) }),
+      el('div', { class: 'activity-event-title', text: event.title }),
+      event.quote ? el('div', { class: 'activity-event-quote', text: event.quote }) : null,
+      detail,
+      status
     )
   );
+}
+
+export function mount(container) {
+  empty(container);
+  container.className = 'view activity-view';
+  let allEvents = [];
+  let showAll = false;
+  let query = '';
+
+  const list = el('div', { class: 'activity-timeline' });
+  const allList = el('div', { class: 'activity-all-list', hidden: true });
+  const subtitle = el('span', { class: 'activity-subtitle', text: '最近 7 天' });
+  const viewAll = el('button', { class: 'activity-view-all', type: 'button', text: '查看全部 →' });
+  const search = el('input', { class: 'input activity-search', placeholder: '搜索活动…', 'aria-label': '搜索活动', hidden: true });
+  const emptyRecent = el('div', { class: 'activity-empty', text: '最近 7 天暂无活动' });
+
+  viewAll.onclick = () => {
+    showAll = !showAll;
+    viewAll.textContent = showAll ? '收起全部 ↑' : '查看全部 →';
+    subtitle.textContent = showAll ? '全部活动' : '最近 7 天';
+    search.hidden = !showAll;
+    list.hidden = showAll;
+    emptyRecent.hidden = showAll;
+    allList.hidden = !showAll;
+    if (showAll) renderAll();
+    else renderRecent();
+  };
+  search.oninput = () => { query = search.value.trim().toLowerCase(); renderAll(); };
+
+  const card = el('section', { class: 'activity-card' },
+    el('div', { class: 'activity-head' },
+      el('div', { class: 'activity-heading' },
+        el('div', { class: 'activity-title-row' }, el('h2', { text: 'Agent 活动' }), subtitle),
+        el('div', { class: 'activity-description', text: '只展示 Agent 对安排、提醒和意图做出的实际处理。' })
+      ),
+      el('div', { class: 'activity-head-actions' }, search, viewAll)
+    ),
+    el('div', { class: 'activity-list-wrap' }, list, emptyRecent, allList)
+  );
+  container.append(card);
+
+  function renderRecent() {
+    empty(list);
+    const now = Date.now();
+    const recent = allEvents.filter((event) => {
+      const time = eventDate(event);
+      return time > 0 && now - time <= RECENT_WINDOW_MS && time <= now;
+    }).slice(0, MAX_RECENT_EVENTS);
+    emptyRecent.hidden = recent.length > 0 || showAll;
+    if (!recent.length) return;
+    list.append(...recent.map(renderEvent));
+  }
+
+  function renderAll() {
+    empty(allList);
+    const shown = allEvents.filter((event) => !query || event.search.includes(query));
+    if (!shown.length) {
+      allList.append(el('div', { class: 'activity-empty', text: query ? '没有匹配的活动' : '暂无活动' }));
+      return;
+    }
+    allList.append(...shown.map(renderEvent));
+  }
 
   async function load() {
     let intents = [];
-    let logs = [];
-    let agentTasks = [];
+    let tasks = [];
+    let schedules = [];
     try { intents = await api.intents.list(); } catch {}
-    try { logs = await api.logs.list(500); } catch {}
-    try { agentTasks = await api.agent.list(200); } catch {}
-
-    const entries = [];
-    for (const it of intents) {
-      entries.push({ kind: 'action', sub: 'intent', ts: it.createdAt || it.updatedAt || '', it });
-    }
-    for (const l of logs) {
-      const isAction = l.source === 'remind' || l.source === 'relation' || (l.source === 'weixin' && /推送/.test(l.message || ''));
-      entries.push({ kind: isAction ? 'action' : 'think', sub: l.source, ts: l.ts, level: l.level, label: l.message || '' });
-    }
-    for (const task of agentTasks) {
-      entries.push({
-        kind: 'action',
-        sub: 'DSH',
-        ts: task.finishedAt || task.startedAt || task.createdAt,
-        level: task.status === 'failed' ? 'error' : 'info',
-        label: `直接执行：${task.task || ''} · ${agentStatus(task.status)}`
-      });
-    }
-    entries.sort((a, b) => (String(b.ts) < String(a.ts) ? -1 : String(b.ts) > String(a.ts) ? 1 : 0));
-
-    const kwl = kw.toLowerCase();
-    const shown = entries.filter((e) => {
-      if (filter !== 'all' && e.kind !== filter) return false;
-      if (!kwl) return true;
-      const text = e.it
-        ? (e.it.summary + ' ' + ((e.it.source && e.it.source.contact) || ''))
-        : (e.label || '');
-      return text.toLowerCase().includes(kwl);
-    });
-
-    empty(list);
-    if (!shown.length) {
-      list.append(el('div', { class: 'empty', text: '暂无记录' }));
-      empty(pager);
-      return;
-    }
-    const totalPages = Math.ceil(shown.length / PAGE_SIZE);
-    page = Math.min(page, totalPages);
-    const start = (page - 1) * PAGE_SIZE;
-    for (const e of shown.slice(start, start + PAGE_SIZE)) {
-      if (e.kind === 'action' && e.it) {
-        const it = e.it;
-        const conf = Math.round((it.confidence || 0) * 100);
-        list.append(
-          el('div', { class: 'item-card' },
-            el('div', {},
-              el('span', { class: 'badge info', text: TYPE_MAP[it.type] || it.type }),
-              ' ' + it.summary,
-              el('span', { class: 'muted', text: '（' + (STATUS_MAP[it.status] || it.status) + ' · ' + conf + '%）' })
-            ),
-            el('div', { class: 'meta', text: '行动 · 来自 ' + ((it.source && it.source.contact) || '未知') + ' · ' + fmtTime(e.ts) })
-          )
-        );
-      } else {
-        list.append(
-          el('div', { class: 'item-card' },
-            el('div', {},
-              el('span', { class: 'badge ' + (e.level === 'error' ? 'error' : 'warn'), text: e.sub }),
-              ' ' + (e.label || '')
-            ),
-            el('div', { class: 'meta', text: (e.kind === 'think' ? '思考 · ' : '行动 · ') + fmtTime(e.ts) })
-          )
-        );
-      }
-    }
-    renderPager(totalPages, shown.length);
+    try { tasks = await api.tasks.list(); } catch {}
+    try { schedules = await api.schedules.list(); } catch {}
+    allEvents = [
+      ...intents.filter((item) => item && item.id).map(makeIntentEvent),
+      ...tasks.filter((item) => item && item.id).map(makeTaskEvent),
+      ...schedules.filter((item) => item && item.id).map(makeScheduleEvent)
+    ].filter((event) => eventDate(event) > 0).sort((a, b) => eventDate(b) - eventDate(a));
+    renderRecent();
+    if (showAll) renderAll();
   }
-
-  function renderPager(totalPages, total) {
-    empty(pager);
-    if (total <= PAGE_SIZE) return;
-    const prev = el('button', { class: 'btn btn-ghost btn-sm', text: '‹', disabled: page === 1 });
-    const next = el('button', { class: 'btn btn-ghost btn-sm', text: '›', disabled: page === totalPages });
-    prev.onclick = () => { page--; load(); };
-    next.onclick = () => { page++; load(); };
-    pager.append(prev, el('span', { class: 'list-pager-label', text: `${page} / ${totalPages} · 共 ${total} 条` }), next);
-  }
-
-  function agentStatus(status) {
-    return { queued: '排队中', running: '进行中', completed: '已完成', failed: '失败' }[status] || status || '未知';
-  }
-
-  search.addEventListener('input', () => { kw = search.value.trim(); page = 1; load(); });
 
   return { show: load, hide() {} };
 }

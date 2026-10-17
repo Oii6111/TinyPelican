@@ -13,6 +13,16 @@
     "searxng": { "baseUrl": "" },
     "moonshot": { "baseUrl": "https://api.moonshot.cn/v1", "apiKey": "", "model": "kimi-k2.6" }
   },
+  "email": {
+    "enabled": false,
+    "accountId": "default",
+    "address": "",
+    "initialDays": 30,
+    "importantPush": false,
+    "folder": "INBOX",
+    "imap": { "host": "", "port": 993, "secure": true, "rejectUnauthorized": true, "username": "", "password": "" },
+    "smtp": { "host": "", "port": 465, "secure": true, "rejectUnauthorized": true, "username": "", "password": "" }
+  },
   "pollMs": 700,
   "debounceMs": 5000,
   "minMatchLines": 2,
@@ -112,7 +122,8 @@
       "captureComplete": false,
       "intent": true,
       "reminder": true,
-      "relation": true
+      "relation": true,
+      "emailImportant": false
     },
     "bark": {
       "server": "https://api.day.app",

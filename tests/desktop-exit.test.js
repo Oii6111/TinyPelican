@@ -33,7 +33,7 @@ test('关闭主窗口进入托盘，恢复窗口后通过托盘停止核心且�
     }
   });
   class Window extends EventEmitter {
-    constructor() { super(); this.destroyed = false; this.webContents = { setWindowOpenHandler() {} }; windows.push(this); }
+    constructor(options) { super(); this.options = options; this.destroyed = false; this.webContents = { setWindowOpenHandler() {} }; windows.push(this); }
     loadURL() {}
     setBackgroundColor() {}
     setAlwaysOnTop() {}
@@ -67,7 +67,7 @@ test('关闭主窗口进入托盘，恢复窗口后通过托盘停止核心且�
       return require(name);
     },
     __dirname: path.resolve(__dirname, '../app'),
-    process: { execPath: 'electron', env: {} },
+    process: { execPath: 'electron', platform: 'win32', env: {} },
     setTimeout: (callback, delay) => delay === 3000 ? setImmediate(callback) : setTimeout(callback, delay),
     clearTimeout,
     setInterval: () => 1,
@@ -77,6 +77,11 @@ test('关闭主窗口进入托盘，恢复窗口后通过托盘停止核心且�
   vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, '../app/main.js'), 'utf8'), sandbox);
   await ready();
   assert.equal(windows.length, 2);
+  assert.equal(windows[0].options.titleBarStyle, 'hidden');
+  assert.equal(windows[0].options.titleBarOverlay.color, '#ffffff');
+  assert.equal(windows[0].options.titleBarOverlay.height, 32);
+  assert.equal(windows[0].options.webPreferences.contextIsolation, true);
+  assert.equal(windows[0].options.webPreferences.nodeIntegration, false);
   windows[0].close();
   assert.equal(windows[0].destroyed, false);
   assert.equal(windows[0].visible, false);

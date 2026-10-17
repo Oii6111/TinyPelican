@@ -10,10 +10,11 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { findDshBin, buildDshEnv, writeGeneratedDshSettings } = require('./dsh-client');
+const { findDshBin, buildDshEnv, writeGeneratedDshSettings, DEFAULT_DSH_HOME } = require('./dsh-client');
 const webAuth = require('./dsh-web-auth');
 const { log } = require('../lib/log');
 const { loadConfig } = require('../lib/config');
+const { ensureSystemPromptPatch, ensureAgentPreset, systemPromptEnv } = require('./system-prompt');
 
 const DEFAULT_BASE = process.env.DSH_WEB_URL || 'http://127.0.0.1:3080';
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -119,10 +120,53 @@ async function rpcV2(namespace, method, request = {}, base = DEFAULT_BASE) {
   return result;
 }
 
+async function stageFileForSession(sessionId, attachment, base) {
+  const stat = await fs.promises.stat(attachment.path);
+  if (!stat.isFile() || stat.size > 100 * 1024 * 1024) throw new Error('DSH 附件必须是 100 MB 以内的普通文件');
+  const url = new URL(`${normalizeBase(base)}/api/session/uploadFileBinary`);
+  url.searchParams.set('sessionId', sessionId);
+  url.searchParams.set('name', attachment.name || path.basename(attachment.path));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+  const send = () => {
+    const headers = { 'Content-Type': 'application/octet-stream' };
+    const cookie = webAuth.cookieFor(base);
+    if (cookie) headers.Cookie = cookie;
+    return fetch(url, {
+      method: 'POST', headers,
+      body: fs.createReadStream(attachment.path),
+      duplex: 'half', signal: controller.signal
+    });
+  };
+  try {
+    let response = await send();
+    if (response.status === 401) {
+      await response.body?.cancel();
+      const cookie = await webAuth.ensureCookie({ base, force: true });
+      if (cookie) response = await send();
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`DSH 附件上传失败（HTTP ${response.status}）`);
+    }
+    const result = await response.json();
+    if (!result || !result.ok) throw new Error(result?.error?.message || 'DSH 附件上传失败');
+    const staged = result.value;
+    if (!staged || typeof staged.receiptId !== 'string' || !staged.receiptId
+        || typeof staged.file?.attachmentId !== 'string' || typeof staged.file?.name !== 'string'
+        || staged.file.bytes !== stat.size) throw new Error('DSH 附件上传返回了无效凭证');
+    return { type: 'file', receiptId: staged.receiptId };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // 会话 id 代次：同一条会话 key 永远映射同一个 id（会话历史靠它续上）。
 // v2 那批会话的文件被从 DSH 外部清掉过，DSH 里仍记着这些 id 但落盘会 ENOENT，
 // 所以整体换到 v3；以后再遇到「会话文件被绕过 DSH 删除」，把这一个常量 +1 即可。
-const SESSION_GENERATION = 'v3';
+// v5：人设改成由 agent preset 提供。preset 是**会话创建时**读的，已存在的会话
+// 仍停在它当初据以组装的 standard preset 上，所以必须换代次才能让新会话用上。
+const SESSION_GENERATION = 'v5-agent-preset';
 
 function sessionIdForUser(userId, prefix = `tinypelican-wechat-${SESSION_GENERATION}`, salt = '') {
   const material = `${salt || ''}\n${String(userId || 'default')}`;
@@ -206,8 +250,45 @@ async function sessionCursor({ sessionId, base = DEFAULT_BASE } = {}) {
 // 发消息：新版必须带 requestId。
 // 会话在 DSH 侧被清掉/删除时（比如用户手动清了对话），这里自动重建一次再重试，
 // 否则那条消息会直接失败、而且要等核心重启才能恢复。
-async function sessionPrompt({ sessionId, text, mode = 'queue', base = DEFAULT_BASE, cwd = '' } = {}) {
+async function promptContent(text, attachments = [], sessionId = '', base = DEFAULT_BASE) {
   const content = [{ type: 'text', text }];
+  let imageBytes = 0;
+  let imageCount = 0;
+  for (const attachment of Array.isArray(attachments) ? attachments : []) {
+    if (!attachment || attachment.status === 'failed' || !attachment.path) continue;
+    if (attachment.kind !== 'image') {
+      content.push(await stageFileForSession(sessionId, attachment, base));
+      continue;
+    }
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.mimeType)) continue;
+    if (imageCount >= 4) continue;
+    try {
+      const stat = await fs.promises.stat(attachment.path);
+      if (!stat.isFile() || stat.size > 10 * 1024 * 1024 || imageBytes + stat.size > 20 * 1024 * 1024) continue;
+      const data = await fs.promises.readFile(attachment.path);
+      if (data.length > 10 * 1024 * 1024 || imageBytes + data.length > 20 * 1024 * 1024) continue;
+      content.push({ type: 'image', mediaType: attachment.mimeType, data: data.toString('base64'), name: attachment.name || path.basename(attachment.path) });
+      imageCount += 1;
+      imageBytes += data.length;
+    } catch {
+      continue;
+    }
+  }
+  return content;
+}
+
+async function sessionPrompt({ sessionId, text, attachments = [], mode = 'queue', base = DEFAULT_BASE, cwd = '' } = {}) {
+  attachments = Array.isArray(attachments) ? attachments : [];
+  if (attachments.some(attachment => attachment && attachment.kind !== 'image' && attachment.status !== 'failed' && attachment.path)) {
+    const ensured = await ensureSession({ sessionId, cwd: cwd || PROJECT_ROOT, base });
+    if (!ensured.ok) return ensured;
+  }
+  let content;
+  try {
+    content = await promptContent(text, attachments, sessionId, base);
+  } catch (error) {
+    return { ok: false, error: 'DSH 附件接收失败：' + (error.message || error) };
+  }
   const request = {
     requestId: nextRpcId(),
     sessionId,
@@ -220,7 +301,14 @@ async function sessionPrompt({ sessionId, text, mode = 'queue', base = DEFAULT_B
   const recreated = await rpcV2('session', 'create', cwd ? { sessionId, cwd } : { sessionId }, base);
   if (!recreated.ok) return first;
   log('info', 'agent', `DSH 会话 ${sessionId} 不存在，已重建后重发消息`);
-  return rpcV2('session', 'prompt', { ...request, requestId: nextRpcId() }, base);
+  if (content.some(part => part.type === 'file')) {
+    try {
+      content = await promptContent(text, attachments, sessionId, base);
+    } catch (error) {
+      return { ok: false, error: 'DSH 附件接收失败：' + (error.message || error) };
+    }
+  }
+  return rpcV2('session', 'prompt', { ...request, content, requestId: nextRpcId() }, base);
 }
 
 function assistantText(entry) {
@@ -277,11 +365,15 @@ function failureFromEvent(ev) {
 async function promptAndWait({
   sessionId,
   text,
+  attachments = [],
   cwd = PROJECT_ROOT,
   timeoutMs = 180000,
   pollMs = 600,
   base = DEFAULT_BASE,
-  initialPrompt = ''
+  initialPrompt = '',
+  onEvent = () => {},
+  waitForTurnEnd = false,
+  onPromptAccepted = () => {}
 } = {}) {
   const ensured = await ensureSession({ sessionId, cwd, base });
   if (!ensured.ok) return { ok: false, error: `DSH Web 会话不可用：${ensured.error || ''}` };
@@ -302,10 +394,11 @@ async function promptAndWait({
   const promptText = String((initialPrompt && !hasUser ? initialPrompt : text) || '').trim();
   if (!promptText) return { ok: false, error: 'DSH Web 空消息' };
 
-  const sent = await sessionPrompt({ sessionId, text: promptText, base, cwd });
+  const sent = await sessionPrompt({ sessionId, text: promptText, attachments, base, cwd });
   if (!sent.ok) {
     return { ok: false, error: sent.error || 'DSH Web prompt 发送失败' };
   }
+  try { onPromptAccepted(sent); } catch {}
 
   const startedAt = Date.now();
   const eventMap = new Map(); // seq -> raw event object
@@ -327,6 +420,7 @@ async function promptAndWait({
         if (ev.type === 'turn/end' || ev.type === 'session/error') turnEnded = true;
         const why = failureFromEvent(ev);
         if (why) failure = why;
+        try { onEvent(ev); } catch {}
         if (ev.type === 'assistant/chunk') {
           const piece = assistantText(entry);
           if (piece) { chunkText += piece; candidateText = chunkText; candidateAt = Date.now(); }
@@ -339,7 +433,7 @@ async function promptAndWait({
           }
         }
       }
-      if (candidateText && Date.now() - Math.max(candidateAt, lastEventAt) >= 2500) {
+      if (candidateText && (turnEnded || (!waitForTurnEnd && Date.now() - Math.max(candidateAt, lastEventAt) >= 2500))) {
         const events = [...eventMap.values()].sort((a, b) => a.seq - b.seq);
         return { ok: true, text: candidateText, sessionId, mode: 'dsh-web', events };
       }
@@ -358,6 +452,7 @@ async function promptAndWait({
 async function promptStreaming({
   sessionId,
   text,
+  attachments = [],
   cwd = PROJECT_ROOT,
   timeoutMs = 180000,
   pollMs = 400,
@@ -381,7 +476,7 @@ async function promptStreaming({
   const promptText = String((initialPrompt && !hasUser ? initialPrompt : text) || '').trim();
   if (!promptText) return { ok: false, error: 'DSH Web 空消息' };
 
-  const sent = await sessionPrompt({ sessionId, text: promptText, base, cwd });
+  const sent = await sessionPrompt({ sessionId, text: promptText, attachments, base, cwd });
   if (!sent.ok) return { ok: false, error: sent.error || 'DSH Web prompt 发送失败' };
 
   const startedAt = Date.now();
@@ -483,19 +578,33 @@ function spawnDshWeb(base, port) {
   // 打包分发时 Electron 壳会把 DSH_HOME 指到用户数据目录（首次运行由 DSH 自己生成 profile）。
   // 这时把「设置里的模型」写进该 home，并把 API Key 通过环境变量传给 DSH，
   // 用户装完就能直接用，不必再去 DSH 界面里配一遍。
-  let env = process.env;
-  const dshHome = String(process.env.DSH_HOME || '').trim();
-  if (dshHome) {
-    try {
-      env = buildDshEnv(dshHome, loadConfig());
-    } catch {}
-  }
-  rememberWebState({ ok: null, bin, home: dshHome, exitCode: null, error: '', output: '' });
+  const dshHome = String(process.env.DSH_HOME || DEFAULT_DSH_HOME).trim();
+  // Web 会话的人设来自它的 agent preset（standard 里的 persona 行会遮蔽部署层
+  // system-prompt 的 personaPrefix），所以先把「小鹈鹕 preset」写进 $DSH_HOME，
+  // 再把默认 preset 指到它。生成失败就退回只打部署层——会话照常能跑，只是人设还是 DSH 自带的。
+  // surface: 'web' 一并带上白标行（关掉 harness:source / app:web-surface 两段提示词）。
+  const preset = ensureAgentPreset({ dshHome, dshBin: bin });
+  const patch = ensureSystemPromptPatch({ dshHome, surface: 'web', defaultPreset: preset.ok ? preset.id : '' });
+  const patchArgs = patch ? ['--patch', patch] : [];
+  let env = { ...process.env, DSH_HOME: dshHome, ...systemPromptEnv() };
+  try {
+    env = { ...buildDshEnv(dshHome, loadConfig()), ...systemPromptEnv(), DSH_HOME: dshHome };
+  } catch {}
+  rememberWebState({
+    ok: null, bin, home: dshHome, exitCode: null, error: '', output: '',
+    preset: preset.ok ? preset.id : '', presetError: preset.ok ? '' : preset.reason
+  });
   log('info', 'agent', `启动 DSH：bin=${bin} DSH_HOME=${dshHome || '(默认 ~/.dsh)'} runner=${process.execPath}`);
+  log(preset.ok ? 'info' : 'warn', 'agent', preset.ok
+    ? `小鹈鹕 agent preset：${path.join(dshHome, '.agent-presets', preset.id)}`
+    : `agent preset 生成失败，Web 会话将退回 DSH 自带人设：${preset.reason}`);
+  if (!patch) {
+    log('warn', 'agent', '系统提示 overlay 写不进去（数据目录不可写？），本次不带 --patch 启动：DSH 会用自带人设，产品照常可用');
+  }
   // --expose-internals：DSH 的 web profile 默认 patchReload: live，它的 HMR 插件要求这个 flag，
   //   否则 DSH 会在启动阶段直接崩（--expose-internals is required for HMR service）：全新机器上就是这样。
   // --no-open：不自动弹浏览器；stdout/stderr 保留下来，用于抓取带鉴权令牌的地址
-  webChild = spawn(process.execPath, ['--expose-internals', bin, 'web', '--port', String(port), '--no-open'], {
+    webChild = spawn(process.execPath, ['--expose-internals', bin, 'web', ...patchArgs, '--port', String(port), '--no-open'], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     env

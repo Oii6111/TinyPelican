@@ -6,29 +6,23 @@
   <title>小鹈鹕</title>
   <link rel="icon" href="/favicon.ico" />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/src/contact-workspace.css" />
 </head>
 <body>
   <div id="app">
-    <header class="topbar">
-      <div class="topbar-left">
-        <span class="hb"><span class="hb-dot" id="hb-dot"></span><span id="hb-text">Agent 离线</span></span>
-        <span class="topbar-sep"></span>
-        <span class="muted">最后心跳 <span id="hb-last">--</span></span>
-      </div>
-      <div class="topbar-right">
-        <span class="pill" id="push-status" title="微信推送状态">微信推送 --</span>
-        <button class="pill unread" id="unread-btn" title="查看对话">未读 <b id="unread-count">0</b></button>
-      </div>
-    </header>
+    <div class="window-titlebar" aria-hidden="true"></div>
     <div class="main">
       <aside class="sidebar">
         <div class="brand">
-          <img src="/logo.png" alt="" />
-          <span>小鹈鹕</span>
+          <div class="brand-mark"><img src="/logo.png" alt="" /></div>
+          <div class="brand-copy"><strong>小鹈鹕</strong><span>你的个人 Agent</span></div>
         </div>
-        <nav id="nav" class="nav"></nav>
+        <nav id="nav" class="nav" aria-label="主导航"></nav>
         <div class="sidebar-bottom" id="sidebar-bottom">
-          <button class="nav-item nav-standalone" id="nav-settings">⚙️ 设置</button>
+          <button class="nav-item nav-standalone settings-nav" id="nav-settings" data-view="settings">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9.5 3-.6 2.1-1.6.9-2.1-.5-2.5 4.3 1.5 1.6v1.9L2.7 15l2.5 4.3 2.1-.5 1.6.9.6 2.1h5l.6-2.1 1.6-.9 2.1.5 2.5-4.3-1.5-1.6v-1.9l1.5-1.6-2.5-4.3-2.1.5-1.6-.9L14.5 3Z"/><circle cx="12" cy="12.4" r="3.3"/></svg></span>
+            <span>设置</span>
+          </button>
           <div class="sidebar-foot" id="sidebar-foot"></div>
         </div>
       </aside>

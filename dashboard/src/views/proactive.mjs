@@ -6,9 +6,9 @@ import { mount as pendingMount } from './pending.mjs';
 import { mount as recordsMount } from './records.mjs';
 
 const TABS = [
-  { id: 'tasks', label: '📌 待办' },
-  { id: 'pending', label: '🔍 待确认意图' },
-  { id: 'records', label: '🧾 思考与行动记录' }
+  { id: 'tasks', label: '全部安排' },
+  { id: 'pending', label: '待确认意图' },
+  { id: 'records', label: 'Agent 活动' }
 ];
 
 export function mount(container, ctx) {
@@ -47,7 +47,7 @@ export function mount(container, ctx) {
     el('div', { class: 'proactive-hero' },
       el('div', {},
         el('h2', { text: '日历与日程' }),
-        el('div', { class: 'desc', text: '先在日历查看安排，再在下方统一处理待办、待确认意图和思考/行动记录。' })
+        el('div', { class: 'desc', text: '先在日历查看安排，再在下方统一处理待办、待确认意图和 Agent 活动。' })
       )
     ),
     el('div', { class: 'proactive-stats' }, statGrid),

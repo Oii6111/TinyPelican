@@ -31,6 +31,16 @@ module.exports = (router, ctx) => {
         if (search[service]?.baseUrl && !require('../../channels/web-search').validUrl(search[service].baseUrl)) return ctx.json(res, 400, { error: '搜索地址必须是有效的 HTTP(S) 地址' });
       }
     }
+    if (patch.email) {
+      const email = patch.email;
+      for (const key of ['enabled', 'importantPush']) if (email[key] !== undefined && typeof email[key] !== 'boolean') return ctx.json(res, 400, { error: '邮件开关必须是布尔值' });
+      if (email.initialDays !== undefined && (!Number.isInteger(email.initialDays) || email.initialDays < 1 || email.initialDays > 3650)) return ctx.json(res, 400, { error: '邮件初次同步天数无效' });
+      for (const protocol of ['imap', 'smtp']) {
+        const value = email[protocol]; if (!value) continue;
+        if (value.port !== undefined && (!Number.isInteger(value.port) || value.port < 1 || value.port > 65535)) return ctx.json(res, 400, { error: '邮件端口无效' });
+        for (const key of ['secure', 'rejectUnauthorized']) if (value[key] !== undefined && typeof value[key] !== 'boolean') return ctx.json(res, 400, { error: '邮件 TLS 配置无效' });
+      }
+    }
     for (const settings of [patch.webSearch, patch.profileAutoUpdate]) {
       if (settings?.enabled !== undefined && typeof settings.enabled !== 'boolean') return ctx.json(res, 400, { error: '启用状态必须为布尔值' });
     }
@@ -66,6 +76,9 @@ module.exports = (router, ctx) => {
     if (ctx && typeof ctx.onRestart === 'function') {
       restarting = true;
       setTimeout(() => ctx.onRestart(), 800);
+    }
+    if (ctx?.emailService && typeof ctx.emailService.reconfigure === 'function') {
+      ctx.emailService.reconfigure(ctx.config).catch(() => {});
     }
     const masked = maskConfig(next);
     masked.restarting = restarting;
