@@ -23,6 +23,9 @@
 | `engine.provider` | `deepseek` | 设置 → 模型服务 | ✅ |
 | `engine.providers.<名>.baseUrl / apiKey / model` | 见 DEFAULTS | 设置 → 模型服务 | ✅ |
 | `engine.providers.<名>.thinkingBody / noThinkingBody` | 无 | 设置 → 模型服务 → 高级折叠 | ✅ |
+| `engine.providers.<名>.supportsVision` | 无（按模型名推断） | 配置文件 | ⚠ |
+| `engine.vision.provider / model` | 空（跟随当前模型） | 设置 → 模型服务 → 图片描述用的视觉模型 | ✅ |
+| `engine.visionTimeoutMs` | 30000 | 配置文件 | ⚠ |
 | `engine.timeoutMs` | 120000 | — | ⚠ |
 | `engine.retries` | 2 | — | ⚠ |
 | `engine.smallModel` | `''` | — | ⚠ |
@@ -46,7 +49,7 @@
 | `capture.replySuggestions.timeoutMs` | 30000 | — | ⚠ |
 | `selfNicknames` | `[]` | 设置 → 记忆输入 → 微信聊天记录（子页面） | ✅ |
 | `pollMs`（剪贴板轮询） | 400（实际 700） | — | ⚠ |
-| `minMatchLines` | 2 | — | ⚠ |
+| `minMatchLines` | 2（按匹配行数算：一条块格式消息≈3 行，单行格式≈1 行） | 设置 → 高级与排障 → 剪贴板与调度 | ✅ |
 
 ### C. 画像与总结（`profileAutoUpdate`）
 
@@ -204,7 +207,7 @@
 
 - `reply-suggestions`（回复建议）：启用开关 + 方案组数、每组条数、每条字数、每组字数、浮窗有效期、参考聊天条数、快速/思考模式生成超时（原 `capture.replySuggestions.*`，此前只有 `enabled` 有 UI）。
 - `proactive`（提醒与主动）：主动级别 L0–L4、心跳间隔、DDL 提前天/小时、日程提前分钟、免打扰开关与时段、关系维护开关与冷落天数。
-- `advanced`（高级与排障）：意图识别高/中置信度阈值、每批消息上限、定时扫描间隔；剪贴板轮询间隔、最少匹配行数；回复等待超时、队列间隔/并发/任务超时；DSH Web 登录令牌。
+- `advanced`（高级与排障）：意图识别高/中置信度阈值、每批消息上限、定时扫描间隔、触发冷却；剪贴板轮询间隔、最少匹配行数；回复等待超时、队列间隔/并发/任务超时；DSH Web 登录令牌。
 
 **其他**
 

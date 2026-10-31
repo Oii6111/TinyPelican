@@ -3,9 +3,30 @@
 const { loadConfig, deepMerge } = require('../../lib/config');
 const { chatCompletion } = require('../../engine/client');
 const { resolveProvider } = require('../../engine/providers');
+const { visionTarget } = require('../../memory/attachment-describe');
 const { restoreMaskedKeys } = require('../models');
 
 module.exports = (router, ctx) => {
+  // 「图片描述实际会用哪个模型」：设置页直接展示这套判定结果，
+  // 前端不需要再复制一份模型能力规则
+  router.get('/api/engine/vision', (req, res) => {
+    const cfg = ctx.config || loadConfig();
+    const engine = cfg.engine || {};
+    const name = engine.provider || 'siliconflow';
+    const current = (engine.providers || {})[name] || {};
+    const configured = engine.vision || {};
+    const target = visionTarget(cfg);
+    return ctx.json(res, 200, {
+      provider: name,
+      model: String(current.model || ''),
+      configured: { provider: String(configured.provider || ''), model: String(configured.model || '') },
+      ok: !!target.ok,
+      vision: target.ok ? { provider: target.provider, model: target.model, explicit: !!target.explicit } : null,
+      reason: target.ok ? '' : String(target.reason || ''),
+      error: target.ok ? '' : String(target.error || '')
+    });
+  });
+
   router.post('/api/engine/test', async (req, res) => {
     let cfg = ctx.config || loadConfig();
     const body = JSON.parse((await ctx.readBody(req)) || '{}');

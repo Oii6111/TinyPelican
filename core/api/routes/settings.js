@@ -50,6 +50,21 @@ module.exports = (router, ctx) => {
         if (value != null && (typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((name) => ['model', 'messages', 'stream', '__proto__', 'constructor', 'prototype'].includes(name)))) return ctx.json(res, 400, { error: '思考参数必须是 JSON 对象，不能覆盖模型、消息或流式输出设置' });
       }
     }
+    // 图片描述用的视觉模型：可以单独指定服务商 + 模型，留空表示跟随当前模型
+    if (patch.engine && patch.engine.vision !== undefined) {
+      const vision = patch.engine.vision;
+      if (!vision || typeof vision !== 'object' || Array.isArray(vision)) return ctx.json(res, 400, { error: '视觉模型配置无效' });
+      const provider = String(vision.provider || '').trim();
+      const model = String(vision.model || '').trim();
+      if (provider && !['siliconflow', 'openai', 'deepseek', 'ollama', 'custom'].includes(provider)) return ctx.json(res, 400, { error: '视觉模型服务商无效' });
+      if (model.length > 120) return ctx.json(res, 400, { error: '视觉模型名过长' });
+      patch.engine.vision = { provider, model };
+    }
+    if (patch.engine && patch.engine.visionTimeoutMs !== undefined) {
+      const timeout = Number(patch.engine.visionTimeoutMs);
+      if (!Number.isInteger(timeout) || timeout < 5000 || timeout > 120000) return ctx.json(res, 400, { error: '视觉描述超时需为 5 至 120 秒' });
+      patch.engine.visionTimeoutMs = timeout;
+    }
     restoreMaskedKeys(cur, patch);
     if (patch.weixinPush && typeof patch.weixinPush.enabled === 'boolean') {
       const notifyPatch = patch.notify && typeof patch.notify === 'object' ? patch.notify : {};

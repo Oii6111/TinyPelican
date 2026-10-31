@@ -4,7 +4,7 @@
 
 const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
-const { resolveProvider, normalizeChatUrl } = require('./providers');
+const { resolveProvider, resolveProviderFor, normalizeChatUrl } = require('./providers');
 
 // 关闭「思考过程」的请求体：不同服务商参数名不同。
 // 思考型模型（DeepSeek 混合模型等）在「直接产出 JSON」的任务上会先吐几百上千 token 的思考，
@@ -33,7 +33,8 @@ async function chatCompletion(messages, opts = {}) {
   const engine = (cfg && cfg.engine) || {};
   let provider;
   try {
-    provider = resolveProvider(cfg);
+    // opts.providerName 用于把个别任务（如图片描述）送到另一个服务商
+    provider = opts.providerName ? resolveProviderFor(cfg, opts.providerName) : resolveProvider(cfg);
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }

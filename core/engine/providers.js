@@ -8,7 +8,7 @@ const path = require('path');
 const PRESETS = {
   siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3.5-9B' },
   openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
   ollama: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:8b' },
   custom: { baseUrl: '', model: '' }
 };
@@ -36,6 +36,26 @@ function legacyApi(cfg) {
     }
   } catch {}
   return null;
+}
+
+// 指定服务商解析（视觉描述这类任务可能要跑在「另一个」服务商上）。
+// 与 resolveProvider 的差别：不回退旧版 intent.api / OpenClaw 配置，
+// 避免把主对话的密钥悄悄用到别的服务商上。
+function resolveProviderFor(cfg, name) {
+  const engine = (cfg && cfg.engine) || {};
+  const target = String(name || engine.provider || 'siliconflow');
+  const user = (engine.providers && engine.providers[target]) || {};
+  const preset = PRESETS[target] || {};
+  const provider = {
+    name: target,
+    baseUrl: String(user.baseUrl || preset.baseUrl || ''),
+    apiKey: String(user.apiKey || ''),
+    model: String(user.model || preset.model || '')
+  };
+  if (!provider.baseUrl) throw new Error(`模型服务「${target}」未配置 API 地址，请在设置页配置`);
+  if (!provider.apiKey && target !== 'ollama') throw new Error(`模型服务「${target}」未配置 API Key，请在设置页配置`);
+  if (!provider.model) throw new Error(`模型服务「${target}」未配置模型名，请在设置页配置`);
+  return provider;
 }
 
 function resolveProvider(cfg) {
@@ -72,4 +92,4 @@ function normalizeChatUrl(baseUrl) {
   return u;
 }
 
-module.exports = { PRESETS, resolveProvider, normalizeChatUrl, legacyApi };
+module.exports = { PRESETS, resolveProvider, resolveProviderFor, normalizeChatUrl, legacyApi };

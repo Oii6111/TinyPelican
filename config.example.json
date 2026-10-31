@@ -67,9 +67,9 @@
         "model": "gpt-4o-mini"
       },
       "deepseek": {
-        "baseUrl": "https://api.deepseek.com/v1",
+        "baseUrl": "https://api.deepseek.com",
         "apiKey": "",
-        "model": "deepseek-chat"
+        "model": "deepseek-flash"
       },
       "ollama": {
         "baseUrl": "http://127.0.0.1:11434/v1",
@@ -83,7 +83,12 @@
       }
     },
     "timeoutMs": 120000,
-    "retries": 2
+    "retries": 2,
+    "vision": {
+      "provider": "",
+      "model": ""
+    },
+    "visionTimeoutMs": 30000
   },
   "proactivity": {
     "level": "L2"

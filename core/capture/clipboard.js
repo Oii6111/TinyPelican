@@ -4,7 +4,7 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
-const { parseChatText, getBatchContact } = require('../lib/chat-parser');
+const { parseChatDetail, getBatchContact, looksLikeChatText } = require('../lib/chat-parser');
 const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
 const { applyVoiceFill } = require('../ingest/pipeline');
@@ -13,6 +13,30 @@ const internalClipboard = require('./internal-clipboard');
 
 function msgKey(m) {
   return `${m.name}|${m.ts}|${m.type}|${m.content}`;
+}
+
+// 微信主窗口、独立聊天窗口（4.x 用 WeChatAppEx 承载）都要认成微信，
+// 否则拿不到窗口矩形，建议卡片只能退到屏幕角落。
+const WEIXIN_PROCESS_RE = /^(?:wechat|weixin)(?:appex|app)?(?:\.exe)?$/i;
+
+function isWeixinProcess(name) {
+  const value = String(name || '').trim();
+  return !!value && WEIXIN_PROCESS_RE.test(value);
+}
+
+// 窗口矩形是否可用于定位：最小化的窗口会被 Windows 停在 -32000 附近，
+// 这种坐标算出来的锚点会把卡片甩到屏幕外，必须当无效处理。
+function usableWindowBounds(bounds) {
+  if (!bounds) return false;
+  const left = Number(bounds.left);
+  const top = Number(bounds.top);
+  const right = Number(bounds.right);
+  const bottom = Number(bounds.bottom);
+  if (![left, top, right, bottom].every((value) => Number.isFinite(value))) return false;
+  if (left < -10000 || top < -10000) return false;
+  if (right <= left || bottom <= top) return false;
+  if (right - left > 20000 || bottom - top > 20000) return false;
+  return true;
 }
 
 // 解析传感器输出：
@@ -53,17 +77,42 @@ function parseSensorLine(line) {
   return null;
 }
 
+// 附件的传感器行：MEDIA <b64(UTF-8 JSON)>，内容 { files, wechat, hasImage }。
+// 解析失败当作「这次没有附件」，绝不因为附件把文本捕获一起拖垮。
+function parseSensorMedia(encoded) {
+  try {
+    const media = JSON.parse(Buffer.from(String(encoded || ''), 'base64').toString('utf8'));
+    if (!media || typeof media !== 'object') return null;
+    const files = (Array.isArray(media.files) ? media.files : [])
+      .map((file) => (typeof file === 'string' ? { path: file } : file))
+      .filter((file) => file && String(file.path || '').trim())
+      .map((file) => ({ path: String(file.path), name: String(file.name || path.basename(String(file.path))) }));
+    const wechat = (Array.isArray(media.wechat) ? media.wechat : [])
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({ ...(item.file ? { file: String(item.file) } : {}), ...(item.text ? { text: String(item.text) } : {}) }));
+    if (!files.length && !wechat.length) return null;
+    return { files, wechat };
+  } catch { return null; }
+}
+
 class ClipboardWatcher {
   constructor({ onBatch = () => {}, config = null } = {}) {
     this.onBatch = onBatch;
     this.config = config || loadConfig();
     this.pollMs = this.config.pollMs || 700;
-    this.minMatchLines = this.config.minMatchLines || 2;
+    // 最少匹配行数：按「参与匹配的原始行数」判定（一条块格式消息 = 3 行起），
+    // 不是按消息条数，这样复制单条聊天消息也能被识别。
+    this.minMatchLines = Math.max(1, Math.round(Number(this.config.minMatchLines) || 2));
     this.selfNicknames = Array.isArray(this.config.selfNicknames) ? this.config.selfNicknames : [];
     this.running = false;
     this.child = null;
     this.seen = new Set();
     this._buffer = '';
+    // 传感器先发 MEDIA 再发 CHANGE：先收着，交给紧随其后的那条剪贴板内容
+    this._pendingMedia = null;
+    // 等待交付的批次队列：静默窗口内的多次复制都排在这里，窗口结束后按顺序全部交付。
+    // 不能用「覆盖定时器」的写法——那样前一批的新消息会被丢掉，而它们已经进了 seen，等于永久丢失。
+    this._pendingBatches = [];
     this._debounceTimer = null;
     this._restartTimer = null;
   }
@@ -102,9 +151,18 @@ class ClipboardWatcher {
     while ((idx = this._buffer.indexOf('\n')) >= 0) {
       const line = this._buffer.slice(0, idx).trim();
       this._buffer = this._buffer.slice(idx + 1);
+
+      if (line.startsWith('MEDIA ')) {
+        const media = parseSensorMedia(line.slice(6).trim());
+        if (media) this._pendingMedia = media;
+        continue;
+      }
       if (!line.startsWith('CHANGE ')) continue;
       const parsed = parseSensorLine(line);
       if (!parsed) continue;
+      // 附件与文本是同一时刻的一次复制：取走待处理项，避免下一批误用
+      const media = this._pendingMedia;
+      this._pendingMedia = null;
       try {
         const text = Buffer.from(parsed.encoded, 'base64').toString('utf8');
         // 内部回填写剪贴板：只忽略内容完全相同的那一次变化
@@ -115,25 +173,17 @@ class ClipboardWatcher {
           processName: parsed.processName || null,
           bounds: parsed.bounds || null,
           dpi: parsed.dpi || 0
-        });
+        }, media);
       } catch {}
     }
   }
 
-  _handleClip(text, targetWindow = null) {
-    const msgs = parseChatText(text);
-    const isWeChat = !!(
-      targetWindow &&
-      typeof targetWindow.processName === 'string' &&
-      /^(wechat|weixin)(\.exe)?$/i.test(targetWindow.processName.trim())
-    );
+  _handleClip(text, targetWindow = null, media = null) {
+    const detail = parseChatDetail(text);
+    const msgs = detail.messages;
+    const isWeChat = isWeixinProcess(targetWindow && targetWindow.processName);
     const b = targetWindow && targetWindow.bounds;
-    const boundsValid = !!(
-      isWeChat && b &&
-      Number.isFinite(Number(b.left)) && Number.isFinite(Number(b.top)) &&
-      Number.isFinite(Number(b.right)) && Number.isFinite(Number(b.bottom)) &&
-      Number(b.right) > Number(b.left) && Number(b.bottom) > Number(b.top)
-    );
+    const boundsValid = !!(isWeChat && usableWindowBounds(b));
     const windowRef = targetWindow && targetWindow.handle ? {
       handle: String(targetWindow.handle),
       pid: targetWindow.pid ? String(targetWindow.pid) : null,
@@ -146,8 +196,18 @@ class ClipboardWatcher {
       } : null,
       dpi: boundsValid ? (Number(targetWindow.dpi) || 0) : 0
     } : null;
-    // 不是聊天记录：若存在待回填语音，则把这段文本当作语音转写内容回填
+    // 有句柄却定位不了时打一条日志：下次「弹窗跑到角落」能直接看出是哪个进程/什么矩形
+    if (windowRef && !windowRef.bounds && msgs.length) {
+      log('info', 'capture', `窗口未识别，建议卡片不使用微信定位：process=${windowRef.processName || '未知'} rect=${b ? `${b.left},${b.top},${b.right},${b.bottom}` : '无'}`);
+    }
+    // 不是聊天记录：若存在待回填语音，则把这段文本当作语音转写内容回填。
+    // 但「看着像聊天记录却没解析出消息」的文本不能当作语音转写，否则复制的聊天内容
+    // 会被写进旧的语音消息里（既丢了聊天，又污染了归档）。
     if (msgs.length === 0 && voice.list().length) {
+      if (looksLikeChatText(text)) {
+        log('warn', 'capture', '疑似聊天记录但没解析出消息，已跳过（不当语音转写回填）');
+        return;
+      }
       const p = voice.fillFirst(text);
       if (p) {
         applyVoiceFill(p);
@@ -155,7 +215,7 @@ class ClipboardWatcher {
       }
       return;
     }
-    if (msgs.length < this.minMatchLines) return;
+    if (detail.matchedLines < this.minMatchLines) return;
     const fresh = msgs.filter((m) => !this.seen.has(msgKey(m)));
     if (fresh.length) {
       for (const m of fresh) this.seen.add(msgKey(m));
@@ -165,23 +225,60 @@ class ClipboardWatcher {
     }
     // 同一段聊天又被复制了一次：不重复归档（见上面的 seen 去重），但要告诉上层「用户又要了一次」，
     // 否则回复建议卡片不会再弹出来。
-    this._emitBatch(msgs, fresh, windowRef, !fresh.length);
+    this._emitBatch(msgs, fresh, windowRef, !fresh.length, media);
   }
 
-  _emitBatch(msgs, fresh, windowRef, repeat) {
+  // 静默窗口 250ms：把窗口内的复制都排进队列，结束时按复制顺序逐批交付。
+  // 连续复制（比如快速连按 Ctrl+C 复制两段不同聊天）时不能吞掉任何一批：
+  // 只要内容符合聊天记录格式，每一批都必须入库。
+  _emitBatch(msgs, fresh, windowRef, repeat, media = null) {
+    const queued = this._pendingBatches;
+    const previous = queued[queued.length - 1];
+    const sameSelection = (a, b) => a.length === b.length && a.every((m, i) => msgKey(m) === msgKey(b[i]));
+    if (previous && sameSelection(previous.msgs, msgs)) {
+      // 同一段聊天在被交付前又被上报了一次（传感器抖动 / 用户连按两次）：
+      // 只算一次——保留先到那批的入库内容，不会变成「归档一次 + 再要一次建议」。
+      queued[queued.length - 1] = {
+        msgs: previous.msgs,
+        fresh: previous.fresh.length ? previous.fresh : fresh,
+        windowRef: windowRef || previous.windowRef,
+        repeat: previous.repeat && repeat,
+        media: previous.media || media
+      };
+    } else {
+      queued.push({ msgs, fresh, windowRef, repeat, media });
+    }
     if (this._debounceTimer) clearTimeout(this._debounceTimer);
-    this._debounceTimer = setTimeout(() => {
-      const contact = getBatchContact(msgs, this.selfNicknames);
-      log('info', 'capture', repeat
-        ? `捕获 ${msgs.length} 条重复消息（同一段聊天再次复制）`
-        : `捕获 ${fresh.length} 条新消息`);
-      this.onBatch({ msgs: fresh, contact, targetWindow: windowRef, repeat });
-    }, 250);
+    this._debounceTimer = setTimeout(() => this._flushBatches(), 250);
+  }
+
+  _flushBatches() {
+    if (this._debounceTimer) clearTimeout(this._debounceTimer);
+    this._debounceTimer = null;
+    const queued = this._pendingBatches;
+    this._pendingBatches = [];
+    for (const item of queued) {
+      const contact = getBatchContact(item.msgs, this.selfNicknames);
+      log('info', 'capture', item.repeat
+        ? `捕获 ${item.msgs.length} 条重复消息（同一段聊天再次复制）`
+        : `捕获 ${item.fresh.length} 条新消息`);
+      try {
+        this.onBatch({ msgs: item.fresh, allMsgs: item.msgs, contact, targetWindow: item.windowRef, repeat: item.repeat, media: item.media || null });
+      } catch (error) {
+        // 一批出错不影响后面的批次：只要没入库就是数据丢失，所以逐批兜住并记日志
+        log('error', 'capture', '批次交付失败：' + ((error && error.message) || error));
+      }
+    }
   }
 
   stop() {
     this.running = false;
-    if (this._debounceTimer) clearTimeout(this._debounceTimer);
+    // 停止前把排队中还没交付的批次先交出去，别让最后一次复制丢在缓冲里
+    if (this._pendingBatches.length) this._flushBatches();
+    else if (this._debounceTimer) {
+      clearTimeout(this._debounceTimer);
+      this._debounceTimer = null;
+    }
     if (this._restartTimer) clearTimeout(this._restartTimer);
     if (this.child) {
       try { this.child.kill(); } catch {}
@@ -190,4 +287,4 @@ class ClipboardWatcher {
   }
 }
 
-module.exports = { ClipboardWatcher, parseSensorLine };
+module.exports = { ClipboardWatcher, parseSensorLine, parseSensorMedia, isWeixinProcess, usableWindowBounds };

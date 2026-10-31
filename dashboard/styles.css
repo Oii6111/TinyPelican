@@ -229,6 +229,8 @@ body {
 .field { margin-bottom: 16px; }
 .field > label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 13px; }
 .field .hint { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+/* 设置页里的「当前不可用」提示：不吓人，但和普通说明区分开 */
+.settings-warning { color: var(--accent-text, #b45309); }
 .switch { display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 500; }
 .switch input { width: 17px; height: 17px; accent-color: var(--accent); }
 
@@ -499,7 +501,9 @@ body {
 .email-tab.active::after { content: ''; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent); }
 .email-pane[hidden] { display: none; }
 .email-memory-item > summary { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; cursor: pointer; }
-.email-memory-body { white-space: pre-wrap; max-height: 360px; overflow: auto; margin-top: 10px; line-height: 1.6; }
+.email-memory-body { white-space: pre-wrap; max-height: 420px; overflow: auto; margin-top: 10px; line-height: 1.6; }
+.email-memory-rich { margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; background: #fff; overflow: auto; }
+.email-memory-frame { display: block; width: 100%; height: 480px; border: 0; background: #fff; }
 .contact-email-list { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
 .contact-email-list .row { margin: 0; }
 .email-intent-source { border-left: 3px solid var(--accent); padding-left: 8px; }
@@ -2022,5 +2026,7 @@ body {
 .weixin-attachments { display: grid; gap: 8px; max-width: 320px; }
 .weixin-attachment { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); overflow-wrap: anywhere; }
 .weixin-attachment .muted { font-size: 12px; }
+/* 首次导入时生成的附件描述：和 agent 读到的文字是同一份 */
+.weixin-attachment-desc { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-muted, #6b7280); }
 .weixin-image-preview { display: block; max-width: 100%; max-height: 240px; object-fit: contain; border-radius: 6px; }
 .weixin-media-download { font-size: 12px; width: fit-content; }

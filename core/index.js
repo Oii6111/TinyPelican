@@ -11,12 +11,12 @@ const { createServer } = require('./server');
 const { Scheduler } = require('./remind/scheduler');
 const { runReminders } = require('./remind/runner');
 const { runRelationCheck } = require('./memory/relations');
-const { runIntentExtraction } = require('./engine/intent-runner');
+const { requestIntentExtraction } = require('./engine/intent-runner');
 const { ClipboardWatcher } = require('./capture/clipboard');
 const { WeChatChannel } = require('./channels/weixin/channel');
 const { publicAttachment } = require('./channels/weixin/media');
 const { prepareReply, deliverReply } = require('./channels/weixin/delivery');
-const { ingestMessages } = require('./ingest/pipeline');
+const { ingestMessages, ingestCapturedBatch } = require('./ingest/pipeline');
 const { answerWechatMessage } = require('./agent/wechat-reply');
 const { formatAttachmentContext, WEIXIN_MEDIA_INSTRUCTIONS } = require('./agent/dsh-reply');
 const { historyEventList } = require('./agent/event-utils');
@@ -105,9 +105,9 @@ async function main() {
     });
   }
 
-  const triggerIntent = () =>
-    runIntentExtraction({ config: cfg }).catch((e) =>
-      log('error', 'intent', '意图识别异常：' + ((e && e.message) || e)));
+  // 意图识别不再「每复制一条就扫一遍」：统一交给 requestIntentExtraction 排队，
+  // 连续复制会合并成一轮，两轮之间还有冷却（intent.minIntervalMinutes）。
+  const triggerIntent = () => requestIntentExtraction({ config: cfg, reason: 'capture' });
 
   // 心跳式意图识别：配置 intent.scanIntervalMs > 0 后按固定周期扫描
   const intentScanMs = (cfg.intent && cfg.intent.scanIntervalMs) || 0;
@@ -123,16 +123,16 @@ async function main() {
   scheduler.start();
   emailService.start().catch((error) => log('warn', 'email', '邮件服务启动失败：' + ((error && error.message) || error)));
 
-  // 确保 DSH WebUI（默认 3080）可用；不可用则由小鹈鹕自动拉起。
+  // 确保小鹈鹕专用 DSH WebUI 可用；不可用则自动拉起。
   try {
     const webStart = await mainSession.ensureReady();
     if (webStart && webStart.ok) {
       // 启动是后台进行的（这台机器上 DSH 实测要 40 秒左右才监听），不阻塞微信通道与剪贴板监听
-      log('info', 'agent', webStart.started ? 'DSH WebUI（3080）已在后台启动' : 'DSH WebUI（3080）已就绪');
+      log('info', 'agent', webStart.started ? 'DSH WebUI 已在后台启动' : 'DSH WebUI 已就绪');
     } else if (webStart && webStart.pending) {
-      log('warn', 'agent', `DSH WebUI（3080）仍在启动中：${webStart.error || ''}（后续请求会自动等它就绪）`);
+      log('warn', 'agent', `DSH WebUI 仍在启动中：${webStart.error || ''}（后续请求会自动等它就绪）`);
     } else {
-      log('error', 'agent', 'DSH WebUI（3080）启动失败：' + ((webStart && webStart.error) || '未知错误'));
+      log('error', 'agent', 'DSH WebUI 启动失败：' + ((webStart && webStart.error) || '未知错误'));
     }
   } catch (e) {
     log('warn', 'agent', 'DSH WebUI 启动/探测失败：' + String((e && e.message) || e));
@@ -234,22 +234,39 @@ async function main() {
 
   const watcher = new ClipboardWatcher({
     config: cfg,
-    onBatch: ({ msgs, contact, targetWindow, repeat = false }) => {
+    onBatch: ({ msgs, allMsgs, contact, targetWindow, repeat = false, media = null }) => {
       // repeat = 同一段聊天又被复制了一次（内容早已归档）。此时不重复归档、不发“已录入”通知，
       // 但仍要重新给建议：用户再复制一次，意思就是「再给我建议」。
-      if (!repeat) {
-        const hadContact = contact ? !!chatDb.getMember(contact) : true;
-        const added = ingestMessages(msgs, contact);
-        if (added) {
-          triggerIntent();
-          const newContactText = !hadContact && contact ? `\n识别到新联系人「${contact}」，请在联系人页面补充备注和描述。` : '';
-          notifyUser({ event: 'captureComplete', config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${contact ? `，联系人：${contact}` : ''}。${newContactText}` })
-            .catch((e) => log('warn', 'capture', '录入完成通知失败：' + String((e && e.message) || e)));
-        }
-      }
-      // 回复建议：先归档再生成，失败不影响归档
-      generateReplySuggestions({ contact, targetWindow, config: cfg })
-        .catch((e) => log('warn', 'reply', '回复建议生成失败：' + String((e && e.message) || e)));
+      const hadContact = contact ? !!chatDb.getMember(contact) : true;
+      // 带附件时要先落盘、生成描述（异步），所以整条链路走 Promise；
+      // 附件描述只在首次导入生成，之后 agent 回读直接读库里的文字。
+      const archiving = (!repeat && media)
+        ? ingestCapturedBatch(msgs, contact, { media, allMsgs, config: cfg }).then((result) => {
+          if (result.visionUnsupported) {
+            log('warn', 'capture', '当前模型不支持视觉，图片只按元数据记录');
+            notifyUser({
+              event: 'visionUnavailable',
+              config: cfg,
+              title: '图片暂时只能按元数据记录',
+              message: '这次聊天里的图片没有生成内容描述：当前模型不支持视觉。可在设置 → 模型服务里换成支持视觉的模型，或单独配置一个视觉模型；配好后再复制一次同一段聊天即可补上描述。'
+            }).catch((e) => log('warn', 'capture', '视觉能力提示发送失败：' + String((e && e.message) || e)));
+          }
+          return result;
+        })
+        : Promise.resolve({ added: repeat ? 0 : ingestMessages(msgs, contact) });
+
+      archiving.then(({ added }) => {
+        if (!added) return;
+        triggerIntent();
+        const newContactText = !hadContact && contact ? `\n识别到新联系人「${contact}」，请在联系人页面补充备注和描述。` : '';
+        notifyUser({ event: 'captureComplete', config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${contact ? `，联系人：${contact}` : ''}。${newContactText}` })
+          .catch((e) => log('warn', 'capture', '录入完成通知失败：' + String((e && e.message) || e)));
+      }).catch((e) => log('error', 'capture', '归档失败：' + String((e && e.message) || e)))
+        .finally(() => {
+          // 回复建议：先归档再生成，失败不影响归档
+          generateReplySuggestions({ contact, targetWindow, config: cfg })
+            .catch((e) => log('warn', 'reply', '回复建议生成失败：' + String((e && e.message) || e)));
+        });
     }
   });
   const captureCfg = cfg.capture || {};

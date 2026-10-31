@@ -152,6 +152,21 @@ export function mount(container, ctx = {}) {
   const thinkingParams = el('textarea', { class: 'input', rows: 3, placeholder: '{"thinking":{"type":"enabled"}}' });
   const fastParams = el('textarea', { class: 'input', rows: 3, placeholder: '{"thinking":{"type":"disabled"}}' });
 
+  // 图片描述用的视觉模型：默认跟随主模型；主模型看不了图时在这里单独指一个
+  const visionProviderSel = el('select', { class: 'select' },
+    el('option', { value: '', text: '跟随当前模型' }),
+    ...PROVIDERS.map(([v, l]) => el('option', { value: v, text: l })));
+  const visionModelInput = el('input', { class: 'input', placeholder: '留空使用该服务商已保存的模型' });
+  const visionStatus = el('p', { class: 'hint' });
+  // 选到某个服务商时给个常见视觉模型名做提示（只是 placeholder，不强制）
+  const VISION_MODEL_HINTS = {
+    deepseek: 'deepseek-flash',
+    openai: 'gpt-4o-mini',
+    siliconflow: 'Qwen/Qwen2.5-VL-72B-Instruct',
+    ollama: 'qwen2.5vl:7b',
+    custom: '你的视觉模型名'
+  };
+
   // 提醒与主动（原先只存在于一个没有任何入口的 strategy 页里，这里搬出来）
   const levelSel = el('select', { class: 'select' }, ...PROACTIVITY_LEVELS.map(([v, l]) => el('option', { value: v, text: l })));
   const hbSec = el('input', { class: 'input', type: 'number', min: '5', step: '5', placeholder: '30' });
@@ -171,7 +186,8 @@ export function mount(container, ctx = {}) {
   const intentMedium = el('input', { class: 'input', type: 'number', min: '0.1', max: '0.9', step: '0.05', placeholder: '0.5' });
   const intentBatch = el('input', { class: 'input', type: 'number', min: '1', max: '500', placeholder: '50' });
   const intentScanSec = el('input', { class: 'input', type: 'number', min: '0', placeholder: '0' });
-  const pollMsInput = el('input', { class: 'input', type: 'number', min: '100', max: '5000', placeholder: '700' });
+  const intentCooldownMin = el('input', { class: 'input', type: 'number', min: '0', step: '0.5', placeholder: '1' });
+  const pollMsInput = el('input', { class: 'input', type: 'number', min: '100', max: '5000', placeholder: '400' });
   const minMatchLinesInput = el('input', { class: 'input', type: 'number', min: '1', max: '20', placeholder: '2' });
   const replyTimeoutInput = el('input', { class: 'input', type: 'number', min: '10', max: '1800', placeholder: '180' });
   const queueIntervalInput = el('input', { class: 'input', type: 'number', min: '1', max: '600', placeholder: '10' });
@@ -255,6 +271,9 @@ export function mount(container, ctx = {}) {
     field('API Key', apiKeyInput, '只保存在本地 config.json，不回显完整密钥。'),
     field('模型', modelInput),
     el('p', { class: 'hint', text: '快速和思考回复均使用此模型。DeepSeek、SiliconFlow、Ollama 已适配思考开关；其他兼容服务需按服务文档配置下方参数，不支持思考的模型请使用快速模式。' }),
+    field('图片描述用的视觉模型', visionProviderSel, '复制带图片的聊天时，首次导入会给图片生成一次描述，之后 agent 回读直接用这段文字。默认跟随当前模型；当前模型看不了图（例如 deepseek-chat）就在这里单独指一个能看图的模型。'),
+    field('视觉模型名（可选）', visionModelInput, '留空表示用该服务商已保存的模型名。'),
+    visionStatus,
     field('思考模式请求参数（可选 JSON）', thinkingParams, '留空使用内置适配。参数随当前服务保存。'),
     field('快速模式请求参数（可选 JSON）', fastParams, '不支持思考的普通模型可留空；混合模型需明确配置关闭思考。'),
     el('div', { class: 'field' }, testBtn, ' ', engineMsg, ' ', engineSaveBtn, ' ', engineSaveMsg),
@@ -356,10 +375,11 @@ export function mount(container, ctx = {}) {
   const advancedPanel = section('advanced', '高级与排障', '意图识别阈值、扫描与心跳以外的调度参数、登录令牌',
     el('div', { class: 'desc', text: '以下参数一般无需修改。改动保存后核心重启一次；不确定时请保持默认值。' }),
     el('h3', { text: '待确认意图识别' }),
-    el('div', { class: 'row' }, field('高置信度阈值', intentHigh, '≥ 该值直接记为正式事项，默认 0.85'), field('中置信度阈值', intentMedium, '≥ 该值进入待确认，默认 0.5')),
+    el('div', { class: 'row' }, field('高置信度阈值', intentHigh, '≥ 该值直接建成正式任务/日程（需 Agent 执行的仍进待确认），默认 0.85'), field('中置信度阈值', intentMedium, '≥ 该值进入待确认，默认 0.5')),
     el('div', { class: 'row' }, field('每批消息上限', intentBatch, '一次送进模型的聊天条数，默认 50'), field('定时扫描间隔（秒）', intentScanSec, '0 = 不主动扫描，只处理新入库消息')),
+    el('div', { class: 'row' }, field('触发冷却（分钟）', intentCooldownMin, '连续复制会合并成一轮；冷却期内的触发排队到点再扫，0 = 不限制，默认 1')),
     el('h3', { text: '剪贴板与调度' }),
-    el('div', { class: 'row' }, field('剪贴板轮询间隔（毫秒）', pollMsInput, '默认 700；调小更灵敏、更耗 CPU'), field('最少匹配行数', minMatchLinesInput, '判定为一段聊天的行数门槛，默认 2')),
+    el('div', { class: 'row' }, field('剪贴板轮询间隔（毫秒）', pollMsInput, '默认 400；调小更灵敏、更耗 CPU'), field('最少匹配行数', minMatchLinesInput, '判定为一段聊天的最少匹配行数（一条块格式消息≈3 行，单行格式≈1 行），默认 2')),
     el('div', { class: 'row' }, field('回复等待超时（秒）', replyTimeoutInput, '默认 180'), field('任务队列间隔（秒）', queueIntervalInput, '默认 10')),
     el('div', { class: 'row' }, field('队列并发数', queueConcurrentInput, '默认 1'), field('队列任务超时（秒）', queueTimeoutInput, '默认 300')),
     el('h3', { text: '登录令牌' }),
@@ -570,7 +590,29 @@ export function mount(container, ctx = {}) {
       thinkingBody: parseParams(thinkingParams.value),
       noThinkingBody: parseParams(fastParams.value)
     };
-    return { provider: name, providers };
+    return {
+      provider: name,
+      providers,
+      // 留空 = 跟随当前模型；指定服务商时模型名可以留空，沿用该服务商已保存的模型
+      vision: { provider: visionProviderSel.value, model: visionModelInput.value.trim() }
+    };
+  }
+
+  // 用后端同一套判定（/api/engine/vision）告诉用户现在到底谁在看图
+  async function refreshVisionStatus() {
+    try {
+      const info = await api.engine.vision();
+      if (info.ok) {
+        visionStatus.textContent = `现在用「${info.vision.provider} / ${info.vision.model}」生成图片描述${info.vision.explicit ? '（单独指定）' : '（跟随当前模型）'}。`;
+        visionStatus.className = 'hint';
+      } else {
+        visionStatus.textContent = `现在没有可用的视觉模型，图片只按元数据记录。${info.error || ''}`;
+        visionStatus.className = 'hint settings-warning';
+      }
+    } catch (error) {
+      visionStatus.textContent = '视觉能力检测失败：' + (error && error.message ? error.message : error);
+      visionStatus.className = 'hint settings-warning';
+    }
   }
 
   function fillProvider(p) {
@@ -598,6 +640,9 @@ export function mount(container, ctx = {}) {
   }
 
   providerSel.onchange = () => fillProvider(lastProviders[providerSel.value] || {});
+  visionProviderSel.onchange = () => {
+    visionModelInput.placeholder = VISION_MODEL_HINTS[visionProviderSel.value] || '留空使用该服务商已保存的模型';
+  };
 
   function updateWechatStatus() {
     if (!ready) return;
@@ -619,6 +664,12 @@ export function mount(container, ctx = {}) {
       providerSel.value = (s.engine && s.engine.provider) || 'deepseek';
       fillProvider(lastProviders[providerSel.value] || {});
       renderDshModel(s.engine);
+
+      const vision = (s.engine && s.engine.vision) || {};
+      visionProviderSel.value = vision.provider || '';
+      visionModelInput.value = vision.model || '';
+      visionModelInput.placeholder = VISION_MODEL_HINTS[visionProviderSel.value] || '留空使用该服务商已保存的模型';
+      refreshVisionStatus();
 
       const rs = s.capture?.replySuggestions || {};
       replyEnabledChk.checked = rs.enabled !== false;
@@ -648,7 +699,8 @@ export function mount(container, ctx = {}) {
       intentMedium.value = it.mediumConfidence ?? 0.5;
       intentBatch.value = it.maxMessagesPerBatch ?? 50;
       intentScanSec.value = Math.round((it.scanIntervalMs || 0) / 1000);
-      pollMsInput.value = s.pollMs ?? 700;
+      intentCooldownMin.value = it.minIntervalMinutes ?? 1;
+      pollMsInput.value = s.pollMs ?? 400;
       minMatchLinesInput.value = s.minMatchLines ?? 2;
       const agentCfg = s.agent || {};
       replyTimeoutInput.value = Math.round((agentCfg.reply?.timeoutMs ?? 180000) / 1000);
@@ -704,6 +756,14 @@ export function mount(container, ctx = {}) {
       const r = await api.settings.save({ engine: buildEnginePatch(cur) });
       engineSaveMsg.textContent = r && r.restarting ? '已保存 ✓，核心正在重启' : '已保存 ✓';
       renderDshModel(r && r.engine);
+      // 保存后核心会重启，这时候再查会连不上：先给个明确的说法，重启完成再刷新
+      if (r && r.restarting) {
+        visionStatus.textContent = '已保存，核心重启后按新的视觉模型配置生效。';
+        visionStatus.className = 'hint';
+        setTimeout(() => { if (settingsVisible) refreshVisionStatus(); }, 6000);
+      } else {
+        refreshVisionStatus();
+      }
       setTimeout(() => { engineSaveMsg.textContent = ''; }, 2500);
     } catch (e) {
       engineSaveMsg.textContent = '保存失败：' + e.message;
@@ -780,9 +840,10 @@ export function mount(container, ctx = {}) {
           highConfidence: Math.min(1, Math.max(0.5, num(intentHigh, 0.85))),
           mediumConfidence: Math.min(0.9, Math.max(0.1, num(intentMedium, 0.5))),
           maxMessagesPerBatch: Math.max(1, Math.round(num(intentBatch, 50))),
+          minIntervalMinutes: Math.max(0, num(intentCooldownMin, 1)),
           scanIntervalMs: Math.max(0, Math.round(num(intentScanSec, 0) * 1000))
         },
-        pollMs: Math.max(100, Math.round(num(pollMsInput, 700))),
+        pollMs: Math.max(100, Math.round(num(pollMsInput, 400))),
         minMatchLines: Math.max(1, Math.round(num(minMatchLinesInput, 2))),
         agent: {
           reply: { timeoutMs: Math.max(10, num(replyTimeoutInput, 180)) * 1000 },

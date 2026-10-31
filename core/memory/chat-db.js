@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { getPaths } = require('../lib/paths');
 const archive = require('./archive');
+const attachmentStore = require('./attachment-store');
 const { mergeProfile } = require('./profile-template');
 const memoryState = require('./memory-state');
 
@@ -80,6 +81,62 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_member_email_address ON member_email(normalized_address);
 `);
+// 聊天里的真实附件（图片/视频/文件）。
+// 字节不进库：落在 <数据目录>/media/chat/ 下（按 sha256 命名），这里只存相对路径。
+// description 是首次导入时生成的描述，agent 回读直接用，不必再识图/解文件。
+// 不建外键：删消息的地方统一走 pruneAttachments()，避免依赖 foreign_keys pragma。
+function createAttachmentTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS message_attachment (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'image',
+      name TEXT NOT NULL DEFAULT '',
+      mime_type TEXT NOT NULL DEFAULT '',
+      size INTEGER NOT NULL DEFAULT 0,
+      sha256 TEXT NOT NULL,
+      path TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      description_source TEXT NOT NULL DEFAULT '',
+      description_model TEXT NOT NULL DEFAULT '',
+      description_error TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'clipboard',
+      created_at TEXT NOT NULL,
+      UNIQUE(message_id, sha256)
+    );
+    CREATE INDEX IF NOT EXISTS idx_message_attachment_message ON message_attachment(message_id);
+  `);
+}
+
+// 早期版本把字节直接存 BLOB。这里把旧行搬到 media/chat/ 并重建表，
+// 数据不丢、调用方也不需要知道曾经有过 BLOB 版本。
+function migrateAttachmentStorage() {
+  const columns = db.prepare('PRAGMA table_info(message_attachment)').all().map((column) => column.name);
+  if (!columns.length) { createAttachmentTable(); return; }
+  if (!columns.includes('path')) {
+    db.exec('ALTER TABLE message_attachment RENAME TO message_attachment_legacy');
+    createAttachmentTable();
+    const rows = db.prepare('SELECT * FROM message_attachment_legacy').all();
+    const insert = db.prepare(`INSERT OR IGNORE INTO message_attachment(message_id,kind,name,mime_type,size,sha256,path,source,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?)`);
+    for (const row of rows) {
+      let rel = '';
+      try {
+        rel = attachmentStore.save(Buffer.from(row.bytes || []), { sha256: row.sha256, name: row.name, mimeType: row.mime_type });
+      } catch {}
+      insert.run(row.message_id, row.kind, row.name, row.mime_type, row.size, row.sha256, rel, row.source || 'clipboard', row.created_at);
+    }
+    db.exec('DROP TABLE message_attachment_legacy');
+    createAttachmentTable();
+    return;
+  }
+  createAttachmentTable();
+  for (const column of ['description', 'description_source', 'description_model', 'description_error', 'path']) {
+    try { db.exec(`ALTER TABLE message_attachment ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`); } catch {}
+  }
+}
+
+migrateAttachmentStorage();
 try { db.exec('ALTER TABLE message ADD COLUMN conversation_id INTEGER REFERENCES conversation(id)'); } catch {}
 try { db.exec("ALTER TABLE member ADD COLUMN profile_meta_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
 try { db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(content, content="message", content_rowid="id")'); } catch {}
@@ -160,6 +217,81 @@ function withMemory(member) {
 function findUnannotatedMember() {
   return listMembers('').find((member) => !String(member.remark || '').trim() && Number(member.messages || 0) > 0) || null;
 }
+function publicAttachmentRecord(row) {
+  return {
+    id: Number(row.id),
+    kind: row.kind || 'file',
+    name: row.name || '',
+    mimeType: row.mimeType || '',
+    size: Number(row.size) || 0,
+    status: 'ready',
+    description: row.description || '',
+    descriptionSource: row.descriptionSource || '',
+    ...(row.descriptionError ? { descriptionError: row.descriptionError } : {}),
+    url: `/api/contacts/attachment/${row.id}`,
+    downloadUrl: `/api/contacts/attachment/${row.id}?download=1`
+  };
+}
+
+// 一批消息的附件元数据（不含字节）。按 message_id 归组，页面渲染直接取用。
+function attachmentsFor(messageIds) {
+  const ids = [...new Set((messageIds || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  const map = new Map();
+  if (!ids.length) return map;
+  const rows = db.prepare(`SELECT id,message_id AS messageId,kind,name,mime_type AS mimeType,size,
+    description,description_source AS descriptionSource,description_error AS descriptionError,created_at AS createdAt
+    FROM message_attachment WHERE message_id IN (${ids.map(() => '?').join(',')}) ORDER BY id`).all(...ids);
+  for (const row of rows) {
+    const list = map.get(row.messageId) || [];
+    list.push(publicAttachmentRecord(row));
+    map.set(row.messageId, list);
+  }
+  return map;
+}
+
+function getAttachment(id) {
+  const row = db.prepare(`SELECT id,message_id AS messageId,kind,name,mime_type AS mimeType,size,sha256,path,
+    description,description_source AS descriptionSource,created_at AS createdAt
+    FROM message_attachment WHERE id=?`).get(Number(id) || 0);
+  if (!row) return null;
+  const bytes = attachmentStore.read(row.path);
+  return { ...row, size: Number(row.size) || (bytes ? bytes.length : 0), bytes };
+}
+
+// 消息被删/被归档后，把失去归属的附件一并清掉：先删库里的行，
+// 再删磁盘上已经没人引用的文件（同一份内容被别的消息引用时保留）。
+function pruneAttachments() {
+  const candidates = db.prepare(`SELECT DISTINCT path FROM message_attachment
+    WHERE message_id NOT IN (SELECT id FROM message) AND path<>''`).all();
+  const result = db.prepare('DELETE FROM message_attachment WHERE message_id NOT IN (SELECT id FROM message)').run();
+  for (const row of candidates) {
+    const stillUsed = db.prepare('SELECT 1 FROM message_attachment WHERE path=? LIMIT 1').get(row.path);
+    if (!stillUsed) attachmentStore.remove(row.path);
+  }
+  return Number(result.changes || 0);
+}
+
+// 这段聊天里是否已经有同一份附件（按 sha256）：重复复制时不必重新落盘/重新识图
+function attachmentExists(contact, sha256) {
+  const key = String(contact || '').trim();
+  const hash = String(sha256 || '').trim();
+  if (!key || !hash) return false;
+  const member = db.prepare('SELECT id FROM member WHERE platform_id=?').get(key);
+  if (!member) return false;
+  const row = db.prepare(`SELECT 1 FROM message_attachment WHERE sha256=?
+    AND message_id IN (SELECT id FROM message WHERE member_id=?) LIMIT 1`).get(hash, member.id);
+  return !!row;
+}
+
+// 同一张图在别处已经描述过就直接复用（转发图片、群聊里同一张图很常见）
+function descriptionForSha(sha256) {
+  const hash = String(sha256 || '').trim();
+  if (!hash) return null;
+  const row = db.prepare(`SELECT description, description_source AS descriptionSource, description_model AS descriptionModel
+    FROM message_attachment WHERE sha256=? AND description<>'' ORDER BY id LIMIT 1`).get(hash);
+  return row || null;
+}
+
 function messages(name, query = '', limit = 200, hotOnly = false, before = '', beforeId = 0) {
   syncLegacy(); const member = getMember(name); if (!member) return null;
   const q = String(query || '').trim(); const n = Math.min(Math.max(Number(limit) || 200, 1), 500);
@@ -174,7 +306,11 @@ function messages(name, query = '', limit = 200, hotOnly = false, before = '', b
     : db.prepare(`SELECT message.id, sender, sender AS senderName, ts, ts AS timestamp, type, content FROM message JOIN member ON member.id=message.member_id WHERE member.name=? AND (?='' OR content LIKE ?) AND (?='' OR ts<? OR (ts=? AND message.id<?)) ORDER BY ts DESC,message.id DESC LIMIT ?`).all(canonical, q, `%${q}%`, cursorTs, cursorTs, cursorTs, cursorId, n + 1);
   const hasMore = rows.length > n;
   if (hasMore) rows.pop();
-  return { contact: canonical, total: rows.length, messages: rows.reverse().map((row) => ({ ...row, name: row.sender, isOwner: owners.has(row.sender) })), hasMore, hasArchive: archive.exists(canonical) || !!db.prepare('SELECT 1 FROM message WHERE member_id=? AND ts<? LIMIT 1').get(member.id, cutoff) };
+  const attachments = attachmentsFor(rows.map((row) => row.id));
+  return { contact: canonical, total: rows.length, messages: rows.reverse().map((row) => {
+    const files = attachments.get(row.id);
+    return { ...row, name: row.sender, isOwner: owners.has(row.sender), ...(files ? { attachments: files } : {}) };
+  }), hasMore, hasArchive: archive.exists(canonical) || !!db.prepare('SELECT 1 FROM message WHERE member_id=? AND ts<? LIMIT 1').get(member.id, cutoff) };
 }
 
 function archiveMessages(name, before = '', limit = 100, beforeId = 0) {
@@ -203,7 +339,15 @@ function allMessages(name) {
   const member = getMember(name);
   if (!member) return null;
   const rows = [...historyPages(member.name)].flat().sort((left, right) => String(left.ts).localeCompare(String(right.ts)) || left.id - right.id);
-  return { contact: member.name, total: rows.length, messages: rows };
+  const attachments = attachmentsFor(rows.map((row) => row.id));
+  return {
+    contact: member.name,
+    total: rows.length,
+    messages: rows.map((row) => {
+      const files = attachments.get(row.id);
+      return files ? { ...row, attachments: files } : row;
+    })
+  };
 }
 function archiveExpired(contact = '') {
   const cutoff = new Date(Date.now() - archive.RETENTION_DAYS * 86400000).toISOString();
@@ -220,6 +364,7 @@ function archiveExpired(contact = '') {
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     }
   }
+  pruneAttachments();
   try { db.exec('PRAGMA optimize'); } catch {}
 }
 function updateMember(name, patch = {}, { replaceProfile = false } = {}) {
@@ -302,11 +447,12 @@ function unlinkMemberEmail(name, address) {
   const result = db.prepare('DELETE FROM member_email WHERE member_id=? AND normalized_address=?').run(member.id, normalizeEmailAddress(address));
   return Number(result.changes || 0) > 0;
 }
-function deleteMember(name) { const member = getMember(name); if (!member) return false; const result = db.prepare('DELETE FROM member WHERE id=?').run(member.id); archive.remove(member.name); return Number(result.changes || 0) > 0; }
+function deleteMember(name) { const member = getMember(name); if (!member) return false; const result = db.prepare('DELETE FROM member WHERE id=?').run(member.id); pruneAttachments(); archive.remove(member.name); return Number(result.changes || 0) > 0; }
 function clearMemberMessages(name) {
   const member = getMember(name);
   if (!member) return 0;
   const result = db.prepare('DELETE FROM message WHERE member_id=?').run(member.id);
+  pruneAttachments();
   memoryState.clear(db, member.id);
   archive.remove(member.name);
   return Number(result.changes || 0);
@@ -316,6 +462,9 @@ function ingestMessages(name, items = []) {
   db.prepare('INSERT OR IGNORE INTO member(platform_id,name,created_at,updated_at) VALUES(?,?,?,?)').run(contact, contact, now, now);
   const member = db.prepare('SELECT id FROM member WHERE platform_id=?').get(contact);
   const insert = db.prepare('INSERT OR IGNORE INTO message(member_id,sender,ts,type,content,content_hash) VALUES(?,?,?,?,?,?)');
+  const findMessage = db.prepare('SELECT id FROM message WHERE content_hash=?');
+  const insertAttachment = db.prepare(`INSERT OR IGNORE INTO message_attachment(message_id,kind,name,mime_type,size,sha256,path,description,description_source,description_model,description_error,source,created_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   let added = 0;
   const cold = archive.duplicateReader(contact);
   db.exec('BEGIN');
@@ -323,8 +472,28 @@ function ingestMessages(name, items = []) {
     for (const item of (Array.isArray(items) ? items : [])) {
       const message = { name: String(item.name || item.sender || ''), ts: String(item.ts || item.timestamp || now), type: String(item.type || 'text'), content: String(item.content || '') };
       if (cold.has(message)) continue;
-      const result = insert.run(member.id, message.name, message.ts, message.type, message.content, hashMessage(contact, message));
+      const hash = hashMessage(contact, message);
+      const result = insert.run(member.id, message.name, message.ts, message.type, message.content, hash);
       added += Number(result.changes || 0);
+      const files = Array.isArray(item.attachments) ? item.attachments : [];
+      if (!files.length) continue;
+      // 消息可能本来就存在（重复导入）：照样把附件补上，unique(message_id,sha256) 负责去重
+      const row = findMessage.get(hash);
+      if (!row) continue;
+      for (const file of files) {
+        if (!file || !file.sha256) continue;
+        // 兼容只有字节、还没落盘的调用方（例如测试或旧管线）：先落盘再入库
+        let relative = String(file.path || '');
+        if (!relative && file.bytes) {
+          try {
+            relative = attachmentStore.save(Buffer.from(file.bytes), { sha256: file.sha256, name: file.name, mimeType: file.mimeType });
+          } catch { relative = ''; }
+        }
+        insertAttachment.run(row.id, String(file.kind || 'file'), String(file.name || ''), String(file.mimeType || ''),
+          Number(file.size) || (file.bytes ? file.bytes.length : 0), String(file.sha256), relative,
+          String(file.description || ''), String(file.descriptionSource || ''), String(file.descriptionModel || ''),
+          String(file.descriptionError || ''), String(file.source || 'clipboard'), now);
+      }
     }
     if (added) db.prepare('INSERT INTO conversation(member_id,platform,last_message_at) VALUES(?,?,?) ON CONFLICT(member_id) DO UPDATE SET last_message_at=excluded.last_message_at').run(member.id, 'weixin', now);
     db.exec('COMMIT');
@@ -362,4 +531,4 @@ function contactContext(name, { limit = 20, hotOnly = false } = {}) {
   return { contact: member.name, remark: member.remark || '', important: !!member.important, socialGoal: member.socialGoal || '', profile: member.profile || {}, profileSkipped: member.profileSkipped || [], chatSummary: member.chatSummary || {}, recentMessages: result ? result.messages : [] };
 }
 
-module.exports = { db, syncLegacy, listMembers, getMember, findUnannotatedMember, messages, archiveMessages, allMessages, historyPages, archiveExpired, messagesSince, searchMessages, contactContext, updateMember, deleteMember, clearMemberMessages, ingestMessages, updateMessageContent, normalizeEmailAddress, listMemberEmails, findMembersByEmail, linkMemberEmail, unlinkMemberEmail };
+module.exports = { db, syncLegacy, listMembers, getMember, findUnannotatedMember, messages, archiveMessages, allMessages, historyPages, archiveExpired, messagesSince, searchMessages, contactContext, updateMember, deleteMember, clearMemberMessages, ingestMessages, updateMessageContent, getAttachment, attachmentExists, descriptionForSha, pruneAttachments, normalizeEmailAddress, listMemberEmails, findMembersByEmail, linkMemberEmail, unlinkMemberEmail };

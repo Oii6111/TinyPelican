@@ -9,8 +9,10 @@ export function formatMediaSize(value) {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
+// 只接受本机两条受控媒体路由：微信通道的落盘附件，和聊天记录里存在 SQLite 的附件
+const MEDIA_URL_BASE = String.raw`\/api\/(?:wechat\/media|contacts\/attachment)\/[a-zA-Z0-9_-]+`;
 function localMediaUrl(value, download = false) {
-  const pattern = download ? /^\/api\/wechat\/media\/[a-zA-Z0-9_-]+(?:\?download=1)?$/ : /^\/api\/wechat\/media\/[a-zA-Z0-9_-]+$/;
+  const pattern = new RegExp(`^${MEDIA_URL_BASE}${download ? String.raw`(?:\?download=1)?` : ''}$`);
   return typeof value === 'string' && pattern.test(value) ? value : '';
 }
 
@@ -21,6 +23,10 @@ export function renderWeixinAttachments(attachments) {
     const name = String(attachment.name || (attachment.kind === 'image' ? '图片' : '文件'));
     const card = el('div', { class: 'weixin-attachment' });
     card.append(el('strong', { text: name }), el('span', { class: 'muted', text: formatMediaSize(attachment.size) }));
+    // 首次导入时生成的描述：agent 与用户看到的是同一份文字，不用再识图
+    if (attachment.description) {
+      card.append(el('p', { class: 'weixin-attachment-desc', text: String(attachment.description) }));
+    }
     const previewUrl = localMediaUrl(attachment.url);
     const downloadUrl = localMediaUrl(attachment.downloadUrl, true);
     if (attachment.status === 'failed') {

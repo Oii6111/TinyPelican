@@ -10,6 +10,26 @@ module.exports = (router, ctx) => {
   router.get('/api/profile-template', (req, res) => ctx.json(res, 200, TEMPLATE));
   router.get('/api/contacts', (req, res, c, p, url) => ctx.json(res, 200, chatDb.listMembers(url.searchParams.get('q') || '')));
 
+  // 聊天记录里的图片/文件：字节存在 SQLite（message_attachment），这里直接回给前端。
+  // 图片默认 inline 预览，?download=1 走下载；非图片一律按下载处理。
+  router.get('/api/contacts/attachment/:id', (req, res, c, params, url) => {
+    const record = chatDb.getAttachment(params.id);
+    if (!record) return ctx.json(res, 404, { ok: false, error: '附件不存在' });
+    if (!record.bytes) return ctx.json(res, 404, { ok: false, error: '附件文件已被清理' });
+    const imageMimes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'];
+    const inline = record.kind === 'image' && imageMimes.includes(record.mimeType) && url.searchParams.get('download') !== '1';
+    res.writeHead(200, {
+      'Content-Type': inline ? record.mimeType : (record.mimeType || 'application/octet-stream'),
+      'Content-Length': record.bytes.length,
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="attachment"; filename*=UTF-8''${encodeURIComponent(record.name || 'attachment')}`,
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Cache-Control': 'private, max-age=86400',
+      ...(record.sha256 ? { ETag: `"${record.sha256}"` } : {})
+    });
+    res.end(record.bytes);
+  });
+
   router.get('/api/contacts/:name', (req, res, c, params) => {
     const dbContact = chatDb.getMember(params.name);
     if (dbContact) return ctx.json(res, 200, dbContact);

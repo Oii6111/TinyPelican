@@ -110,7 +110,8 @@ export const api = {
   },
 
   engine: {
-    test: (engine) => post('/api/engine/test', { engine })
+    test: (engine) => post('/api/engine/test', { engine }),
+    vision: () => get('/api/engine/vision')
   },
   webSearch: {
     status: () => get('/api/web-search/status'),
