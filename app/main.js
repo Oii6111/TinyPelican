@@ -17,12 +17,15 @@ const PORT = 18791;
 const RESTART_EXIT_CODE = 42;
 
 const { initializeRuntime, selectWritableDirectory, userDirectories, workspaceId } = require(path.join(PROJECT_ROOT, 'core/lib/startup'));
+const { readActiveEdition, editionDataDir } = require(path.join(PROJECT_ROOT, 'core/lib/editions'));
 const { effectiveEngineProvider } = require(path.join(PROJECT_ROOT, 'core/agent/dsh-client'));
 const { waitForCore } = require(path.join(PROJECT_ROOT, 'core/lib/readiness'));
 const { resolveCoreRuntime, needsElectronAsNode } = require(path.join(PROJECT_ROOT, 'core/lib/runtime-node'));
 try {
+  const stableUserData = app.getPath('userData');
+  const activeEdition = readActiveEdition(stableUserData, PROJECT_ROOT);
   const id = workspaceId(PROJECT_ROOT);
-  const preferred = isPackaged ? app.getPath('userData') : path.join(app.getPath('appData'), 'TinyPelican-dev', id);
+  const preferred = isPackaged ? editionDataDir(stableUserData, activeEdition) : path.join(app.getPath('appData'), 'TinyPelican-dev', id);
   const developmentFallback = isPackaged ? null : path.join(PROJECT_ROOT, 'tmp', 'electron-user-data', id);
   const candidates = process.env.XIAOTIHU_USER_DATA_DIR ? [process.env.XIAOTIHU_USER_DATA_DIR] : [
     preferred,
@@ -32,7 +35,9 @@ try {
   const userData = selectWritableDirectory(candidates, { label: 'XIAOTIHU_USER_DATA_DIR', childDirectory: 'browser-session-v2' });
   app.setPath('userData', userData);
   app.setPath('sessionData', path.join(userData, 'browser-session-v2'));
-  initializeRuntime({ root: PROJECT_ROOT, packaged: isPackaged });
+  process.env.XIAOTIHU_STABLE_DATA_DIR = stableUserData;
+  process.env.XIAOTIHU_EDITION_ID = activeEdition.id;
+  initializeRuntime({ root: PROJECT_ROOT, packaged: isPackaged, dataDir: preferred });
 } catch (error) {
   if (dialog && typeof dialog.showErrorBox === 'function') {
     dialog.showErrorBox('小鹈鹕 · 启动目录不可用', error.message + '\n可用 XIAOTIHU_DATA_DIR、XIAOTIHU_USER_DATA_DIR 和 DSH_HOME 指定可写目录。');
@@ -229,6 +234,8 @@ function coreEnv(runner) {
     env.DSH_HOME = process.env.DSH_HOME || path.join(env.XIAOTIHU_DATA_DIR, 'dsh-home');
     if (process.env.XIAOTIHU_DSH_BIN) env.XIAOTIHU_DSH_BIN = process.env.XIAOTIHU_DSH_BIN;
   }
+  env.XIAOTIHU_STABLE_DATA_DIR = process.env.XIAOTIHU_STABLE_DATA_DIR || '';
+  env.XIAOTIHU_EDITION_ID = process.env.XIAOTIHU_EDITION_ID || 'base';
   return env;
 }
 
@@ -249,6 +256,11 @@ function startCore() {
     if (quitting) return;
     if (code === RESTART_EXIT_CODE) {
       startCore(); // 微信登录/登出后的热重启
+      return;
+    }
+    if (code === 43) {
+      app.relaunch();
+      app.exit(0);
       return;
     }
     // 刚起来就挂：最典型的原因是另一个小鹈鹕（开发实例/另一个安装版本）占着 18791，

@@ -2,7 +2,12 @@
 // 拉起 HTTP 服务、剪贴板监听、微信通道、进程内定时调度；退出码 42 表示请求重启（由 launcher 接管）。
 'use strict';
 
-require('./lib/startup').initializeRuntime();
+const { initializeRuntime } = require('./lib/startup');
+const { readManifest, editionDataDir } = require('./lib/editions');
+const { projectRoot } = require('./lib/paths');
+const stableUserData = process.env.XIAOTIHU_STABLE_DATA_DIR || process.env.XIAOTIHU_DATA_DIR || '';
+const activeEdition = readManifest(projectRoot(), process.env.XIAOTIHU_EDITION_ID || 'base');
+initializeRuntime({ dataDir: activeEdition ? editionDataDir(stableUserData, activeEdition) : '' });
 
 const { loadConfig } = require('./lib/config');
 const { log } = require('./lib/log');
@@ -41,9 +46,16 @@ async function main() {
   const server = createServer({
     config: cfg,
     emailService,
+    edition: activeEdition,
+    projectRoot: projectRoot(),
+    stableUserData,
     onRestart: () => {
       log('info', 'core', '收到重启请求，即将重启核心');
       setTimeout(() => process.exit(RESTART_EXIT_CODE), 600);
+    },
+    onEditionChange: () => {
+      log('info', 'core', '已选择新的版本包，重启桌面应用');
+      setTimeout(() => process.exit(43), 600);
     }
   });
   server.listen(PORT, '127.0.0.1', () => {

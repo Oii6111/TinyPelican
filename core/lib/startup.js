@@ -44,12 +44,12 @@ function selectWritableDirectory(candidates, { label = '数据目录', filesyste
   throw new Error(`${label}不可写，请指定有写入权限的目录。\n${failures.join('\n')}`);
 }
 
-function initializeRuntime({ root = projectRoot(), env = process.env, filesystem = fs, home = os.homedir(), packaged = false, warn = console.warn } = {}) {
+function initializeRuntime({ root = projectRoot(), env = process.env, filesystem = fs, home = os.homedir(), packaged = false, warn = console.warn, dataDir = '' } = {}) {
   assertNodeVersion();
   const explicit = env.XIAOTIHU_DATA_DIR;
   const preferred = packaged ? path.join(env.APPDATA || home, 'xiaotihu') : root;
   const fallbacks = userDirectories(env, home).map(directory => path.join(directory, packaged ? 'TinyPelican' : 'TinyPelican-dev', ...(packaged ? [] : [workspaceId(root)]), 'data'));
-  const directory = selectWritableDirectory(explicit ? [explicit] : [preferred, ...fallbacks], { filesystem, label: 'XIAOTIHU_DATA_DIR' });
+  const directory = selectWritableDirectory(explicit ? [explicit] : dataDir ? [dataDir] : [preferred, ...fallbacks], { filesystem, label: 'XIAOTIHU_DATA_DIR' });
   env.XIAOTIHU_DATA_DIR = directory;
   if (!explicit && directory !== path.resolve(preferred)) warn(`[启动] 项目目录不可写，数据目录改为 ${directory}`);
   const config = path.join(directory, 'config.json');

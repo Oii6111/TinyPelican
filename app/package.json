@@ -41,6 +41,10 @@
         "to": "content/agent/dsh-plugins"
       },
       {
+        "from": "../editions",
+        "to": "content/editions"
+      },
+      {
         "from": "../licenses",
         "to": "content/licenses"
       },

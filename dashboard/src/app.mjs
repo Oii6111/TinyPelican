@@ -203,6 +203,18 @@ function show(id, params) {
   try {
     const h = await api.health();
     foot.textContent = '核心 v' + (h.version || '') + ' 在线';
+    const editionButton = el('button', { class: 'sidebar-edition-button', type: 'button', text: '�����汾' });
+    editionButton.onclick = async () => {
+      const code = window.prompt('����������');
+      if (!code) return;
+      try {
+        await api.edition.activate(code.trim());
+        editionButton.textContent = '�����л�...';
+      } catch (error) {
+        window.alert(error.message || '��������Ч');
+      }
+    };
+    foot.append(editionButton);
   } catch {
     foot.textContent = '核心未连接';
   }

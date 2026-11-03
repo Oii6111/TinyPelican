@@ -58,14 +58,16 @@ async function serveStatic(res, relPath) {
   return true;
 }
 
-function createRestServer({ config = null, onRestart = null, emailService = null } = {}) {
+function createRestServer({ config = null, onRestart = null, onEditionChange = null, emailService = null, edition = null, projectRoot = ROOT, stableUserData = '' } = {}) {
   const router = createRouter();
-  const ctx = { config, onRestart, emailService, json, readBody, version: VERSION };
+  const ctx = { config, onRestart, onEditionChange, emailService, json, readBody, version: VERSION, edition, projectRoot, stableUserData,
+    publicEdition: (manifest) => { const { resourceDir, presetCode, ...safe } = manifest || {}; return safe; } };
   const dshProxy = createDshProxy({ config });
 
   require('./routes/auth')(router, ctx);
   require('./routes/health')(router, ctx);
   require('./routes/status')(router, ctx);
+  require('./routes/edition')(router, ctx);
   require('./routes/contacts')(router, ctx);
   require('./routes/search')(router, ctx);
   require('./routes/web-search')(router, ctx);

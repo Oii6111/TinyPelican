@@ -1,0 +1,15 @@
+{
+  "id": "romance",
+  "apiVersion": 1,
+  "name": "小鹈鹕·关系指导",
+  "description": "面向恋爱沟通与关系复盘的版本基础包",
+  "presetCode": "TINYPELICAN-ROMANCE",
+  "brand": { "title": "小鹈鹕·关系指导", "subtitle": "更清楚地理解关系，更真诚地表达" },
+  "defaultModel": { "provider": "deepseek", "model": "deepseek-flash" },
+  "navigation": [
+    { "id": "romance-home", "label": "关系首页", "icon": "heart", "status": "placeholder" },
+    { "id": "romance-reply", "label": "回复指导", "icon": "message", "status": "planned" },
+    { "id": "romance-review", "label": "关系复盘", "icon": "history", "status": "planned" }
+  ],
+  "features": { "relationshipGuidance": true, "replyCoaching": true, "relationshipReview": true }
+}

@@ -49,6 +49,10 @@ async function uploadWechatMedia(file) {
 
 export const api = {
   health: () => get('/api/health'),
+  edition: {
+    get: () => get('/api/edition'),
+    activate: (code) => post('/api/edition/activate', { code })
+  },
   status: () => get('/api/status'),
   unread: { read: () => post('/api/unread/read') },
 

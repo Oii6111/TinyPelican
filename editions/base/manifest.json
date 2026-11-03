@@ -1,0 +1,11 @@
+{
+  "id": "base",
+  "apiVersion": 1,
+  "name": "小鹈鹕",
+  "description": "默认的小鹈鹕关系助手",
+  "presetCode": "TINYPELICAN-BASE",
+  "brand": { "title": "小鹈鹕", "subtitle": "你的私人 Agent" },
+  "defaultModel": { "provider": "deepseek", "model": "deepseek-flash" },
+  "navigation": [],
+  "features": {}
+}
