@@ -1,25 +1,9 @@
 {
-  "name": "tinypelican-v3",
+  "name": "xiaotihu",
   "version": "0.1.0",
-  "private": true,
-  "description": "小鹈鹕 V3 — 长记忆 + 主动关系 个人 AI 助手",
+  "description": "小鹈鹕 V3 用户端",
+  "main": "main.js",
   "engines": {
     "node": ">=22.13.0"
-  },
-  "dependencies": {
-    "@deepseek-ai/dsh": "0.1.5-rc.3",
-    "imapflow": "^1.0.181",
-    "mailparser": "^3.7.4",
-    "nodemailer": "^7.0.9"
-  },
-  "scripts": {
-    "start": "node core/launcher.js",
-    "test": "node --test \"tests/*.test.js\"",
-    "server": "node core/server.js",
-    "daemon": "node core/launcher.js",
-    "remind:dry": "node remind.js --dry-run",
-    "import": "node core/import/chat-archive.js",
-    "dist": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
-    "check": "node scripts/check-syntax.js"
   }
 }

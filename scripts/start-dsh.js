@@ -19,6 +19,9 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const { spawn } = require('child_process');
+const { API_KEY_ENV, settingsRoute, mergePiSettings } = require(fs.existsSync(path.join(__dirname, 'core/agent/dsh-provider.js')) ? './core/agent/dsh-provider' : '../core/agent/dsh-provider');
+// 系统代理 → DSH 认得的环境变量（DSH 自己不读 Windows 系统代理）
+const systemProxy = require(fs.existsSync(path.join(__dirname, 'core/net/system-proxy.js')) ? './core/net/system-proxy' : '../core/net/system-proxy');
 
 // content 目录：由 start-dsh.cmd 通过 XIAOTIHU_CONTENT_DIR 指过来（脚本被放在别处时），
 // 否则脚本可能在 <安装目录>\resources\content 下，也可能在仓库的 scripts\ 下。
@@ -31,7 +34,7 @@ function findContent() {
 }
 
 const CONTENT = process.env.XIAOTIHU_CONTENT_DIR || findContent();
-const PORT = Number(process.env.XIAOTIHU_DSH_PORT || 3080) || 3080;
+const PORT = Number(process.env.XIAOTIHU_DSH_PORT || 18792) || 18792;
 const BASE = `http://127.0.0.1:${PORT}`;
 const BUNDLED_DSH = path.join(CONTENT, 'vendor', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
 const WAIT_MS = 180000;
@@ -182,8 +185,8 @@ function preservedSettingsBlocks(file) {
   }
   return blocks
     .filter((block) => !OWNED_SETTINGS_KEYS.has(block.key))
-    .map((block) => block.lines.join('\n').replace(/\s+$/, ''))
-    .filter((text) => text !== '');
+    .map((block) => ({ key: block.key, text: block.lines.join('\n').replace(/\s+$/, '') }))
+    .filter((block) => block.text !== '');
 }
 
 // agent-default-model 是我们拥有的键，但 DSH 自己也往里写（dsh-agent-default-model
@@ -211,27 +214,19 @@ function writeDshSettings(home, model) {
   const usable = !!(model && model.model && model.baseUrl);
   const label = usable ? (PROVIDER_LABELS[model.name] || model.name) : '';
   const facts = modelFacts(usable ? model : null);
+  const route = usable ? settingsRoute(model, facts, label) : null;
   const lines = usable
     ? [
       SETTINGS_MARKER,
       'agent-default-model:',
-      '  provider: deepseek-official',
+      `  provider: ${route.provider}`,
       `  model: ${quote(model.model)}`,
       // DSH 写进来的推理等级等子键原样保留
       ...preservedSubKeys(file, 'agent-default-model', ['provider', 'model']),
-      'llm-deepseek:',
-      `  baseURL: ${quote(model.baseUrl)}`,
-      '  apiKeyEnv: DEEPSEEK_API_KEY',
-      '  models:',
-      `    - id: ${quote(model.model)}`,
-      `      name: ${quote(`${model.model} · ${label}`)}`,
-      '      contextWindow: 1000000',
-      // 按 provider/模型区分：只有上游支持时才声明（见 modelFacts）
-      ...(facts.image ? ['      inputModalities: [text, image]'] : []),
-      ...(facts.inHistorySystemPrompt ? ['      systemPromptUpdate: in-history'] : [])
+      ...route.lines
     ]
     : FALLBACK_SETTINGS_LINES.slice();
-  for (const block of preservedSettingsBlocks(file)) lines.push('', block);
+  for (const block of mergePiSettings(lines, preservedSettingsBlocks(file))) lines.push('', block.text);
   try {
     fs.mkdirSync(home, { recursive: true });
     const next = lines.join('\n') + '\n';
@@ -374,9 +369,16 @@ function hasCachedCookie() {
 
 // 核心不可用时：脚本自己拉起 `dsh web`（带上 --expose-internals，live reload 也不怕）
 function ownLaunch(bin) {
+  // 代理跟随系统：DSH 只认 http_proxy/https_proxy，不读 Windows 系统代理；这里翻译好再传下去
+  const childEnv = { ...process.env };
+  let proxySummary = '';
+  try {
+    proxySummary = systemProxy.applyToEnv(childEnv).summary;
+  } catch {}
+  if (proxySummary) say('出站代理：' + proxySummary);
   ownChild = spawn(process.execPath, ['--expose-internals', bin, 'web', '--port', String(PORT), '--no-open'], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: childEnv,
     windowsHide: true
   });
   ownState.pid = ownChild.pid;
@@ -420,7 +422,7 @@ function ownLaunch(bin) {
       }
       if (Date.now() > deadline) {
         clearInterval(tick);
-        resolve({ ok: false, error: `等待 ${Math.round(WAIT_MS / 1000)} 秒后 3080 端口仍不可达` });
+        resolve({ ok: false, error: `等待 ${Math.round(WAIT_MS / 1000)} 秒后 ${PORT} 端口仍不可达` });
       }
     }, 500);
   });
@@ -540,6 +542,7 @@ async function main() {
 
   // 以设置里的 Key 为准，覆盖环境里可能残留的旧 DEEPSEEK_API_KEY
   if (model && model.apiKey) process.env.DEEPSEEK_API_KEY = model.apiKey;
+  if (model) process.env[API_KEY_ENV] = model.apiKey || 'ollama';
 
   // 要不要把启动交给核心？只有当「核心自己写的模型配置」和我们想要的一致时才敢交给它：
   // 老版本核心按 config.engine.provider 写 settings.yaml（不看有没有 Key），

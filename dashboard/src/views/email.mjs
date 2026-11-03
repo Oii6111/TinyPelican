@@ -1,6 +1,85 @@
 import { api } from '../api.mjs';
 import { el, empty, fmtTime, toast } from '../ui.mjs';
 
+const UNSAFE_TAGS = 'script, iframe, frame, frameset, object, embed, form, input, button, textarea, select, option, link, meta, base, svg, math';
+const URL_ATTRIBUTES = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster', 'background']);
+const CSP = "default-src 'none'; img-src http: https: data: cid:; style-src 'unsafe-inline'; font-src http: https: data:; media-src http: https: data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
+
+function safeCss(value) {
+  return String(value || '')
+    .replace(/@import[\s\S]*?;/gi, '')
+    .replace(/(?:expression|behavior|-moz-binding)\s*:[^;}]*/gi, '')
+    .replace(/url\s*\(\s*(?:"|')?\s*(?:javascript|vbscript):[\s\S]*?\)/gi, 'url()');
+}
+
+function safeUrl(value) {
+  const compact = String(value || '').replace(/[\u0000-\u0020]+/g, '').toLowerCase();
+  return !/^(?:javascript|vbscript|file):|^data:text\/html/.test(compact);
+}
+
+export function sanitizeEmailHtml(value) {
+  const parsed = new DOMParser().parseFromString(String(value || ''), 'text/html');
+  parsed.querySelectorAll(UNSAFE_TAGS).forEach((node) => node.remove());
+  for (const node of parsed.querySelectorAll('*')) {
+    for (const attribute of [...node.attributes]) {
+      const name = attribute.name.toLowerCase();
+      if (name.startsWith('on') || name === 'srcdoc' || name === 'ping') {
+        node.removeAttribute(attribute.name);
+      } else if (URL_ATTRIBUTES.has(name) && !safeUrl(attribute.value)) {
+        node.removeAttribute(attribute.name);
+      } else if (name === 'style') {
+        node.setAttribute(attribute.name, safeCss(attribute.value));
+      }
+    }
+  }
+  for (const style of parsed.querySelectorAll('style')) style.textContent = safeCss(style.textContent);
+
+  const policy = parsed.createElement('meta');
+  policy.setAttribute('http-equiv', 'Content-Security-Policy');
+  policy.setAttribute('content', CSP);
+  parsed.head.prepend(policy);
+  const baseStyle = parsed.createElement('style');
+  baseStyle.textContent = 'html,body{margin:0;background:#fff}body{padding:16px}img{max-width:100%;height:auto}table{max-width:100%}a{overflow-wrap:anywhere}';
+  parsed.head.append(baseStyle);
+  return '<!doctype html>' + parsed.documentElement.outerHTML;
+}
+
+function createEmailFrame(message) {
+  const frame = el('iframe', {
+    class: 'email-memory-frame',
+    title: `邮件正文：${message.subject || '无主题'}`,
+    sandbox: 'allow-same-origin',
+    referrerpolicy: 'no-referrer',
+    loading: 'lazy'
+  });
+  frame.addEventListener('load', () => {
+    try {
+      const root = frame.contentDocument?.documentElement;
+      if (!root) return;
+      frame.style.height = `${Math.min(900, Math.max(220, root.scrollHeight + 4))}px`;
+    } catch {
+      frame.style.height = '480px';
+    }
+  });
+  frame.srcdoc = sanitizeEmailHtml(message.html);
+  return frame;
+}
+
+function createEmailBody(message) {
+  const text = String(message.text || message.body || message.snippet || '').trim();
+  if (String(message.html || '').trim()) {
+    const host = el('div', { class: 'email-memory-rich' });
+    let loaded = false;
+    host.load = () => {
+      if (loaded) return;
+      loaded = true;
+      host.append(createEmailFrame(message));
+    };
+    return host;
+  }
+  return el('div', { class: 'email-memory-body', text: text || '（无正文）' });
+}
+
 function senderOf(message) {
   const value = message.from || message.sender || message.fromAddress || '未知发件人';
   return typeof value === 'object' ? (value.name || value.address || '未知发件人') : value;
@@ -32,12 +111,14 @@ export function mountInbox(container, ctx) {
       for (const message of messages) {
         const category = String(message.category || message.analysis?.category || 'unknown');
         const categoryClass = category === 'important' ? 'info' : (category === 'ads' || category === 'noise' ? 'muted' : 'warn');
-        const body = message.text || message.body || message.snippet || message.summary || '';
-        list.append(el('details', { class: 'item-card email-memory-item' },
+        const body = createEmailBody(message);
+        const item = el('details', { class: 'item-card email-memory-item' },
           el('summary', {}, el('strong', { text: message.subject || '无主题' }), el('span', { class: 'muted', text: `  ${senderOf(message)}  ${fmtTime(message.date || message.receivedAt || message.ts)}` }), el('span', { class: `badge ${categoryClass}`, text: category })),
-          message.summary ? el('div', { class: 'meta', text: message.summary }) : null, el('div', { class: 'email-memory-body', text: body }),
+          message.summary ? el('div', { class: 'meta', text: message.summary }) : null, body,
           message.contact ? el('div', { class: 'meta', text: `联系人：${message.contact}` }) : null,
-          message.attachments?.length ? el('div', { class: 'meta', text: `附件：${message.attachments.map((x) => x.filename || x.name || x).join(', ')}` }) : null));
+          message.attachments?.length ? el('div', { class: 'meta', text: `附件：${message.attachments.map((x) => x.filename || x.name || x).join(', ')}` }) : null);
+        item.addEventListener('toggle', () => { if (item.open) body.load?.(); });
+        list.append(item);
       }
     } catch (error) { status.textContent = '加载失败'; list.append(el('div', { class: 'empty', text: `邮件加载失败：${error.message}` })); }
   }

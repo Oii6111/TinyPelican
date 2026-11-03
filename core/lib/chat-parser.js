@@ -32,26 +32,36 @@ function toMsg(block) {
 }
 
 // 块格式（微信实际输出）：昵称 / 时间 / 内容 各占一行，消息之间空行分隔
-function parseBlockFormat(text) {
-  const out = [];
+// 同时返回 matchedLines（参与匹配的原始行数）：一条块格式消息 = 3 行起，
+// 让「最少匹配行数」按行判定，复制单条消息时不会被「不足 2 条」拦掉。
+function parseBlockDetail(text) {
+  const messages = [];
+  let matchedLines = 0;
   let block = [];
+  const flush = () => {
+    // 微信在跨天处会多插一行「日期 时间」分隔行；选中范围跨天时它会贴在第一条消息前面，
+    // 先把它去掉再解析，否则这条消息会整条丢掉。
+    const message = block.length >= 4 && TS_LINE_RE.test(block[0].trim()) ? block.slice(1) : block;
+    if (message.length >= 3) {
+      const m = toMsg(message);
+      if (m) {
+        messages.push(m);
+        matchedLines += block.length;
+      }
+    }
+    block = [];
+  };
   for (const raw of String(text).split(/\r?\n/)) {
     const ln = raw.trimEnd();
-    if (ln.trim() === '') {
-      if (block.length >= 3) {
-        const m = toMsg(block);
-        if (m) out.push(m);
-      }
-      block = [];
-    } else {
-      block.push(ln);
-    }
+    if (ln.trim() === '') flush();
+    else block.push(ln);
   }
-  if (block.length >= 3) {
-    const m = toMsg(block);
-    if (m) out.push(m);
-  }
-  return out;
+  flush();
+  return { messages, matchedLines };
+}
+
+function parseBlockFormat(text) {
+  return parseBlockDetail(text).messages;
 }
 
 // 单行格式：昵称 日期 时间 内容
@@ -69,10 +79,28 @@ function parseLineFormat(text) {
   return out;
 }
 
+// 解析详情：messages + 本次匹配到的行数。
+// 只有 1 个块时不能直接丢掉：单行格式也要先试一遍（避免把「昵称 日期 时间 内容」这种
+// 一行一条的格式误判成块格式），两者都没有才认为这条块格式消息就是全部内容。
+function parseChatDetail(text) {
+  const block = parseBlockDetail(text);
+  if (block.messages.length >= 2) return block;
+  const lines = parseLineFormat(text);
+  if (lines.length) return { messages: lines, matchedLines: lines.length };
+  return block;
+}
+
 function parseChatText(text) {
-  const blocks = parseBlockFormat(text);
-  if (blocks.length >= 2) return blocks;
-  return parseLineFormat(text);
+  return parseChatDetail(text).messages;
+}
+
+// 是否像聊天记录（至少有一行「日期 时间」或「昵称 日期 时间 内容」）。
+// 用于避免把没解析出消息的聊天文本误当成语音转写文本回填到语音队列。
+function looksLikeChatText(text) {
+  return String(text || '').split(/\r?\n/).some((raw) => {
+    const ln = raw.trim();
+    return !!ln && (TS_LINE_RE.test(ln) || LINE_RE.test(ln));
+  });
 }
 
 // 一次复制中，非自己昵称只有 1 个 -> 私聊归属；>=2 个 -> 群聊（无归属，留待群聊模型）
@@ -82,4 +110,4 @@ function getBatchContact(msgs, selfNicknames = []) {
   return nonSelf.length === 1 ? nonSelf[0] : '';
 }
 
-module.exports = { classifyContent, parseBlockFormat, parseLineFormat, parseChatText, getBatchContact, STRUCTURAL_TYPES };
+module.exports = { classifyContent, parseBlockFormat, parseLineFormat, parseChatText, parseChatDetail, looksLikeChatText, getBatchContact, STRUCTURAL_TYPES };

@@ -41,7 +41,15 @@ module.exports = (router, ctx) => {
         if (!/^dsh-auth-[A-Za-z0-9_-]+=[A-Za-z0-9._-]+$/.test(cookie)) {
           return ctx.json(res, 503, { error: 'DSH 登录凭据格式异常，请重启小鹈鹕后重试。' });
         }
-        res.setHeader('Set-Cookie', cookie + '; Path=/; HttpOnly; SameSite=Strict');
+        const newCookieName = cookie.split('=')[0];
+        const oldCookies = String(req.headers.cookie || '')
+          .split(';')
+          .map(part => part.trim().split('=')[0])
+          .filter(name => name.startsWith('dsh-auth-') && name !== newCookieName);
+        res.setHeader('Set-Cookie', [
+          ...oldCookies.map(name => `${name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict`),
+          cookie + '; Path=/; HttpOnly; SameSite=Strict'
+        ]);
       }
       return ctx.json(res, 200, { url: new URL('/dsh/', pageUrl).href });
     } catch {

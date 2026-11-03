@@ -30,6 +30,8 @@ export function mount(container) {
 
   let selected = '';
   let profileOpen = false;
+  let profileCollapsed = false;
+  let summaryCollapsed = false;
   let contacts = [];
   let stopMemory = () => {};
   let chatVersion = 0;
@@ -329,7 +331,7 @@ export function mount(container) {
       catch (error) { toast('关联邮箱失败：' + error.message, false); }
       finally { emailAdd.disabled = false; }
     };
-    const memory = memoryPanel(contact);
+    const memory = memoryPanel(contact, { collapsed: summaryCollapsed, onCollapseChange: (value) => { summaryCollapsed = value; } });
     stopMemory = memory.stop;
     const preview = el('div', { class: 'contact-profile-preview' });
     for (const [section, area] of editors) {
@@ -341,8 +343,22 @@ export function mount(container) {
     }
     if (!preview.children.length) preview.append(memory.profileEmpty);
     const editorPanel = el('div', { id: 'contact-profile-editors', class: 'wechat-profile-children', hidden: true }, ...sections);
+    const cardBody = el('div', { id: 'contact-profile-body', class: 'contact-profile-body' }, preview, editorPanel);
     const edit = el('button', { class: 'contact-profile-edit-toggle', 'aria-label': '编辑画像', 'aria-expanded': 'false', 'aria-controls': 'contact-profile-editors' }, contactIcon('edit'), el('span', { text: '编辑' }));
+    const collapse = el('button', { class: 'contact-card-collapse', 'aria-label': '收起具体画像', 'aria-expanded': 'true', 'aria-controls': 'contact-profile-body' }, contactIcon('chevron'));
+    // 卡片整体可折叠：先只留标题行，点开再显示字段或编辑区
+    function setCollapsed(collapsed) {
+      profileCollapsed = collapsed;
+      cardBody.hidden = collapsed;
+      fields.classList.toggle('collapsed', collapsed);
+      collapse.classList.toggle('collapsed', collapsed);
+      collapse.setAttribute('aria-expanded', String(!collapsed));
+      collapse.setAttribute('aria-label', collapsed ? '展开具体画像' : '收起具体画像');
+      collapse.setAttribute('title', collapsed ? '展开具体画像' : '收起具体画像');
+    }
+    collapse.onclick = () => setCollapsed(!profileCollapsed);
     edit.onclick = () => {
+      if (profileCollapsed) setCollapsed(false);
       editorPanel.hidden = !editorPanel.hidden;
       preview.hidden = !editorPanel.hidden;
       edit.setAttribute('aria-expanded', String(!editorPanel.hidden));
@@ -350,14 +366,15 @@ export function mount(container) {
       if (!editorPanel.hidden && sections[0]) sections[0].open = true;
     };
     const fields = el('section', { class: 'wechat-profile-card contact-profile-card' },
-      el('div', { class: 'contact-card-head' }, el('h3', { text: '具体画像' }), el('div', { class: 'contact-card-tools' }, edit, memory.profileStatus)),
-      preview, editorPanel
+      el('div', { class: 'contact-card-head' }, el('h3', { text: '具体画像' }), el('div', { class: 'contact-card-tools' }, collapse, edit, memory.profileStatus)),
+      cardBody
     );
+    setCollapsed(profileCollapsed);
     if (meta.confidence !== undefined && meta.confidence !== null && Number.isFinite(Number(meta.confidence))) {
       const confidence = Math.max(0, Math.min(100, Math.round(Number(meta.confidence) * 100)));
-      memory.panel.append(el('div', { class: 'contact-confidence' }, el('span', { text: '画像置信度' }), el('strong', { text: confidence + '%' }), el('progress', { max: 100, value: confidence, 'aria-label': '画像置信度' })));
+      memory.body.append(el('div', { class: 'contact-confidence' }, el('span', { text: '画像置信度' }), el('strong', { text: confidence + '%' }), el('progress', { max: 100, value: confidence, 'aria-label': '画像置信度' })));
     }
-    if (metaText) memory.panel.append(el('footer', { class: 'wechat-profile-meta wechat-profile-footer', text: metaText }));
+    if (metaText) memory.body.append(el('footer', { class: 'wechat-profile-meta wechat-profile-footer', text: metaText }));
     const actions = el('div', { class: 'wechat-profile-actions' }, save, memory.rebuild, memory.analyze, memory.state);
     const danger = el('section', { class: 'contact-data-management', 'aria-label': '数据管理' },
       el('div', { class: 'contact-data-heading', text: '数据管理' }), el('div', { class: 'contact-data-actions' }, clear, remove)

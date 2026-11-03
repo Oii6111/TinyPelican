@@ -8,10 +8,14 @@ const { createEmailDb } = require('../core/email/email-db');
 
 test('email parser removes quoted history and unsafe HTML', () => {
   assert.equal(cleanText('当前内容\n> quoted\n\n-----Original Message-----\nold'), '当前内容');
-  const html = cleanHtml('<div onclick="bad()">ok</div><script>alert(1)</script><a href="javascript:bad()">x</a>');
+  const html = cleanHtml('<style>.card{color:#123}</style><div class="card" onclick="bad()">ok</div><script>alert(1)</script><form><input></form><a href="javascript:bad()">x</a>');
+  assert.ok(html.includes('<style>.card{color:#123}</style>'));
+  assert.ok(html.includes('class="card"'));
   assert.ok(!html.includes('<script'));
   assert.ok(!html.includes('onclick'));
   assert.ok(!html.includes('javascript:'));
+  assert.ok(!html.includes('<form'));
+  assert.ok(!html.includes('<input'));
 });
 
 test('email analysis is constrained to supported categories and actions', () => {

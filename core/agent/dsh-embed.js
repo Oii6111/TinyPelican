@@ -40,12 +40,12 @@ function transformScript(source) {
 function transformModule(source) {
   let result = source;
   if (source.includes('id: "@deepseek-ai/dsh-client-ui-open-in-app"')) {
-    result = replaceRequired(result, 'const OPEN_IN_APP_ICON_PREFIX = "/open-in-app/icon";', 'const OPEN_IN_APP_ICON_PREFIX = "/dsh/open-in-app/icon";');
+    result = replaceRequired(result, 'const OPEN_IN_APP_ICON_PREFIX_ROUTE = "/open-in-app/icon".slice(1);', 'const OPEN_IN_APP_ICON_PREFIX_ROUTE = "open-in-app/icon";');
   }
   if (source.includes('id: "@deepseek-ai/dsh-client-ui-layout"')) {
     result = replaceRequired(result,
-      'const s = sidebar === 0 ? 56 : clampWidth(sidebar, 264, 420);',
-      'const s = window.__TP_EMBED__.hasSidebar() ? 0 : sidebar === 0 ? 56 : clampWidth(sidebar, 264, 420);');
+      'const s = sidebar === 0 ? collapsedWidth : clampWidth(sidebar, 264, 420);',
+      'const s = window.__TP_EMBED__.hasSidebar() ? 0 : sidebar === 0 ? collapsedWidth : clampWidth(sidebar, 264, 420);');
     result = replaceRequired(result,
       'const sidebarCollapsed = narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebar === 0;',
       'const sidebarCollapsed = window.__TP_EMBED__.hasSidebar() || (narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebar === 0);');
@@ -67,16 +67,18 @@ function transformModule(source) {
     result = replaceBestEffort(result, '"hero.preview": "Preview"', '"hero.preview": ""');
   }
   if (source.includes('id: "@deepseek-ai/dsh-client-ui-chat"')) {
-    result = replaceRequired(result, '"chat.deepDiving": "深度求索中..."', '"chat.deepDiving": "小鹈鹕正在思考…"');
-    result = replaceRequired(result, '"chat.deepDiving": "Deep diving..."', '"chat.deepDiving": "TinyPelican is thinking…"');
+    result = replaceRequired(result, '"chat.deepDiving": "深度求索中"', '"chat.deepDiving": "小鹈鹕正在思考…"');
+    result = replaceRequired(result, '"chat.deepDiving": "Deep diving"', '"chat.deepDiving": "TinyPelican is thinking…"');
+    result = replaceRequired(result, '"chat.deepDivingFor": "深度求索中，用时 {duration} ···"', '"chat.deepDivingFor": "小鹈鹕正在思考，用时 {duration} ···"');
+    result = replaceRequired(result, '"chat.deepDivingFor": "Deep diving for {duration} ···"', '"chat.deepDivingFor": "TinyPelican is thinking for {duration} ···"');
   }
   if (source.includes('id: "@deepseek-ai/dsh-client-ui-settings-general"')) {
     result = replaceRequired(result, 'function apply(ctx) {', 'function apply(ctx) {\nctx.effect(() => ctx.slots.onEntryError((key, entry) => { if (key === "settings.section") window.__TP_EMBED__.settingsError(entry.options.id); }));');
-    result = replaceRequired(result, '}, SettingsRoot));', '}, window.__TP_EMBED__.wrapSettings(SettingsRoot, react, require("react-dom"))));');
+    result = replaceRequired(result, '}, SettingsRoot);', '}, window.__TP_EMBED__.wrapSettings(SettingsRoot, react, require("react-dom")));');
     result = replaceRequired(result,
       'className: clsx(SettingsRoot_module_css_default.triggerRow, !wide && SettingsRoot_module_css_default.railRow),',
       'className: clsx(SettingsRoot_module_css_default.triggerRow, !wide && SettingsRoot_module_css_default.railRow), "data-tp-settings-trigger": true,');
-    result = replaceRequired(result, 'const openSection = (0, react.useCallback)((id) => {', 'const openSection = (0, react.useCallback)((id) => {\nif (window.__TP_EMBED__.openSettings(id)) return;');
+    result = replaceRequired(result, 'openSection: (d, id) => {', 'openSection: (d, id) => {\nif (window.__TP_EMBED__.openSettings(id)) return;');
   }
   if (source.includes('id: "@deepseek-ai/dsh-client-ui-theme"')) {
     result = replaceRequired(result, '}, AppearanceRow));', '}, () => react_jsx_runtime.jsxs("div", { className: "tp-appearance-row", children: [react_jsx_runtime.jsx("span", { children: "外观" }), react_jsx_runtime.jsx("span", { children: "跟随小鹈鹕" })] })));');
@@ -103,17 +105,16 @@ function transformModule(source) {
   if (source.includes('id: "@deepseek-ai/dsh-client-ui-settings-models"')) {
     // 设置页首屏的「内测声明」正文。正常路径由 core/agent/dsh-client.js 写 ui-onboarding 确认版本来
     // 压掉（那样整条模态都不出现）；这里是上游 bump 版本号时的兜底，只改文案。
-    result = replaceBestEffortPattern(result, /welcomeBody: "DeepSeek Harness 0\.1 remains[^"]*"/, 'welcomeBody: "小鹈鹕 0.1 仍处在内测阶段，我们会持续打磨并欢迎反馈。"');
-    result = replaceBestEffortPattern(result, /welcomeBody: "DeepSeek Harness 目前的 0\.1 版本[^"]*"/, 'welcomeBody: "小鹈鹕 0.1 仍处在内测阶段，我们会持续打磨并欢迎反馈。"');
+    result = replaceBestEffortPattern(result, /welcomeBody: "DeepSeek Harness[^"\n]*"/g, 'welcomeBody: "小鹈鹕仍处在内测阶段，我们会持续打磨并欢迎反馈。"');
   }
   if (source.includes('dataset.dshBootSpinner')) {
     // shell bundle（应用本体，加载时屏幕正中的 boot 卡）。
     // 这里**故意用尽力而为**：改不掉只是露出 "HARNESS" 字样，抛错却会让整个界面打不开。
-    result = replaceBestEffort(result, 'this.wordmark=ot(rt.wordmark,"HARNESS")', 'this.wordmark=ot(rt.wordmark,"小鹈鹕")');
-    result = replaceBestEffort(result, 'this.hint=ot(rt.hint,"Loading plugins\u2026")', 'this.hint=ot(rt.hint,"正在加载\u2026")');
+    result = result.replace(/(this\.wordmark=[\w$]+\([\w$]+\.wordmark,)"HARNESS"/g, '$1"小鹈鹕"');
+    result = result.replace(/(this\.hint=[\w$]+\([\w$]+\.hint,)"Loading plugins…"/g, '$1"正在加载…"');
   }
   if (source.includes('createPortal(') && source.includes('document.body') && source.includes('Menu:')) {
-    result = result.replace(/\b([A-Za-z_$][\w$]*)\.createPortal\(/g, 'window.__TP_EMBED__.portal($1.createPortal,');
+    result = result.replace(/(?<![\w$])([A-Za-z_$][\w$]*)\.createPortal\(/g, 'window.__TP_EMBED__.portal($1.createPortal,');
   }
   result = result.replace(/(["'])\/plugins\//g, '$1/dsh/plugins/');
   result = result.replace(/(["'])DeepSeek Harness\1/g, '$1小鹈鹕$1');

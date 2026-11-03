@@ -69,6 +69,11 @@
 .contact-profile-edit-toggle, .contact-card-refresh { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 0; padding: 3px; color: #8b929b; cursor: pointer; font-size: 11px !important; }
 .contact-profile-edit-toggle:hover, .contact-card-refresh:hover { color: #9d7028; }
 .contact-profile-edit-toggle .contact-ui-icon, .contact-card-refresh .contact-ui-icon { flex-basis: 15px; width: 15px; height: 15px; }
+.contact-card-collapse { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: 0; background: transparent; color: #8b929b; cursor: pointer; }
+.contact-card-collapse:hover { color: #9d7028; }
+.contact-card-collapse .contact-ui-icon { flex-basis: 16px; width: 16px; height: 16px; transition: transform .18s ease; }
+.contact-card-collapse.collapsed .contact-ui-icon { transform: rotate(-90deg); }
+.wechat-profile-card.collapsed .contact-card-head { margin-bottom: 0; }
 .contact-status { display: inline-flex; flex-shrink: 0; align-items: center; border-radius: 20px; padding: 3px 9px; color: #8b939a; background: #f2f4f1; font-size: 10px; white-space: nowrap; }
 .contact-status.pending { color: #ad7e29; background: #fff5db; }
 .contact-status.complete { color: #52976a; background: #eaf8ee; }
@@ -92,6 +97,11 @@
 .contact-workspace .chat-topic-entry { width: 100%; margin: 0; border-radius: 8px; padding: 8px 10px; background: #f8f9f6; font-size: 12px; color: #7f8790; overflow-wrap: anywhere; }
 .contact-workspace .chat-topic-time { font-size: 10px; font-weight: 500; color: #aa8645; }
 .contact-summary-range { display: block; margin-top: 12px; font-size: 10px; color: #a0a6ad; line-height: 1.7; }
+.contact-summary-more { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 2px 0; border: 0; background: transparent; color: #9d7028; font-size: 12px; cursor: pointer; }
+.contact-summary-more:hover { color: #7d581b; text-decoration: underline; }
+.contact-summary-more .contact-ui-icon { width: 14px; height: 14px; flex-basis: 14px; }
+.contact-summary-more small { font-size: 10px; font-weight: 400; color: #a9b0b7; }
+.contact-summary-more:hover small { color: #8d949c; }
 .contact-confidence { display: flex; align-items: center; gap: 8px; margin-top: 16px; font-size: 11px; color: #858d97; }
 .contact-confidence strong { font-size: 12px; color: #444e58; }
 .contact-confidence progress { flex: 1; min-width: 40px; width: 100%; height: 5px; appearance: none; border: 0; border-radius: 10px; overflow: hidden; accent-color: var(--contact-amber); }
@@ -145,4 +155,40 @@
   .contact-workspace .wechat-bubble { font-size: 13px; padding: 9px 12px; }
   .contact-workspace .contact-readonly-footer { padding: 10px 12px; }
   .contact-readonly-bar { flex-wrap: wrap; padding: 9px 10px; font-size: 11px; }
+}
+
+/* ---------- 全部聊天话题弹窗：挂在 body 上，不继承工作区变量与容器查询 ---------- */
+.contact-topic-modal {
+  --topic-ink: #272e36;
+  --topic-muted: #929aa3;
+  --topic-line: #e9ebe7;
+  --topic-amber: #aa8645;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(620px, 100%);
+  padding: 22px;
+  color: var(--topic-ink);
+}
+.contact-topic-modal [hidden] { display: none !important; }
+.contact-topic-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.contact-topic-modal-title h3 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+.contact-topic-modal-sub { display: block; margin-top: 4px; font-size: 11px; color: var(--topic-muted); }
+.contact-topic-modal .wechat-close-btn { display: flex; flex: 0 0 32px; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--topic-muted); cursor: pointer; }
+.contact-topic-modal .wechat-close-btn:hover { border-color: #f1ddb0; background: #fff7e4; color: #946620; }
+.contact-topic-modal .contact-summary-text { margin: 0; }
+.contact-topic-modal-state { font-size: 11px; color: var(--topic-muted); line-height: 1.7; }
+.contact-topic-modal-state:empty { display: none; }
+.contact-topic-modal-list { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 8px; min-height: 120px; max-height: min(52vh, 440px); overflow-y: auto; padding-right: 2px; }
+.contact-topic-modal-list .chat-topic-entry { width: 100%; margin: 0; padding: 9px 11px; border-radius: 8px; background: #f8f9f6; color: #6f7780; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.contact-topic-modal-list .chat-topic-time { display: block; margin-bottom: 3px; color: var(--topic-amber); font-size: 10px; font-weight: 500; }
+.contact-topic-modal-list .contact-topic-chip { font-size: 11px; }
+.contact-topic-empty { width: 100%; padding: 44px 0; text-align: center; font-size: 12px; color: #9aa1a8; }
+.contact-topic-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 1px solid var(--topic-line); }
+.contact-topic-page { font-size: 11px; color: var(--topic-muted); }
+.contact-topic-page-actions { display: flex; gap: 8px; }
+.contact-topic-page-actions .btn { min-height: 32px; padding: 5px 14px; border-radius: 9px; font-size: 12px; }
+@media (max-width: 640px) {
+  .contact-topic-modal { padding: 16px; }
+  .contact-topic-modal-list { max-height: 46vh; }
 }

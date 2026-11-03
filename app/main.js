@@ -17,20 +17,21 @@ const PORT = 18791;
 const RESTART_EXIT_CODE = 42;
 
 const { initializeRuntime, selectWritableDirectory, userDirectories, workspaceId } = require(path.join(PROJECT_ROOT, 'core/lib/startup'));
+const { effectiveEngineProvider } = require(path.join(PROJECT_ROOT, 'core/agent/dsh-client'));
 const { waitForCore } = require(path.join(PROJECT_ROOT, 'core/lib/readiness'));
+const { resolveCoreRuntime, needsElectronAsNode } = require(path.join(PROJECT_ROOT, 'core/lib/runtime-node'));
 try {
   const id = workspaceId(PROJECT_ROOT);
   const preferred = isPackaged ? app.getPath('userData') : path.join(app.getPath('appData'), 'TinyPelican-dev', id);
+  const developmentFallback = isPackaged ? null : path.join(PROJECT_ROOT, 'tmp', 'electron-user-data', id);
   const candidates = process.env.XIAOTIHU_USER_DATA_DIR ? [process.env.XIAOTIHU_USER_DATA_DIR] : [
     preferred,
-    ...userDirectories().map(directory => path.join(directory, isPackaged ? 'TinyPelican' : 'TinyPelican-dev', ...(isPackaged ? [] : [id]), 'electron'))
+    ...userDirectories().map(directory => path.join(directory, isPackaged ? 'TinyPelican' : 'TinyPelican-dev', ...(isPackaged ? [] : [id]), 'electron')),
+    developmentFallback
   ];
   const userData = selectWritableDirectory(candidates, { label: 'XIAOTIHU_USER_DATA_DIR', childDirectory: 'browser-session-v2' });
   app.setPath('userData', userData);
   app.setPath('sessionData', path.join(userData, 'browser-session-v2'));
-  if (isPackaged && !process.env.XIAOTIHU_DATA_DIR) {
-    process.env.XIAOTIHU_DATA_DIR = path.join(userData, 'data');
-  }
   initializeRuntime({ root: PROJECT_ROOT, packaged: isPackaged });
 } catch (error) {
   if (dialog && typeof dialog.showErrorBox === 'function') {
@@ -189,18 +190,38 @@ function portFree(port) {
   });
 }
 
-// 运行核心：默认用 Electron 自带的 Node（ELECTRON_RUN_AS_NODE=1，进程即 node），
-// 这样用户机器上不需要另外安装 Node；开发时可用 XIAOTIHU_NODE 指定系统 Node。
+// 运行核心：打包版优先用随包内置的 node.exe（resources/content/runtime/node.exe），
+// 找不到才退回 Electron 自带的 Node（ELECTRON_RUN_AS_NODE=1，进程即 node）；
+// 开发时可用 XIAOTIHU_NODE 指定系统 Node。
+//
+// 为什么打包版要单独的 node.exe：electron.exe 是 GUI 子系统程序，当 Node 用时进程没有控制台，
+// 而 DSH 内部执行工具命令时（自带的 windows-job runner，原生 CreateProcessW，不带
+// CREATE_NO_WINDOW）拉起的 pwsh.exe 在「父进程没有控制台」时会新建一个可见控制台窗口 ——
+// 表现就是「一用工具就疯狂弹 PowerShell 窗口」。真正的 node.exe 是控制台子系统，被
+// windowsHide 启动后整棵树共享一个隐藏控制台，DSH 这些内部 spawn 就再也不会冒窗口。
+// 详见 core/lib/runtime-node.js。
 function coreRunner() {
-  if (process.env.XIAOTIHU_NODE) return process.env.XIAOTIHU_NODE;
-  const npmNode = process.env.npm_node_execpath;
-  if (!isPackaged && npmNode && fs.existsSync(npmNode)) return npmNode;
-  return process.execPath;
+  return coreRuntime().runner;
+}
+
+let cachedCoreRuntime = null;
+function coreRuntime() {
+  if (!cachedCoreRuntime) {
+    cachedCoreRuntime = resolveCoreRuntime({
+      contentRoot: PROJECT_ROOT,
+      packaged: isPackaged,
+      platform: process.platform,
+      execPath: process.execPath,
+      override: process.env.XIAOTIHU_NODE,
+      npmNode: process.env.npm_node_execpath
+    });
+  }
+  return cachedCoreRuntime;
 }
 
 function coreEnv(runner) {
   const env = { ...process.env };
-  if (runner === process.execPath) env.ELECTRON_RUN_AS_NODE = '1';
+  if (needsElectronAsNode(runner, process.execPath)) env.ELECTRON_RUN_AS_NODE = '1';
   else delete env.ELECTRON_RUN_AS_NODE;
   if (isPackaged) {
     env.NODE_PATH = [path.join(PROJECT_ROOT, 'vendor', 'node_modules'), env.NODE_PATH].filter(Boolean).join(path.delimiter);
@@ -216,7 +237,14 @@ function startCore() {
   const runner = coreRunner();
   const startedAt = Date.now();
   coreProc = spawn(runner, [CORE], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true, env: coreEnv(runner) });
-  coreProc.on('error', () => {});
+  coreProc.on('error', () => {
+    // 内置 node.exe 起不来（被杀软删掉 / 文件损坏）：退回 Electron 自带 Node，
+    // 至少让应用还能用（代价是打包版的 pwsh 弹窗会回来），总比整个用不了强。
+    if (coreRuntime().kind === 'bundled') {
+      cachedCoreRuntime = { runner: process.execPath, kind: 'electron' };
+      startCore();
+    }
+  });
   coreProc.on('exit', (code) => {
     if (quitting) return;
     if (code === RESTART_EXIT_CODE) {
@@ -227,7 +255,10 @@ function startCore() {
     // 核心会立刻退出，用户只看到「DSH 没起来」。这里直接把原因弹出来。
     if (code !== 0 && Date.now() - startedAt < 15000 && !coreCrashNotified) {
       coreCrashNotified = true;
-      dialog.showMessageBox(win, {
+      const showCoreError = win && !win.isDestroyed()
+        ? options => dialog.showMessageBox(win, options)
+        : options => dialog.showMessageBox(options);
+      showCoreError({
         type: 'error',
         title: '小鹈鹕 · 核心没能启动',
         message: '核心服务启动失败（退出码 ' + code + '）',
@@ -257,6 +288,16 @@ function positionAtScreenCorner() {
 function cardWasManuallyMoved() {
   if (!cardWin || cardWin.isDestroyed() || !lastAutomaticCardPosition) return false;
   return cardWin.getPosition().some((value, index) => Math.abs(value - lastAutomaticCardPosition[index]) > 2);
+}
+
+// 拿不到微信窗口矩形时的兜底锚点：刚复制完鼠标就在聊天窗口里，
+// 贴着鼠标弹比甩到屏幕角落更容易被看见（角落常被最大化窗口盖住，或被当成没弹）。
+function cursorAnchor() {
+  try {
+    const point = screen.getCursorScreenPoint();
+    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) return { x: point.x, y: point.y };
+  } catch {}
+  return null;
 }
 
 function positionFloatingWindows(anchor = currentAnchor) {
@@ -295,7 +336,9 @@ async function refreshCurrentAnchor() {
       : null;
     lastSuggestionId = s.id;
     lastShowToken = Number(s.showToken) || 1;
-    currentAnchor = anchor;
+    // 微信窗口认不出来（例如复制时前台不是微信、窗口最小化）就用鼠标位置兜底，
+    // 否则卡片只能甩到屏幕角落 —— 最大化窗口盖住时看起来就是「没弹」。
+    currentAnchor = anchor || cursorAnchor();
     positionFloatingWindows(currentAnchor);
     return 'ok';
   } catch {
@@ -393,11 +436,12 @@ async function pollSuggestions() {
       lastPendingAt = pending.startedAt;
       const pendingAnchor = pending.anchor && Number.isFinite(Number(pending.anchor.x)) && Number.isFinite(Number(pending.anchor.y))
         ? { x: Number(pending.anchor.x), y: Number(pending.anchor.y) }
-        : currentAnchor;
+        : (currentAnchor || cursorAnchor());
       currentAnchor = pendingAnchor;
       positionFloatingWindows(currentAnchor);
       cardWin.showInactive();
       if (!cardWin.isVisible()) cardWin.show();
+      cardWin.moveTop();
       cardWin.webContents.send('suggestion:shown');
       return;
     }
@@ -414,9 +458,13 @@ async function pollSuggestions() {
     // 重新读一次窗口矩形：微信窗口在复制之后移动过也能贴住输入框。
     await refreshCurrentAnchor();
     if (!cardWin || cardWin.isDestroyed()) return;
+    if (!currentAnchor) currentAnchor = cursorAnchor();
     positionFloatingWindows(currentAnchor);
     cardWin.showInactive();
     if (!cardWin.isVisible()) cardWin.show();
+    // 用户正在别的窗口（例如最大化的浏览器）里时，showInactive 不激活窗口，
+    // 显式抬到最上层，避免卡片被盖住看起来像没弹。
+    cardWin.moveTop();
     cardWin.webContents.send('suggestion:shown');
   } catch {}
 }
@@ -453,9 +501,7 @@ app.whenReady().then(async () => {
   {
     try {
       const cfg = readConfig();
-      const providerName = (cfg.engine && cfg.engine.provider) || '';
-      const prov = (cfg.engine && cfg.engine.providers && cfg.engine.providers[providerName]) || {};
-      if (!prov.apiKey && providerName !== 'ollama') {
+      if (!effectiveEngineProvider(cfg)) {
         win.webContents.once('did-finish-load', () => {
           dialog.showMessageBox(win, {
             type: 'info',

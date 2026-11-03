@@ -12,11 +12,14 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { findDshBin, buildDshEnv, writeGeneratedDshSettings, DEFAULT_DSH_HOME } = require('./dsh-client');
 const webAuth = require('./dsh-web-auth');
+const systemProxy = require('../net/system-proxy');
 const { log } = require('../lib/log');
 const { loadConfig } = require('../lib/config');
 const { ensureSystemPromptPatch, ensureAgentPreset, systemPromptEnv } = require('./system-prompt');
+const { ensureBundledPlugins } = require('./dsh-bundled-plugins');
 
-const DEFAULT_BASE = process.env.DSH_WEB_URL || 'http://127.0.0.1:3080';
+const DEFAULT_BASE = process.env.DSH_WEB_URL || 'http://127.0.0.1:18792';
+const DEFAULT_PORT = new URL(DEFAULT_BASE).port ? Number(new URL(DEFAULT_BASE).port) : 18792;
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
 const sessionCache = new Map();
@@ -573,12 +576,39 @@ function appendDshLog(text) {
   } catch {}
 }
 
+function repairPermissionPreset(dshHome, profile = 'web') {
+  const file = path.join(dshHome, 'profiles', profile, 'cordis.patch.yml');
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return false;
+  }
+  const start = text.indexOf('- id: permission');
+  if (start < 0) return false;
+  const next = text.indexOf('\n- id:', start + 1);
+  const end = next < 0 ? text.length : next;
+  const block = text.slice(start, end);
+  const match = block.match(/defaultPreset:\s*["']?([A-Za-z0-9_-]+)/);
+  if (!match || ['read-only', 'workspace-write', 'danger-full-access'].includes(match[1])) return false;
+  const repaired = block.replace(/defaultPreset:\s*[^\r\n]+/, 'defaultPreset: workspace-write');
+  try {
+    fs.writeFileSync(file, text.slice(0, start) + repaired + text.slice(end), 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function spawnDshWeb(base, port) {
   const bin = findDshBin();
   // 打包分发时 Electron 壳会把 DSH_HOME 指到用户数据目录（首次运行由 DSH 自己生成 profile）。
   // 这时把「设置里的模型」写进该 home，并把 API Key 通过环境变量传给 DSH，
   // 用户装完就能直接用，不必再去 DSH 界面里配一遍。
   const dshHome = String(process.env.DSH_HOME || DEFAULT_DSH_HOME).trim();
+  if (repairPermissionPreset(dshHome)) {
+    log('warn', 'agent', 'DSH profile 的默认权限预设无效，已修复为 workspace-write');
+  }
   // Web 会话的人设来自它的 agent preset（standard 里的 persona 行会遮蔽部署层
   // system-prompt 的 personaPrefix），所以先把「小鹈鹕 preset」写进 $DSH_HOME，
   // 再把默认 preset 指到它。生成失败就退回只打部署层——会话照常能跑，只是人设还是 DSH 自带的。
@@ -595,11 +625,37 @@ function spawnDshWeb(base, port) {
     preset: preset.ok ? preset.id : '', presetError: preset.ok ? '' : preset.reason
   });
   log('info', 'agent', `启动 DSH：bin=${bin} DSH_HOME=${dshHome || '(默认 ~/.dsh)'} runner=${process.execPath}`);
+  // 出站代理决策落在日志里：以后出现「握手失败 / SSE 中断」时，第一眼就能看到当时走没走代理
+  const proxyInfo = systemProxy.lastResolution();
+  log('info', 'agent', `出站代理：${proxyInfo.summary}${proxyInfo.notes && proxyInfo.notes.length ? '｜' + proxyInfo.notes.join('；') : ''}`);
+  if (proxyInfo.source === 'system') {
+    // 系统代理开着但端口没人听（代理客户端异常退出最典型），提前告警，别等模型请求失败
+    systemProxy.probeProxy(proxyInfo).then((probe) => {
+      if (!probe.ok && !probe.skipped) {
+        log('warn', 'agent', `系统代理 ${probe.host}:${probe.port} 连不上（${probe.error}）：代理客户端可能没启动，模型请求会失败；请启动代理客户端或关闭系统代理`);
+      }
+    }).catch(() => {});
+  }
   log(preset.ok ? 'info' : 'warn', 'agent', preset.ok
     ? `小鹈鹕 agent preset：${path.join(dshHome, '.agent-presets', preset.id)}`
     : `agent preset 生成失败，Web 会话将退回 DSH 自带人设：${preset.reason}`);
   if (!patch) {
     log('warn', 'agent', '系统提示 overlay 写不进去（数据目录不可写？），本次不带 --patch 启动：DSH 会用自带人设，产品照常可用');
+  }
+  // 随包内置的 profile 插件（侧栏「插件」页里的「从插件市场安装」入口由它提供）。
+  // 必须在 DSH 启动前就位：profile 的 bundle 列表在启动时读取，之后再写要等重启。
+  // 失败只记日志，绝不挡住启动——最多少一个入口。
+  try {
+    ensureBundledPlugins({
+      home: dshHome,
+      contentRoot: PROJECT_ROOT,
+      dshBin: bin,
+      profile: 'web',
+      env,
+      log: (level, message) => log(level, 'agent', message)
+    });
+  } catch (error) {
+    log('warn', 'agent', `随包插件自举失败（不影响 DSH 启动）：${String((error && error.message) || error)}`);
   }
   // --expose-internals：DSH 的 web profile 默认 patchReload: live，它的 HMR 插件要求这个 flag，
   //   否则 DSH 会在启动阶段直接崩（--expose-internals is required for HMR service）：全新机器上就是这样。
@@ -661,6 +717,10 @@ function refreshDshSettings() {
 async function waitForWeb(base, waitMs) {
   const deadline = Date.now() + Math.max(0, waitMs);
   while (Date.now() < deadline) {
+    if (webChild && webChild.exitCode !== null) {
+      rememberWebState({ ok: false, error: `DSH 进程已退出（code=${webChild.exitCode}）` });
+      return false;
+    }
     if (await isReachable(base, 800)) {
       // 起来了就用刚抓到的令牌换一次 cookie
       await webAuth.ensureCookie({ base, force: true });
@@ -668,10 +728,6 @@ async function waitForWeb(base, waitMs) {
       return true;
     }
     // 子进程已经退出就别再等了，直接带着它的输出报错
-    if (webChild && webChild.exitCode !== null) {
-      rememberWebState({ ok: false, error: `DSH 进程已退出（code=${webChild.exitCode}）` });
-      return false;
-    }
     await new Promise((r) => setTimeout(r, 500));
   }
   rememberWebState({ ok: false, error: `等待 ${Math.round(waitMs / 1000)} 秒后仍不可达` });
@@ -679,9 +735,12 @@ async function waitForWeb(base, waitMs) {
 }
 
 // 确保 DSH WebUI 可用：已在跑就直接返回；否则拉起一次（单飞，多个调用共享）。
-async function ensureWebReady({ port = 3080, base = DEFAULT_BASE, waitMs = DSH_START_TIMEOUT_MS } = {}) {
+async function ensureWebReady({ port = DEFAULT_PORT, base = DEFAULT_BASE, waitMs = DSH_START_TIMEOUT_MS } = {}) {
   refreshDshSettings();
-  if (await isReachable(base, 1200)) return { ok: true, started: false };
+  if (await isReachable(base, 1200)) {
+    if (webChild && webChild.exitCode === null) return { ok: true, started: false };
+    return { ok: false, error: `DSH 端口 ${port} 已被其他进程占用，请关闭占用进程或修改 DSH_WEB_URL` };
+  }
   if (!webLaunchPromise) {
     try {
       spawnDshWeb(base, port);
@@ -708,7 +767,7 @@ async function ensureWebReady({ port = 3080, base = DEFAULT_BASE, waitMs = DSH_S
 }
 
 // 兼容旧调用方（core/index.js 启动时调用）：后台拉起，不长时间阻塞；带 waitMs 时才等。
-async function launchWeb({ port = 3080, base = DEFAULT_BASE, waitMs = 5000 } = {}) {
+async function launchWeb({ port = DEFAULT_PORT, base = DEFAULT_BASE, waitMs = 5000 } = {}) {
   const result = await ensureWebReady({ port, base, waitMs });
   return result.ok ? { ok: true, started: result.started, pid: webChild ? webChild.pid : null } : result;
 }

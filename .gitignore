@@ -76,6 +76,8 @@ packaging/share-target/**/obj/
 # 打包用的内置依赖（DSH 及其依赖，约 220MB；由 `npm install --prefix packaging/vendor`
 # 或 scripts/build-installer.ps1 生成，不入库）
 packaging/vendor/node_modules/
+# 内置 Node 运行时（构建机上的 node.exe，约 86MB；由 scripts/build-installer.ps1 复制，不入库）
+packaging/runtime/
 app/dist/
 app/build/
 

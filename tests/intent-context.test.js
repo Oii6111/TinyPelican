@@ -26,6 +26,9 @@ const CFG = {
     provider: 'deepseek',
     model: 'mock',
     mediumConfidence: 0.5,
+    // 这里验证的是「过期/重复/自动过期」这些判定，阈值调高让结果保持 pending_confirm，
+    // 高置信度自动建任务另有用例（tests/intent-scheduler.test.js）。
+    highConfidence: 0.99,
     staleDeadlineDays: 2
   },
   engine: { providers: { deepseek: { baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'test-key', model: 'mock' } } }

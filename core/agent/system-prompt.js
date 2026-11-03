@@ -21,16 +21,15 @@ const PATCH_FILENAMES = {
 // 产品自己的 agent preset id。DSH 要求 id 匹配 [a-z0-9][a-z0-9-]*（它同时是目录名），
 // 且不能和随附的 standard/minimal/ptc/cordis 撞名——随附根目录同 id 优先，撞了就永远轮不到我们。
 const AGENT_PRESET_ID = 'tinypelican';
-// DSH 存放「本地创作的 preset」的目录名（dsh-agent-presets 的 USER_PRESET_DIR）。
-// 它挂在 $DSH_HOME 下，是 roster 默认就包含的 user 根目录。
+// 保留生成组合文件的现有位置；新版通过 overlay 注册这个预设。
 const AGENT_PRESET_DIRNAME = '.agent-presets';
 // DSH 随附的模板 preset：我们整份复制它，只换掉 persona（人设）那一段，
 // 这样工具 / skills / 工作流等能力跟着 DSH 版本走，不用自己维护一份组装文件。
 // 注意路径规则：dis 的 bin 在 `<...>/node_modules/@deepseek-ai/dsh/lib/bin.js`，
 // 所以「往上两级」= `@deepseek-ai/` 那一层，下面这段**不能再带** `@deepseek-ai/` 前缀。
-const AGENT_PRESET_TEMPLATE = path.join('dsh-agent-presets', 'presets', 'standard', 'agent.cordis.yml');
+const AGENT_PRESET_TEMPLATE = path.join('dsh-web-app', 'presets', 'standard.patch.yml');
 // 与 DSH 随附的 standard preset、dsh-headless 保持同一句
-const PERSONA_SUFFIX = 'Your working directory is {{cwd}}.';
+const PERSONA_SUFFIX = 'The working directory is the active workspace for this session.';
 
 // 关掉运行上下文（includeRuntimeContext: false）换来的这份说明。
 //
@@ -56,7 +55,7 @@ const POLICY_NOTES = [
 // 为什么要第三段：打包后**产品本体在安装目录，用户在别的地方工作**，两者不是一个目录。
 // 提示词里若出现 `agent/skills/` 这类相对路径，模型会去用户的工作目录里找（找不到）。
 // 所以这里给出运行时才算得出来的**绝对路径**，并明确两者不同。
-// 注意 Agent.md 里若写了 {{...}}，DSH 会当提示词变量渲染（只认 {{cwd}} / {{model}} 这类已注册的）。
+// 注意 Agent.md 里若写了 {{...}}，DSH 会当提示词变量渲染；只能使用当前运行时已注册的变量。
 function personaText(prompt, { skillsDir = SKILLS_PATH } = {}) {
   const layout = [
     "Product layout: this product's own files (its agent instructions and the skills exposed in the skill",
@@ -94,8 +93,8 @@ function agentPresetTemplate(dshBin = '') {
   if (dshBin) candidates.push(path.resolve(path.dirname(dshBin), '..', '..', AGENT_PRESET_TEMPLATE));
   try {
     candidates.push(path.join(
-      path.dirname(require.resolve('@deepseek-ai/dsh-agent-presets/package.json')),
-      'presets', 'standard', 'agent.cordis.yml'
+      path.dirname(require.resolve('@deepseek-ai/dsh-web-app/cordis.patch.yml')),
+      'presets', 'standard.patch.yml'
     ));
   } catch {}
   for (const candidate of candidates) {
@@ -130,7 +129,7 @@ function personaLines(prompt, options = {}) {
 //    openBrowser=true 会自己弹浏览器、trustedHosts=[] 会改变浏览器信任围栏。
 //    这三行与 dsh-web-app/cordis.patch.yml 里那一行逐字一致；测试会对照上游文件校验键集，
 //    上游加键时测试会失败，提醒我们同步（否则那个新键会静默掉回默认值）。
-// 2) agent-presets.includeShippedRoot: false（在 ensureSystemPromptPatch 里）——
+// 2) 禁用随附 preset 注册行（在 ensureSystemPromptPatch 里）——
 //    预设选择器里不再出现随附的 standard / ptc / cordis / minimal：其中 cordis 的人设
 //    直接写着 "running on the DeepSeek Harness"，用户选中就会露底。
 //    我们自己的 preset 是 standard 的自包含副本，能力不受影响。
@@ -148,7 +147,7 @@ const WEB_SURFACE_ROWS = [
   '    openBrowser: !!js ctx.webStartup.openBrowser',
   '    printUrl: true',
   '    surfaceContext: false',
-  '    trustedHosts: !!js ctx.webStartup.trustedHosts',
+  '    publicUrl: !!js ctx.webStartup.publicUrl',
   '- id: ui-settings-plugin-inventory',
   '  disabled: true',
   '- id: ui-cordis',
@@ -210,8 +209,12 @@ function ensureAgentPreset({ dshHome = '', id = AGENT_PRESET_ID, dshBin = '', sk
     if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new Error(`agent preset id 不合法：${id}`);
     const prompt = readSystemPrompt();
     const templatePath = agentPresetTemplate(dshBin);
-    if (!templatePath) throw new Error('找不到 DSH 随附的 standard preset 模板（@deepseek-ai/dsh-agent-presets）');
-    const template = withSkillsRoot(fs.readFileSync(templatePath, 'utf8'), skillsDir);
+    if (!templatePath) throw new Error('找不到 DSH 随附的 standard preset 模板（@deepseek-ai/dsh-web-app）');
+    const source = fs.readFileSync(templatePath, 'utf8').replace(/\r\n/g, '\n');
+    if (!source.includes('        plugins:\n')) throw new Error('DSH standard preset 模板缺少 plugins');
+    const plugins = source.slice(source.indexOf('        plugins:\n') + '        plugins:\n'.length)
+      .split('\n').map(line => line.startsWith('          ') ? line.slice(10) : line).join('\n');
+    const template = withSkillsRoot(plugins, skillsDir);
     const composition = withProductPersona(template, prompt, { skillsDir });
     // 自检：手术必须真的把提示词写进去（写坏宁可不启用，也不能让会话起不来）
     if (!composition.includes(JSON.stringify(personaText(prompt, { skillsDir })))) throw new Error('生成 agent preset 后人设没有写进去');
@@ -255,6 +258,8 @@ function patchFile(dshHome, kind) {
 // （白标失效，但产品照常能用——绝不能让一个 overlay 文件把 DSH 拦在门外）。
 function ensureSystemPromptPatch({ dshHome = '', surface = 'task', defaultPreset = '', skillsDir = SKILLS_PATH } = {}) {
   if (!dshHome) return '';
+  try {
+  if (defaultPreset && !ensureAgentPreset({ dshHome, id: defaultPreset, skillsDir }).ok) defaultPreset = '';
   const rows = [
     '- id: system-prompt',
     '  config:',
@@ -268,20 +273,32 @@ function ensureSystemPromptPatch({ dshHome = '', surface = 'task', defaultPreset
   let kind = 'task';
   if (surface === 'web') {
     rows.push(...WEB_SURFACE_ROWS);
+    rows.push(
+      '- id: permission',
+      '  config:',
+      '    defaultPreset: workspace-write'
+    );
     kind = 'webFallback';
     if (defaultPreset) {
-      // 整行 config 是替换语义：这里只声明我们要的两个键，
-      // roots 走 schema 默认值（空数组），$DSH_HOME/.agent-presets 靠 includeUserRoot 的默认 true。
       rows.push(
-        '- id: agent-presets',
+        '- id: agent-preset-registry',
         '  config:',
         `    default: ${JSON.stringify(defaultPreset)}`,
-        '    includeShippedRoot: false'
+        ...['standard', 'minimal', 'ptc', 'cordis'].flatMap(id => [`- id: preset-${id}`, '  disabled: true']),
+        '- insert:',
+        '    - id: preset-tinypelican',
+        "      name: '@deepseek-ai/dsh-agent-preset'",
+        '      config:',
+        `        id: ${JSON.stringify(defaultPreset)}`,
+        '        name: 小鹈鹕',
+        '        order: 0',
+        '        plugins:',
+        ...fs.readFileSync(path.join(dshHome, AGENT_PRESET_DIRNAME, defaultPreset, 'agent.cordis.yml'), 'utf8')
+          .split('\n').map(line => `          ${line}`)
       );
       kind = 'web';
     }
   }
-  try {
     const file = patchFile(dshHome, kind);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const next = `${rows.join('\n')}\n`;

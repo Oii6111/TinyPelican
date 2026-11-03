@@ -44,6 +44,18 @@
     mount.className = 'tp-dsh-sidebar';
     overlay = document.createElement('div');
     overlay.className = 'tp-dsh-overlays';
+    // React portals cross the iframe/document boundary here. Some menu nodes are
+    // adopted by the parent document, so React's cached portal parent can differ
+    // from child.parentNode during unmount. Remove from the actual parent instead
+    // of throwing and leaving DSH's sidebar error boundary blank.
+    const removeOverlayChild = overlay.removeChild;
+    overlay.removeChild = function removeChild(child) {
+      if (child && child.parentNode !== this) {
+        if (child.parentNode) child.parentNode.removeChild(child);
+        return child;
+      }
+      return removeOverlayChild.call(this, child);
+    };
     overlayHost = window.parent.document.createElement('div');
     overlayHost.id = 'dsh-overlay-host';
     Object.assign(overlayHost.style, { position: 'fixed', inset: '0', zIndex: '1100', pointerEvents: 'none' });

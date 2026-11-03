@@ -60,7 +60,7 @@
 
 打包后 `TinyPelican` 安装目录是**产品本体**，而用户在**自己的项目文件夹**里工作，两者不是一个目录。三条规则：
 
-1. **提示词从产品本体读**：`core/agent/system-prompt.js` 按 `__dirname/../../agent/Agent.md` 解析，打包后就是 `<安装目录>/resources/content/agent/Agent.md`，和用户 cwd 无关。用户的工作目录通过 `personaSuffix` 的 `{{cwd}}` 自动进提示词。
+1. **提示词从产品本体读**：`core/agent/system-prompt.js` 按 `__dirname/../../agent/Agent.md` 解析，打包后就是 `<安装目录>/resources/content/agent/Agent.md`，和用户 cwd 无关。`personaSuffix` 只说明工作目录属于当前会话；DSH 当前未注册 `cwd` 提示词变量，不能在这里写 `{{cwd}}`。
 2. **提示词里不要写产品相对路径**：`Agent.md` 里曾经写「优先使用 `agent/skills/` 中对应的 Skill」——模型会在**用户的工作目录**里找 `agent/skills/`（找不到）。技能一律**按名字**引用（`records-query` / `todo` / `reminder` / `schedule` / `intent-review` / `chat-search`），位置由下面第 3 条解决；运行时还会在人设里补一段 `Product layout:` 说明，把产品文件的**绝对路径**告诉模型，并明确"那不是用户的工作目录"。
 3. **技能要塞进 DSH 认识的技能根**：DSH 的 `skill-filesystem` 只扫 `<cwd>/.dsh/skills`、`<cwd>/.agents/skills`、`<DSH_HOME>/skills` 和 config 里的 `customSkillDirs`——产品随包的 `agent/skills/`（安装目录下）**哪个默认根都不覆盖**，所以生成 preset 时会往 `- id: skill-filesystem` 行写：
 

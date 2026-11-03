@@ -196,8 +196,8 @@ function parseStructured(text, filename) {
 }
 
 // 依次尝试各种格式，返回 { messages, format }
-// 注意：这里直接调 block/line 两个解析器（而不是 parseChatText）——
-// parseChatText 对「只有一条消息」的文件会返回空，而导出文件里单聊一条也很常见。
+// 注意：这里直接调 block/line 两个解析器，按「谁解析出的消息多」取结果，
+// 兼容导出文件里混着两种格式的情况（parseChatText 是给剪贴板单段文本用的简化版）。
 function parseAny(text, filename = '') {
   const forward = parseWechatForwardExport(text);
   if (forward.length) return { messages: forward, format: 'wechat-forward' };

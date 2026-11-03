@@ -28,11 +28,11 @@ module.exports = (router, ctx) => {
         dryRun: !!body.dryRun
       });
       // 导入后可选触发一次意图识别（把新消息里的待办/DDL 提取出来）
+      // 走统一的排队入口：导入一大批时不会逐条触发，冷却内的请求合并成一轮
       if (body.intents && !body.dryRun && summary.added > 0) {
         try {
-          const { runIntentExtraction } = require('../../engine/intent-runner');
-          runIntentExtraction({ config: cfg }).catch((e) =>
-            log('warn', 'ingest', '导入后意图识别失败：' + String((e && e.message) || e)));
+          const { requestIntentExtraction } = require('../../engine/intent-runner');
+          requestIntentExtraction({ config: cfg, reason: 'import' });
         } catch {}
       }
       return ctx.json(res, summary.ok ? 200 : 400, summary);

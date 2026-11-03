@@ -28,6 +28,8 @@ const DEFAULTS = {
   },
   // 剪贴板轮询间隔：调小能让建议回复更快感知到复制（300ms 只比 700ms 多约 1% 单核）
   pollMs: 400,
+  // 判定为「一段聊天」的最少匹配行数（按参与匹配的原始行数算，不是消息条数）：
+  // 一条块格式消息（昵称/时间/内容）= 3 行，所以默认 2 也能识别「只复制一条消息」。
   minMatchLines: 2,
   relationCheck: { enabled: true, days: 7 },
   intent: {
@@ -41,7 +43,10 @@ const DEFAULTS = {
     // 截止时间已经过去这么多天、且模型没说仍然未完成的，不再生成待确认事项
     staleDeadlineDays: 2,
     agentTimeoutMs: 120000,
-    minIntervalMinutes: 0,
+    // 触发后先等这么久没有新触发才真正扫描：连续复制多条消息只会跑一轮
+    debounceMs: 2500,
+    // 两轮扫描之间的最小间隔（分钟）：冷却期内的触发排队到点再跑，避免一条消息一次全量扫描
+    minIntervalMinutes: 1,
     scanIntervalMs: 0
   },
   reminder: {
@@ -67,7 +72,7 @@ const DEFAULTS = {
     providers: {
       siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1', apiKey: '', model: 'Qwen/Qwen3.5-9B' },
       openai: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o-mini' },
-      deepseek: { baseUrl: 'https://api.deepseek.com/v1', apiKey: '', model: 'deepseek-chat' },
+      deepseek: { baseUrl: 'https://api.deepseek.com', apiKey: '', model: 'deepseek-flash' },
       ollama: { baseUrl: 'http://127.0.0.1:11434/v1', apiKey: '', model: 'qwen3:8b' },
       custom: { baseUrl: '', apiKey: '', model: '' }
     },

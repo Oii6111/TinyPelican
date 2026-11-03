@@ -53,15 +53,29 @@ if not defined XIAOTIHU_DATA_DIR set "XIAOTIHU_DATA_DIR=%APPDATA%\xiaotihu"
 if not defined DSH_HOME set "DSH_HOME=%XIAOTIHU_DATA_DIR%\dsh-home"
 if not defined XIAOTIHU_DSH_BIN set "XIAOTIHU_DSH_BIN=%CONTENT%\vendor\node_modules\@deepseek-ai\dsh\lib\bin.js"
 set "XIAOTIHU_CONTENT_DIR=%CONTENT%"
-rem Run the bundled Electron as if it were Node.
-set "ELECTRON_RUN_AS_NODE=1"
+
+rem Run the launcher on the bundled real node.exe when the build shipped one.
+rem node.exe is a console-subsystem binary: it shares one console (a hidden one when it is
+rem started without a window) with the whole process tree, so DSH's pwsh calls never need a
+rem new console. Electron as Node is a GUI-subsystem program and has NO console at all, so
+rem every tool call then opens a fresh visible PowerShell window (the packaged-install bug).
+set "NODEEXE=%CONTENT%\runtime\node.exe"
+set "RUNNER=%APPEXE%"
+if exist "%NODEEXE%" set "RUNNER=%NODEEXE%"
 
 echo TinyPelican: DSH self-check + manual start
 echo   app     = %APPEXE%
 echo   content = %CONTENT%
+echo   runner  = %RUNNER%
 echo.
 
+if exist "%NODEEXE%" goto :run_with_node
+set "ELECTRON_RUN_AS_NODE=1"
 "%APPEXE%" "%ENTRY%"
+goto :report
+:run_with_node
+"%NODEEXE%" "%ENTRY%"
+:report
 set "CODE=%ERRORLEVEL%"
 
 echo.

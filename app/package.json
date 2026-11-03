@@ -7,7 +7,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "start": "electron .",
+    "start": "electron . --no-sandbox",
     "dist": "electron-builder"
   },
   "devDependencies": {
@@ -15,6 +15,8 @@
     "electron-builder": "^26.0.0"
   },
   "build": {
+    "compression": "normal",
+    "afterPack": "./optimize-bundled-vendor.cjs",
     "appId": "com.xiaotihu.app",
     "productName": "小鹈鹕",
     "directories": {
@@ -33,6 +35,10 @@
       {
         "from": "../agent/skills",
         "to": "content/agent/skills"
+      },
+      {
+        "from": "../agent/dsh-plugins",
+        "to": "content/agent/dsh-plugins"
       },
       {
         "from": "../licenses",
@@ -76,7 +82,25 @@
       },
       {
         "from": "../packaging/vendor/node_modules",
-        "to": "content/vendor/node_modules"
+        "to": "content/vendor/node_modules",
+        "filter": [
+          "**/*",
+          "!**/test/**",
+          "!**/tests/**",
+          "!**/docs/**",
+          "!**/examples/**",
+          "!**/*.map",
+          "!**/*.d.ts",
+          "!**/*.d.cts",
+          "!**/*.d.mts",
+          "!**/README.md",
+          "!**/CHANGELOG.md",
+          "!**/HISTORY.md"
+        ]
+      },
+      {
+        "from": "../packaging/runtime",
+        "to": "content/runtime"
       },
       {
         "from": "../scripts/start-dsh.cmd",
@@ -94,11 +118,14 @@
       "icon": "build/icon.png"
     },
     "nsis": {
+      "differentialPackage": false,
       "oneClick": true,
       "perMachine": false,
       "runAfterFinish": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "../scripts/installer-cleanup.nsh",
       "artifactName": "TinyPelican-Setup-${version}.${ext}"
     }
   }

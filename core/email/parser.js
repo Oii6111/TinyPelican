@@ -14,11 +14,17 @@ function cleanText(value) {
 }
 
 function cleanHtml(value) {
+  const dangerousTag = 'script|iframe|frame|frameset|object|embed|form|input|button|textarea|select|option|link|meta|base';
   return String(value || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_, css) => `<style>${String(css)
+      .replace(/@import[\s\S]*?;/gi, '')
+      .replace(/(?:expression|behavior|-moz-binding)\s*:[^;}]*/gi, '')
+      .replace(/url\s*\(\s*(?:"|')?\s*(?:javascript|vbscript):[\s\S]*?\)/gi, 'url()')
+    }</style>`)
+    .replace(new RegExp(`<\\s*(${dangerousTag})\\b[\\s\\S]*?<\\s*\\/\\s*\\1\\s*>`, 'gi'), '')
+    .replace(new RegExp(`<\\s*(?:${dangerousTag})\\b[^>]*>`, 'gi'), '')
     .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^ >]+)/gi, '')
-    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '$1="#"')
+    .replace(/(href|src)\s*=\s*(["'])\s*(?:javascript|vbscript|data:text\/html):[^"']*\2/gi, '$1="#"')
     .slice(0, 500000);
 }
 

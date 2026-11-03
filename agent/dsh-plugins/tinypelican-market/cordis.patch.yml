@@ -1,0 +1,5 @@
+# 小鹈鹕随包插件：把这一行插进 profile 的插件树。
+# 浏览器半边（dsh.client）由 dsh-client-modules 自动扫描，不需要在这里挂行。
+- insert:
+    - id: tinypelican-market
+      name: 'tinypelican-dsh-market'

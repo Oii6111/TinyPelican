@@ -2,7 +2,7 @@ import { api } from '../api.mjs';
 import { el, empty, fmtTime } from '../ui.mjs';
 
 const TYPE_MAP = { todo: '待办', task: '待办', deadline: '待办', schedule: '日程', reminder: '提醒', waiting_reply: '待办' };
-const STATUS_MAP = { pending_confirm: '待确认', confirmed: '已处理', ignored: '已忽略' };
+const STATUS_MAP = { pending_confirm: '待确认', confirmed: '已处理', ignored: '已忽略', auto_created: '已自动创建' };
 const PAGE_SIZE = 8;
 
 // 待确认意图：AI 只负责“看懂聊天”，不自动创建任务；用户确认后才转为正式任务。

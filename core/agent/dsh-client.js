@@ -8,6 +8,8 @@ const path = require('path');
 const fs = require('fs');
 const { dataDir } = require('../lib/paths');
 const { ensureSystemPromptPatch, systemPromptEnv } = require('./system-prompt');
+const { API_KEY_ENV, settingsRoute, mergePiSettings } = require('./dsh-provider');
+const systemProxy = require('../net/system-proxy');
 
 const STREAM_MARKER = '@@DSH_EVENT@@';
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -46,8 +48,7 @@ function syncDshHomeConfig(dshHome) {
 }
 
 // 把用户在小鹈鹕设置里选的 provider/model 翻译成 DSH 的 settings.yaml。
-// DSH 的 llm-deepseek 支持任意 OpenAI 兼容 /chat/completions 端点，
-// 因此统一用 deepseek-official 路由承载用户配置的模型。
+// 官方 DeepSeek 使用 Messages；兼容服务通过 llm-pi-ai 使用 Chat Completions。
 function yamlQuote(s) {
   return JSON.stringify(String(s));
 }
@@ -218,32 +219,22 @@ function writeGeneratedDshSettings(dshHome, config) {
   const prov = effectiveEngineProvider(config);
   const label = prov ? (PROVIDER_LABELS[prov.name] || prov.name) : '';
   const facts = routeModelFacts(prov);
+  const route = prov ? settingsRoute(prov, facts, label) : null;
   const lines = prov
     ? [
       SETTINGS_MARKER,
       'agent-default-model:',
-      '  provider: deepseek-official',
+      `  provider: ${route.provider}`,
       `  model: ${yamlQuote(prov.model)}`,
       // DSH 自己写进来的推理等级等子键原样保留（见 preservedSubKeys）
       ...preservedSubKeys(file, 'agent-default-model', ['provider', 'model']),
-      'llm-deepseek:',
-      `  baseURL: ${yamlQuote(prov.baseUrl)}`,
-      '  apiKeyEnv: DEEPSEEK_API_KEY',
-      '  models:',
-      `    - id: ${yamlQuote(prov.model)}`,
-      // 名字里带上来源，免得 DSH 的模型列表里出现一个来源不明的模型名
-      `      name: ${yamlQuote(`${prov.model} · ${label}`)}`,
-      '      contextWindow: 1000000',
-      // 能力声明按 provider/模型区分（见 routeModelFacts）：
-      // 只有上游真的支持时才写，否则图片/新 system prompt 会被直接发过去、由上游报错。
-      ...(facts.image ? ['      inputModalities: [text, image]'] : []),
-      ...(facts.inHistorySystemPrompt ? ['      systemPromptUpdate: in-history'] : [])
+      ...route.lines
     ]
     : FALLBACK_SETTINGS_LINES.slice();
   try {
     const ack = welcomeNoticeVersion();
     // 读得到版本号就由我们写这份确认；读不到就保留 DSH 自己写的那份原样。
-    for (const block of preservedSettingsBlocks(file)) {
+    for (const block of mergePiSettings(lines, preservedSettingsBlocks(file))) {
       if (ack && block.key === WELCOME_ACK_NAMESPACE) continue;
       lines.push('', block.text);
     }
@@ -316,19 +307,34 @@ function buildDshEnv(dshHome, config) {
   syncDshHomeConfig(dshHome);
   // 用户在小鹈鹕设置里配置了模型时，用该模型覆盖 DSH 默认模型
   writeGeneratedDshSettings(dshHome, config);
+  const runtimeDataDir = path.resolve(dataDir() || PROJECT_ROOT);
+  const dshTempDir = path.join(runtimeDataDir, 'tmp', 'dsh-runtime');
+  try {
+    fs.mkdirSync(dshTempDir, { recursive: true });
+  } catch {}
   const env = {
     ...process.env,
     ...systemPromptEnv(),
     DSH_HOME: dshHome,
-    TINYPELICAN_DATA_DIR: path.resolve(dataDir() || PROJECT_ROOT),
-    TINYPELICAN_EMAIL_CONFIG: path.resolve(dataDir() || PROJECT_ROOT)
+    TEMP: dshTempDir,
+    TMP: dshTempDir,
+    TMPDIR: dshTempDir,
+    TINYPELICAN_DATA_DIR: runtimeDataDir,
+    TINYPELICAN_EMAIL_CONFIG: runtimeDataDir
   };
   if (config && config.engine) {
-    // 不管 provider 名字是什么，都通过 DEEPSEEK_API_KEY 传给 DSH 的 deepseek-official 路由。
-    // 以小鹈鹕设置里的 Key 为准（覆盖环境里可能残留的旧 DEEPSEEK_API_KEY，否则会拿旧 Key 去请求 → 401）。
     const prov = effectiveEngineProvider(config);
-    if (prov && prov.apiKey) env.DEEPSEEK_API_KEY = prov.apiKey;
+    if (prov) {
+      env[API_KEY_ENV] = prov.apiKey || 'ollama';
+      if (prov.apiKey) env.DEEPSEEK_API_KEY = prov.apiKey;
+    }
   }
+  // 代理跟随系统：DSH 只认 http_proxy/https_proxy 环境变量，完全不读 Windows 系统代理。
+  // 不翻译这一步，用户开着代理也没用，模型请求会走直连然后被重置。
+  // 用户自己设过代理环境变量时这里原样保留（环境变量优先级高于系统代理）。
+  try {
+    systemProxy.applyToEnv(env);
+  } catch {}
   return env;
 }
 

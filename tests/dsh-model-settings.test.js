@@ -11,6 +11,26 @@ const path = require('node:path');
 
 const { writeGeneratedDshSettings, effectiveEngineProvider, buildDshEnv } = require('../core/agent/dsh-client');
 
+test('fresh installation defaults generate image capabilities through both launchers', (context) => {
+  const { DEFAULTS } = require('../core/lib/config');
+  const { writeDshSettings, modelFromConfig } = require('../scripts/start-dsh');
+  const YAML = require('yaml');
+  for (const source of [DEFAULTS, require('../config.example.json')]) {
+    const config = JSON.parse(JSON.stringify(source));
+    config.engine.providers.deepseek.apiKey = 'test-key';
+    assert.strictEqual(config.engine.providers.deepseek.model, 'deepseek-flash');
+    for (const launcher of ['core', 'script']) {
+      const home = tmpHome(context);
+      fs.writeFileSync(path.join(home, 'settings.yaml'), 'llm-deepseek:\n  models:\n    - id: deepseek-flash\n      inputModalities: [text]\n');
+      if (launcher === 'core') writeGeneratedDshSettings(home, config);
+      else writeDshSettings(home, modelFromConfig(config));
+      const settings = YAML.parse(fs.readFileSync(path.join(home, 'settings.yaml'), 'utf8'));
+      assert.strictEqual(settings['agent-default-model'].model, 'deepseek-flash');
+      assert.deepStrictEqual(settings['llm-deepseek'].models[0].inputModalities, ['text', 'image']);
+    }
+  }
+});
+
 function tmpHome(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tnp-dsh-settings-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -34,7 +54,7 @@ test('DSH 模型配置：选中的 provider 没 Key 时，退到真有 Key 的�
   assert.strictEqual(writeGeneratedDshSettings(home, configWithKeyOnDeepSeek()), true);
   const text = fs.readFileSync(path.join(home, 'settings.yaml'), 'utf8');
   assert.match(text, /model: "deepseek-flash"/);
-  assert.match(text, /baseURL: "https:\/\/api\.deepseek\.com\/v1"/);
+  assert.match(text, /baseURL: "https:\/\/api\.deepseek\.com\/anthropic"/);
   assert.doesNotMatch(text, /Qwen/);
   assert.doesNotMatch(text, /siliconflow/);
 });
@@ -67,7 +87,7 @@ test('DSH 模型配置：配置变回不可用时，把之前写进去的模型/
   const cfg = configWithKeyOnDeepSeek();
   assert.strictEqual(writeGeneratedDshSettings(home, cfg), true);
   const file = path.join(home, 'settings.yaml');
-  assert.match(fs.readFileSync(file, 'utf8'), /baseURL: "https:\/\/api\.deepseek\.com\/v1"/);
+  assert.match(fs.readFileSync(file, 'utf8'), /baseURL: "https:\/\/api\.deepseek\.com\/anthropic"/);
 
   cfg.engine.providers.deepseek.apiKey = '';
   assert.strictEqual(writeGeneratedDshSettings(home, cfg), true);
@@ -103,6 +123,7 @@ test('DSH 模型配置：设置里的 Key 覆盖环境里残留的 DEEPSEEK_API_
   try {
     const env = buildDshEnv(home, configWithKeyOnDeepSeek());
     assert.strictEqual(env.DEEPSEEK_API_KEY, 'sk-deepseek-test');
+    assert.strictEqual(env.TINYPELICAN_MODEL_API_KEY, 'sk-deepseek-test');
     assert.strictEqual(env.DSH_HOME, home);
   } finally {
     if (prev === undefined) delete process.env.DEEPSEEK_API_KEY;
@@ -209,13 +230,14 @@ test('DSH 能力声明：纯文本模型不声明（deepseek-v4-pro / 本地 qwe
 test('DSH 能力声明：自填的 provider 可以用开关逐项打开', () => {
   const cfg = { engine: { provider: 'ollama', providers: { ollama: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen2.5-vl:7b', imageInput: true } } } };
   const imageOnly = writeWith(cfg);
-  assert.match(imageOnly, /inputModalities: \[text, image\]/);
+  assert.match(imageOnly, /input: \[text, image\]/);
+  assert.match(imageOnly, /api: openai-completions/);
   assert.doesNotMatch(imageOnly, /systemPromptUpdate/);   // 没打开就别替它声明
 
   cfg.engine.providers.ollama.inHistorySystemPrompt = true;
   const both = writeWith(cfg);
-  assert.match(both, /inputModalities: \[text, image\]/);
-  assert.match(both, /systemPromptUpdate: in-history/);
+  assert.match(both, /input: \[text, image\]/);
+  assert.doesNotMatch(both, /systemPromptUpdate/);
 
   // 显式关掉要能压过已知模型表（比如 deepseek-flash 走了不支持图片的网关）
   const off = configWithKeyOnDeepSeek();
@@ -225,16 +247,25 @@ test('DSH 能力声明：自填的 provider 可以用开关逐项打开', () => 
   assert.match(known, /systemPromptUpdate: in-history/);   // 另一项不受影响
 });
 
-test('DSH 能力声明：两个写入点都要有同一套判定，否则下次启动会被覆盖', () => {
-  const required = [
-    [/inputModalities: \[text, image\]/, 'inputModalities 声明'],
-    [/systemPromptUpdate: in-history/, 'systemPromptUpdate 声明'],
-    [/'deepseek-flash': \{ image: true, inHistorySystemPrompt: true \}/, '已知模型表']
-  ];
-  for (const rel of ['../core/agent/dsh-client.js', '../scripts/start-dsh.js']) {
-    const src = fs.readFileSync(path.resolve(__dirname, rel), 'utf8');
-    for (const [pattern, what] of required) {
-      assert.match(src, pattern, `${rel} 少了 ${what}`);
+test('DSH 两个写入点为官方和兼容服务生成相同协议配置', (context) => {
+  const YAML = require('yaml');
+  const { writeDshSettings, modelFromConfig } = require('../scripts/start-dsh');
+  for (const baseUrl of ['https://api.deepseek.com/v1', 'https://gateway.example/v1']) {
+    const cfg = configWithKeyOnDeepSeek();
+    cfg.engine.providers.deepseek.baseUrl = baseUrl;
+    const coreHome = tmpHome(context);
+    const scriptHome = tmpHome(context);
+    writeGeneratedDshSettings(coreHome, cfg);
+    writeDshSettings(scriptHome, modelFromConfig(cfg));
+    const core = YAML.parse(fs.readFileSync(path.join(coreHome, 'settings.yaml'), 'utf8'));
+    const script = YAML.parse(fs.readFileSync(path.join(scriptHome, 'settings.yaml'), 'utf8'));
+    delete core['ui-onboarding'];
+    delete script['ui-onboarding'];
+    assert.deepStrictEqual(core, script);
+    if (baseUrl.includes('gateway')) {
+      assert.strictEqual(core['agent-default-model'].provider, 'tinypelican');
+      assert.strictEqual(core['llm-pi-ai'].providers.tinypelican.api, 'openai-completions');
+      assert.strictEqual(core['llm-pi-ai'].providers.tinypelican.baseURL, baseUrl);
     }
   }
 });

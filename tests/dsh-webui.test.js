@@ -33,7 +33,8 @@ test('DSH 页面连接：复用服务、HttpOnly 登录交接及错误处理', a
   const connected = await invoke({ origin: 'http://127.0.0.1:18791' });
   assert.equal(connected.status, 200);
   assert.deepEqual(connected.data, { url: 'http://127.0.0.1:18791/dsh/' });
-  assert.match(connected.headers['Set-Cookie'], /; Path=\/; HttpOnly; SameSite=Strict$/);
+  const connectedCookies = [].concat(connected.headers['Set-Cookie'] || []);
+  assert.ok(connectedCookies.some((value) => /; Path=\/; HttpOnly; SameSite=Strict$/.test(value)));
   assert.equal(connected.headers['Cache-Control'], 'no-store');
   assert.equal(JSON.stringify(connected.data).includes('signature'), false);
   assert.equal(requests[0].options.headers.Cookie, 'dsh-auth-test=v1.payload.signature');
@@ -43,6 +44,12 @@ test('DSH 页面连接：复用服务、HttpOnly 登录交接及错误处理', a
   assert.equal((await invoke({ 'sec-fetch-site': 'cross-site' })).status, 403);
   assert.equal((await invoke({ host: 'localhost:18791' })).status, 400);
   assert.equal(launches, 1);
+
+  refreshes = [];
+  const replaced = await invoke({ cookie: 'dsh-auth-old=old; xtp_session=keep' });
+  const replacedCookies = [].concat(replaced.headers['Set-Cookie'] || []);
+  assert.ok(replacedCookies.some((value) => value.startsWith('dsh-auth-old=;')));
+  assert.ok(replacedCookies.some((value) => value.startsWith('dsh-auth-test=')));
 
   requests = [];
   refreshes = [];

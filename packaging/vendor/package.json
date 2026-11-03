@@ -3,7 +3,8 @@
   "private": true,
   "description": "打包时随安装包内置的运行时依赖（DSH）。装到本目录后由 electron-builder 复制进 resources/content/vendor/",
   "dependencies": {
-    "@deepseek-ai/dsh": "0.1.5-rc.3",
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "dshmarket": "1.66.47",
     "imapflow": "^1.0.181",
     "mailparser": "^3.7.4",
     "nodemailer": "^7.0.9"

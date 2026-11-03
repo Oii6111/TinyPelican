@@ -5,6 +5,7 @@ const store = require('../../reply/suggestion-store');
 const { applyPlan, applyNext, resetSequence } = require('../../reply/window-paste');
 const { generateReplySuggestions, regenerateRemaining } = require('../../reply/suggestions');
 const { getWindowRect } = require('../../capture/window-rect');
+const { isWeixinProcess, usableWindowBounds } = require('../../capture/clipboard');
 const { loadConfig } = require('../../lib/config');
 const { log } = require('../../lib/log');
 
@@ -35,15 +36,14 @@ module.exports = (router, ctx) => {
       return ctx.json(res, 200, { suggestion: store.sanitize(s) });
     }
 
-    // 只在微信窗口采用定位；其他软件复制的聊天文本仍回退屏幕右下角。
-    const isWeChat = /^(wechat|weixin)(\.exe)?$/i.test(String(target.processName || '').trim());
-    if (!isWeChat) {
+    // 只在微信窗口采用定位；其他软件复制的聊天文本仍回退屏幕右下角（或鼠标附近）。
+    if (!isWeixinProcess(target.processName)) {
       return ctx.json(res, 200, { suggestion: store.sanitize(s) });
     }
 
     const rect = await getWindowRect(target.handle);
-    if (!rect) {
-      // 句柄失效：清除定位信息，Electron 会回退到当前显示器右下角；句柄仍保留给粘贴尝试。
+    // 句柄失效、或读回的是最小化窗口的 -32000 坐标：清掉定位信息，让 Electron 走兜底位置。
+    if (!rect || !usableWindowBounds(rect.bounds)) {
       target.bounds = null;
       target.dpi = 0;
       return ctx.json(res, 200, { suggestion: store.sanitize(s) });

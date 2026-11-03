@@ -50,7 +50,10 @@ function setup(handler) {
   global.document = { createElement: (tag) => new Element(tag), createTextNode: (text) => ({ nodeType: 3, textContent: text }), getElementById: () => null, body: new Element('body') };
   global.setTimeout = () => 0;
   global.clearTimeout = () => {};
-  global.fetch = async (url, options = {}) => new Response(JSON.stringify(await handler(url, options)));
+  global.fetch = async (url, options = {}) => {
+    const result = await handler(url, options);
+    return result instanceof Response ? result : new Response(JSON.stringify(result));
+  };
   return { root, restore: () => Object.assign(global, previous) };
 }
 
@@ -165,6 +168,183 @@ test('聊天按日分组、合并连续时间，历史加载保持顺序，按�
     assert.doesNotMatch(exportText, /刚想说/);
     assert.equal(fixture.root.all().some((entry) => entry.tagName === 'textarea'), false);
   } finally { view?.hide(); URL.createObjectURL = originalCreate; fixture.restore(); }
+});
+
+test('聊天话题总结只预览几条，查看全部弹窗加载完整总结并可翻页', async () => {
+  const topics = Array.from({ length: 12 }, (_, index) => `2026-09-${String(10 + index).padStart(2, '0')}｜第${index + 1}个话题：双方交流近况。`);
+  const saved = { summary: '双方近期交流工作与生活。', topics, from: '2026-09-10T08:00:00', to: '2026-09-21T21:00:00', messageCount: 42, updatedAt: '2026-09-22T01:00:00' };
+  const contact = { name: '联系人', remark: '', messages: 42, chatSummary: saved };
+  const calls = [];
+  const fixture = setup(async (url) => {
+    calls.push(url);
+    if (url === '/api/contacts') return [contact];
+    if (url.includes('/messages?')) return { messages: [] };
+    if (url.endsWith('/emails')) return { emails: [] };
+    if (url.endsWith('/chat-summary')) return { chatSummary: saved, jobs: [] };
+    return contact;
+  });
+  const body = global.document.body;
+  let view;
+  try {
+    const { mount } = await import(mountUrl);
+    view = mount(fixture.root);
+    await settle();
+    await byClass(fixture.root, 'wechat-contact-item')[0].click();
+    await settle();
+    await button(fixture.root, '联系人画像').click();
+    await settle();
+    const card = byClass(fixture.root, 'contact-summary-card')[0];
+    assert.equal(byClass(card, 'chat-topic-entry').length, 3);
+    assert.doesNotMatch(card.textContent, /第4个话题/);
+    assert.match(byClass(card, 'contact-summary-more')[0].textContent, /查看全部共 12 条/);
+    const summaryRequests = () => calls.filter((url) => url.endsWith('/chat-summary')).length;
+    const beforeOpen = summaryRequests();
+    await button(fixture.root, '查看全部聊天话题').click();
+    await settle();
+    assert.equal(summaryRequests(), beforeOpen + 1);
+    const dialog = byClass(body, 'contact-topic-modal')[0];
+    assert.ok(dialog);
+    assert.equal(dialog.attributes['aria-modal'], 'true');
+    assert.match(byClass(dialog, 'contact-topic-page')[0].textContent, /第 1 \/ 2 页 · 共 12 条/);
+    assert.equal(byClass(dialog, 'chat-topic-entry').length, 8);
+    assert.equal(byClass(dialog, 'contact-topic-prev')[0].disabled, true);
+    assert.equal(byClass(dialog, 'contact-topic-next')[0].disabled, false);
+    await byClass(dialog, 'contact-topic-next')[0].click();
+    assert.match(byClass(dialog, 'contact-topic-page')[0].textContent, /第 2 \/ 2 页 · 共 12 条/);
+    assert.equal(byClass(dialog, 'chat-topic-entry').length, 4);
+    assert.match(byClass(dialog, 'chat-topic-entry')[0].textContent, /第9个话题/);
+    assert.equal(byClass(dialog, 'contact-topic-next')[0].disabled, true);
+    assert.equal(byClass(dialog, 'contact-topic-prev')[0].disabled, false);
+    await byClass(dialog, 'contact-topic-prev')[0].click();
+    assert.match(byClass(dialog, 'contact-topic-page')[0].textContent, /第 1 \/ 2 页/);
+    assert.equal(byClass(fixture.root, 'chat-topic-entry').length, 3);
+    await button(body, '关闭全部聊天话题').click();
+    assert.equal(byClass(body, 'modal-mask').length, 0);
+    await button(fixture.root, '查看全部聊天话题').click();
+    await settle();
+    assert.equal(byClass(body, 'contact-topic-modal').length, 1);
+    view.hide();
+    assert.equal(byClass(body, 'modal-mask').length, 0);
+  } finally { view?.hide(); fixture.restore(); }
+});
+
+test('全部话题弹窗加载失败时保留已缓存话题并提示原因', async () => {
+  const cached = { summary: '缓存中的总结。', topics: [...Array.from({ length: 4 }, (_, index) => `2026-09-1${index}｜第${index + 1}个话题。`), '想要一个安静的周末'] };
+  const contact = { name: '联系人', messages: 20, chatSummary: cached };
+  const fixture = setup(async (url) => {
+    if (url === '/api/contacts') return [contact];
+    if (url.includes('/messages?')) return { messages: [] };
+    if (url.endsWith('/emails')) return { emails: [] };
+    if (url.endsWith('/chat-summary')) return new Response(JSON.stringify({ error: '核心服务不可用' }), { status: 500 });
+    return contact;
+  });
+  const body = global.document.body;
+  let view;
+  try {
+    const { mount } = await import(mountUrl);
+    view = mount(fixture.root);
+    await settle();
+    await byClass(fixture.root, 'wechat-contact-item')[0].click();
+    await settle();
+    await button(fixture.root, '联系人画像').click();
+    await settle();
+    await button(fixture.root, '查看全部聊天话题').click();
+    await settle();
+    const dialog = byClass(body, 'contact-topic-modal')[0];
+    assert.match(byClass(dialog, 'contact-topic-modal-state')[0].textContent, /全部话题加载失败.*已缓存的 5 条.*核心服务不可用/);
+    assert.equal(byClass(dialog, 'chat-topic-entry').length, 4);
+    assert.equal(byClass(dialog, 'contact-topic-chip').length, 1);
+    assert.match(byClass(dialog, 'contact-topic-page')[0].textContent, /第 1 \/ 1 页 · 共 5 条/);
+    assert.equal(byClass(dialog, 'contact-topic-next')[0].disabled, true);
+  } finally { view?.hide(); fixture.restore(); }
+});
+
+test('具体画像卡片可展开可收起，收起后点编辑会自动展开并记住状态', async () => {
+  const contact = { name: '联系人', messages: 8, profile: { 基础身份: { 职业: '学生', 城市: '上海' } }, profileMeta: {} };
+  const fixture = setup(async (url) => {
+    if (url === '/api/contacts') return [contact];
+    if (url.includes('/messages?')) return { messages: [] };
+    if (url.endsWith('/emails')) return { emails: [] };
+    if (url.endsWith('/chat-summary')) return { chatSummary: {}, jobs: [] };
+    return contact;
+  });
+  let view;
+  try {
+    const { mount } = await import(mountUrl);
+    view = mount(fixture.root);
+    await settle();
+    await byClass(fixture.root, 'wechat-contact-item')[0].click();
+    await settle();
+    await button(fixture.root, '联系人画像').click();
+    await settle();
+    const body = byClass(fixture.root, 'contact-profile-body')[0];
+    assert.equal(body.hidden, false);
+    assert.match(byClass(fixture.root, 'contact-profile-preview')[0].textContent, /职业学生/);
+    await button(fixture.root, '收起具体画像').click();
+    assert.equal(body.hidden, true);
+    assert.match(byClass(fixture.root, 'contact-profile-card')[0].textContent, /具体画像/);
+    assert.equal(button(fixture.root, '展开具体画像').attributes['aria-expanded'], 'false');
+    assert.ok(button(fixture.root, '展开具体画像').className.includes('collapsed'));
+    await button(fixture.root, '编辑画像').click();
+    assert.equal(body.hidden, false);
+    assert.equal(button(fixture.root, '收起具体画像').className.includes('collapsed'), false);
+    assert.equal(byClass(fixture.root, 'wechat-profile-children')[0].hidden, false);
+    await button(fixture.root, '收起具体画像').click();
+    assert.equal(body.hidden, true);
+    await button(fixture.root, '展开具体画像').click();
+    assert.equal(body.hidden, false);
+    assert.match(byClass(fixture.root, 'contact-profile-preview')[0].textContent, /上海/);
+    await button(fixture.root, '收起具体画像').click();
+    await button(fixture.root, '联系人画像').click();
+    await settle();
+    await button(fixture.root, '联系人画像').click();
+    await settle();
+    assert.equal(byClass(fixture.root, 'contact-profile-body')[0].hidden, true);
+    assert.equal(button(fixture.root, '展开具体画像').attributes['aria-expanded'], 'false');
+  } finally { view?.hide(); fixture.restore(); }
+});
+
+test('聊天话题总结卡片可展开可收起，置信度与来源随内容一起收起并在重开画像后保持', async () => {
+  const chatSummary = { summary: '双方交流近况。', topics: ['2026-09-20｜周末安排：聊了爬山。'], updatedAt: '2026-09-22T01:00:00', messageCount: 12 };
+  const contact = { name: '联系人', messages: 12, profile: { 基础身份: { 职业: '学生' } }, profileMeta: { updatedAt: '2026-09-26T01:01:59+08:00', source: 'manual', confidence: 0.7 }, chatSummary };
+  const fixture = setup(async (url) => {
+    if (url === '/api/contacts') return [contact];
+    if (url.includes('/messages?')) return { messages: [] };
+    if (url.endsWith('/emails')) return { emails: [] };
+    if (url.endsWith('/chat-summary')) return { chatSummary, jobs: [] };
+    return contact;
+  });
+  let view;
+  try {
+    const { mount } = await import(mountUrl);
+    view = mount(fixture.root);
+    await settle();
+    await byClass(fixture.root, 'wechat-contact-item')[0].click();
+    await settle();
+    await button(fixture.root, '联系人画像').click();
+    await settle();
+    const body = byClass(fixture.root, 'contact-summary-body')[0];
+    assert.equal(body.hidden, false);
+    assert.match(byClass(body, 'contact-summary-content')[0].textContent, /双方交流近况/);
+    assert.equal(byClass(body, 'contact-confidence').length, 1);
+    assert.equal(byClass(body, 'wechat-profile-footer').length, 1);
+    await button(fixture.root, '收起聊天话题总结').click();
+    assert.equal(body.hidden, true);
+    assert.match(byClass(fixture.root, 'contact-summary-card')[0].textContent, /聊天话题总结/);
+    assert.equal(button(fixture.root, '展开聊天话题总结').attributes['aria-expanded'], 'false');
+    assert.ok(button(fixture.root, '展开聊天话题总结').className.includes('collapsed'));
+    await button(fixture.root, '展开聊天话题总结').click();
+    assert.equal(body.hidden, false);
+    assert.equal(button(fixture.root, '收起聊天话题总结').className.includes('collapsed'), false);
+    await button(fixture.root, '收起聊天话题总结').click();
+    await button(fixture.root, '联系人画像').click();
+    await settle();
+    await button(fixture.root, '联系人画像').click();
+    await settle();
+    assert.equal(byClass(fixture.root, 'contact-summary-body')[0].hidden, true);
+    assert.equal(button(fixture.root, '展开聊天话题总结').attributes['aria-expanded'], 'false');
+    assert.equal(byClass(fixture.root, 'contact-profile-body')[0].hidden, false);
+  } finally { view?.hide(); fixture.restore(); }
 });
 
 test('快速切换联系人不会显示旧请求结果，待确认与失败状态不伪装成完成', async () => {

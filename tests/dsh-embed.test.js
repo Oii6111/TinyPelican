@@ -24,7 +24,8 @@ test('embedded layout adapts the installed DSH batch without replacing other plu
   assert.doesNotMatch(source, /"hero\.preview": "(?:预览版|Preview)"/);
   assert.match(source, /wrapSettings\(SettingsRoot/);
   assert.match(source, /跟随小鹈鹕/);
-  assert.match(source, /const OPEN_IN_APP_ICON_PREFIX = "\/dsh\/open-in-app\/icon"/);
+  assert.match(source, /const OPEN_IN_APP_ICON_PREFIX_ROUTE = "open-in-app\/icon"/);
+  assert.equal(new URL('open-in-app/icon', 'http://localhost/dsh/').pathname, '/dsh/open-in-app/icon');
   const registrations = [];
   vm.runInNewContext(transformScript(sources[2]), { window: { __ModuleLoader__: { load(entry) {
     const plugin = entry.factory(() => ({ jsx() {} }));
@@ -47,6 +48,20 @@ test('embedded HTML retains module loading while replacing product branding and 
   assert.equal(transformScript('const model = "DeepSeek-V4";'), 'const model = "DeepSeek-V4";');
 });
 
+test('portal adaptation preserves minified dollar identifiers in the shell', () => {
+  const source = 'const Menu = { Menu: true }; $renderer.createPortal(Menu, document.body);';
+  const transformed = transformScript(source);
+  assert.match(transformed, /window\.__TP_EMBED__\.portal\(\$renderer\.createPortal,Menu, document\.body\)/);
+  assert.doesNotMatch(transformed, /\$window/);
+  let rendered;
+  vm.runInNewContext(transformed, {
+    document: { body: {} },
+    $renderer: { createPortal: (...args) => args },
+    window: { __TP_EMBED__: { portal: (render, ...args) => { rendered = render(...args); } } }
+  });
+  assert.equal(rendered[0].Menu, true);
+});
+
 // 下面这条是白标的**上游哨兵**：那几处"尽力而为"的改写（不抛错，因为抛错会让应用/设置页打不开）
 // 靠这里对着随包资源钉住。DSH 升级改了文案 → 测试失败，提醒同步 dsh-embed.js，而不是线上静默漏品牌。
 test('whitelabel rewrites cover the boot card, locale fallback, export name and welcome body', () => {
@@ -58,9 +73,9 @@ test('whitelabel rewrites cover the boot card, locale fallback, export name and 
   const shellName = assets.find((name) => fs.readFileSync(pkg(`dsh-web-frontend/dist/assets/${name}`), 'utf8').includes('dataset.dshBootSpinner'));
   assert.ok(shellName, '随包前端里应能找到 shell bundle');
   const shell = transformScript(read(`dsh-web-frontend/dist/assets/${shellName}`));
-  assert.doesNotMatch(shell, /ot\(rt\.wordmark,"HARNESS"\)/);
-  assert.match(shell, /ot\(rt\.wordmark,"小鹈鹕"\)/);
-  assert.doesNotMatch(shell, /ot\(rt\.hint,"Loading plugins/);
+  assert.doesNotMatch(shell, /\.wordmark,"HARNESS"/);
+  assert.match(shell, /\.wordmark,"小鹈鹕"/);
+  assert.doesNotMatch(shell, /\.hint,"Loading plugins/);
 
   const locale = transformScript(read('dsh-client-locale/lib/client.js'));
   assert.doesNotMatch(locale, /"brand\.localBuild": "DSH/);
@@ -72,6 +87,18 @@ test('whitelabel rewrites cover the boot card, locale fallback, export name and 
 
   const models = transformScript(read('dsh-client-ui-settings-models/lib/client.js'));
   assert.doesNotMatch(models, /welcomeBody: "DeepSeek Harness/);
+});
+
+test('随包插件 bundle 不被布局适配改写（它自带 createPortal + document.body）', () => {
+  // core/agent/dsh-embed.js 的 createPortal 改写是给应用 shell 的（条件里要求 `Menu:`）。
+  // 随包插件 tinypelican-market 也用了 createPortal(document.body)，绝不能被那段
+  // 正则接走——否则弹窗会被塞进 __TP_EMBED__ 的 overlay，而那个全局在插件 bundle 里并不存在。
+  const bundle = fs.readFileSync(path.join(__dirname, '../agent/dsh-plugins/tinypelican-market/client/client.js'), 'utf8');
+  const transformed = transformScript(bundle);
+  assert.equal(transformed, bundle);
+  assert.match(transformed, /createPortal/);
+  assert.match(transformed, /plugins\.add\.actions/);
+  assert.doesNotMatch(transformed, /__TP_EMBED__\.portal/);
 });
 
 test('DSH proxy streams requests, isolates credentials, rewrites assets, and rejects foreign origins', async (context) => {

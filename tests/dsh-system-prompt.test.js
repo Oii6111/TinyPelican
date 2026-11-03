@@ -95,7 +95,7 @@ test('embedded DSH loads the product system prompt through its supported overlay
   assert.equal(prompt.includeHarnessIdentity, false);
   // 运行上下文整块关掉：那条注入消息（WebUI 里折叠行显示上游包名）才不会产生
   assert.equal(prompt.includeRuntimeContext, false);
-  assert.match(prompt.personaSuffix, /{{cwd}}/);
+  assert.equal(prompt.personaSuffix, 'The working directory is the active workspace for this session.');
   assert.ok(rows.some(row => row.id === 'tools'));
   // 生成出来的提示词里不许出现框架品牌字样（含人设里补的那段策略说明）
   assertNoBrand(prompt.personaPrefix);
@@ -105,8 +105,21 @@ test('embedded DSH loads the product system prompt through its supported overlay
   assert.equal(runtime.surfaceContext, false);
   assert.equal(runtime.printUrl, true);
   assert.equal(runtime.openBrowser, 'ctx.webStartup.openBrowser');
-  assert.equal(runtime.trustedHosts, 'ctx.webStartup.trustedHosts');
-  assert.equal(rows.find(row => row.id === 'agent-presets').config.includeShippedRoot, false);
+  assert.equal(runtime.publicUrl, 'ctx.webStartup.publicUrl');
+  assert.equal(rows.find(row => row.id === 'agent-preset-registry').config.default, AGENT_PRESET_ID);
+  assert.equal(rows.find(row => row.id === 'preset-tinypelican').config.plugins.find(row => row.id === 'persona').config.prefix, personaText(expected));
+});
+
+test('persona suffix renders with the variables registered by DSH', async (context) => {
+  const home = scratchHome(context, 'tp-prompt-render-');
+  const patch = ensureSystemPromptPatch({ dshHome: home, surface: 'web', defaultPreset: AGENT_PRESET_ID });
+  const rows = parseYaml(fs.readFileSync(patch, 'utf8'));
+  const suffix = rows.find(row => row.id === 'system-prompt').config.personaSuffix;
+  const { renderPrompt } = await import('@deepseek-ai/dsh-system-prompt');
+  assert.equal(renderPrompt({
+    sections: [{ name: 'deployment:persona-suffix', text: suffix }],
+    variables: { provider: 'test', model: 'test' }
+  }), suffix);
 });
 
 test('the web overlay whitepapers the harness out of the prompt surface', (context) => {
@@ -119,11 +132,12 @@ test('the web overlay whitepapers the harness out of the prompt surface', (conte
   assert.ok(!webPatch.startsWith(path.resolve(__dirname, '..')), '不能写进代码/安装目录');
   const rows = parseYaml(fs.readFileSync(webPatch, 'utf8'));
 
-  const roster = rows.find(row => row.id === 'agent-presets');
+  const roster = rows.find(row => row.id === 'agent-preset-registry');
   assert.equal(roster.config.default, AGENT_PRESET_ID);
   // 整行 config 是替换语义：只声明我们真正要的两个键
   // （roots 走默认空数组，user 根靠 includeUserRoot 的默认 true）
-  assert.deepEqual(Object.keys(roster.config), ['default', 'includeShippedRoot']);
+  assert.deepEqual(Object.keys(roster.config), ['default']);
+  for (const id of ['standard', 'minimal', 'ptc', 'cordis']) assert.equal(rows.find(row => row.id === `preset-${id}`).disabled, true);
   const webSystemPrompt = rows.find(row => row.id === 'system-prompt').config;
   assert.equal(webSystemPrompt.personaPrefix, personaText(expected));
   assert.equal(webSystemPrompt.includeRuntimeContext, false);
@@ -176,12 +190,11 @@ test('the web overlay whitepapers the harness out of the prompt surface', (conte
   assert.notEqual(fallback, webPatch);
   const fallbackRows = parseYaml(fs.readFileSync(fallback, 'utf8'));
   assert.deepEqual(fallbackRows.map(row => row.id),
-    ['system-prompt', 'web-runtime', 'ui-settings-plugin-inventory', 'ui-cordis']);
+    ['system-prompt', 'web-runtime', 'ui-settings-plugin-inventory', 'ui-cordis', 'permission']);
   assert.equal(fallbackRows.find(row => row.id === 'web-runtime').config.surfaceContext, false);
   // 降级版写过之后，带 roster 的那份文件必须还是完整的（内容互不干扰）
   const stillComplete = parseYaml(fs.readFileSync(webPatch, 'utf8'));
-  assert.deepEqual(stillComplete.map(row => row.id),
-    ['system-prompt', 'web-runtime', 'ui-settings-plugin-inventory', 'ui-cordis', 'agent-presets']);
+  assert.equal(findRow(stillComplete, 'preset-tinypelican').config.id, AGENT_PRESET_ID);
 
   // 写不进去时（没有 DSH_HOME）返回空串：调用方省略 --patch 继续启动，绝不让 DSH 起不来
   assert.equal(ensureSystemPromptPatch({ dshHome: '' }), '');
@@ -195,7 +208,7 @@ test('the generated agent preset carries the product persona and the standard ab
   // 模板定位规则：bin 在 `<...>/node_modules/@deepseek-ai/dsh/lib/bin.js`，
   // 「往上两级」就是 @deepseek-ai 那层。打包版没有 require.resolve 兜底，所以这里必须对得上。
   const expectedTemplate = path.resolve(path.dirname(DSH_BIN), '..', '..',
-    'dsh-agent-presets', 'presets', 'standard', 'agent.cordis.yml');
+    'dsh-web-app', 'presets', 'standard.patch.yml');
   assert.equal(fs.existsSync(expectedTemplate), true, '测试前置：随包模板应存在');
   assert.equal(agentPresetTemplate(DSH_BIN), expectedTemplate);
 
@@ -209,7 +222,7 @@ test('the generated agent preset carries the product persona and the standard ab
   assert.equal(persona.name, '@deepseek-ai/dsh-persona');
   assert.equal(persona.config.prefix, personaText(expected));
   assert.equal(persona.config.includeRuntimeContext, false);
-  assert.match(persona.config.suffix, /{{cwd}}/);
+  assert.equal(persona.config.suffix, 'The working directory is the active workspace for this session.');
   assertNoBrand(persona.config.prefix, 'preset 人设');
   // 复制的是 standard preset：能力行必须都还在，不能只剩人设
   for (const id of ['agent-instructions', 'tool-fs', 'tool-pwsh', 'tool-web', 'delegation']) {
@@ -232,12 +245,12 @@ test('the generated agent preset carries the product persona and the standard ab
   assert.equal(meta.order, 0);
 
   // 让 DSH 自己的发现逻辑判一次健康：它会把组装缺行 / 引用了装不上的插件的 preset 判成 broken
-  const { scanRoot } = await import('@deepseek-ai/dsh-agent-presets');
-  const harnessBase = `file:///${path.resolve(__dirname, '../node_modules').replace(/\\/g, '/')}/`;
-  const discovered = await scanRoot({ path: path.join(home, '.agent-presets'), trust: 'user' }, harnessBase);
-  assert.deepEqual(discovered.map(row => row.id), [AGENT_PRESET_ID]);
-  assert.equal(discovered[0].broken, undefined, discovered[0].broken);
-  assert.equal(discovered[0].name, '小鹈鹕');
+  const overlay = parseYaml(fs.readFileSync(ensureSystemPromptPatch({ dshHome: home, surface: 'web', defaultPreset: AGENT_PRESET_ID }), 'utf8'));
+  const permission = overlay.find((row) => row.id === 'permission');
+  assert.strictEqual(permission?.config?.defaultPreset, 'workspace-write');
+  const registered = findRow(overlay, 'preset-tinypelican');
+  assert.equal(registered.name, '@deepseek-ai/dsh-agent-preset');
+  assert.deepEqual(registered.config.plugins, rows);
 
   // 二次调用必须幂等（DSH 按 mtime+size 记录 preset 代际，反复改写会让它一直重开）
   const before = fs.statSync(path.join(dir, 'agent.cordis.yml')).mtimeMs;

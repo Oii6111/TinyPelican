@@ -6,6 +6,7 @@ const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
 const { readIntents, saveIntents, loadState, saveState } = require('../memory/stores/intents');
 const { runTask } = require('./client');
+const { materializeIntent } = require('./intent-actions');
 const { parseDeadline } = require('../lib/deadline');
 const { typeLabel } = require('../lib/reminder-rules');
 const { notifyUser } = require('../notify');
@@ -163,6 +164,20 @@ async function notifyNewIntents(intents, cfg) {
   for (const intent of intents) {
     if (intent.type === 'profile_update') continue;
     if (intent.notified) continue;
+    // 高置信度自动建成的事项也要说一声：静默往任务列表里加东西比弹一条通知更让人困惑
+    if (intent.status === 'auto_created' && intent.confidence >= MEDIUM_CONF) {
+      const msg = `✅ 已按高置信度自动创建${typeLabel(intent.type)}：${intent.summary}（来自 ${intent.source.contact || '未知'}）。可在「任务 / 日程」页调整或删除。`;
+      const created = await notifyUser({ event: 'intent', title: '✅ 小鹈鹕已创建事项', message: msg, config: cfg });
+      if (created && created.ok) {
+        intent.notified = true;
+        intent.updatedAt = new Date().toISOString();
+        changed = true;
+        log('info', 'intent', `已推送自动创建事项：${intent.summary}`);
+      } else {
+        log('warn', 'intent', `自动创建事项未推送：${intent.summary}`);
+      }
+      continue;
+    }
     if (intent.status === 'pending_confirm' && intent.confidence >= MEDIUM_CONF) {
       const msg = `🔍 发现疑似${typeLabel(intent.type)}：${intent.summary}（来自 ${intent.source.contact || '未知'}）。请在 Dashboard「待确认意图」中确认进入任务或日程，或忽略。`;
       const notifyResult = await notifyUser({ event: 'intent', title: '🔍 小鹈鹕发现待确认事项', message: msg, config: cfg });
@@ -183,6 +198,24 @@ async function notifyNewIntents(intents, cfg) {
 function saveExtractedIntents(intents) {
   const currentProfiles = readIntents().filter((intent) => intent.type === 'profile_update');
   saveIntents([...intents.filter((intent) => intent.type !== 'profile_update'), ...currentProfiles]);
+}
+
+// 高置信度自动落库：和邮件分析共用 intent.highConfidence 这一份阈值。
+// 需要 Agent 执行的动作（execution.mode = 'dsh'）一律留待确认——自动跑起来风险太大；
+// 日程/提醒缺时间时 materializeIntent 自己会拒绝，退回待确认。
+function autoCreateIntent(intent, intentCfg = {}) {
+  const threshold = Number.isFinite(Number(intentCfg.highConfidence)) ? Number(intentCfg.highConfidence) : 0.85;
+  if (!(Number(intent.confidence) >= threshold)) return null;
+  if (intent.execution && intent.execution.mode === 'dsh') return null;
+  try {
+    const result = materializeIntent(intent, { direct: true });
+    if (!result || !result.ok) return null;
+    log('info', 'intent', `高置信度自动创建${typeLabel(result.intent.type)}：${result.intent.summary}`);
+    return result.intent;
+  } catch (error) {
+    log('warn', 'intent', '自动创建事项失败，改为待确认：' + ((error && error.message) || error));
+    return null;
+  }
 }
 
 async function runIntentExtraction(opts = {}) {
@@ -209,6 +242,7 @@ async function runIntentExtractionInternal(opts = {}) {
   let totalNew = 0;
   let totalScanned = 0;
   let totalStale = 0;
+  let totalAuto = 0;
 
   for (const member of members) {
     const key = member.name;
@@ -269,11 +303,19 @@ async function runIntentExtractionInternal(opts = {}) {
           continue;
         }
         if (isDuplicate(intents, intent)) continue;
+        // 高置信度且能落成具体事项的，直接建成正式任务/日程（与邮件分析一致）；
+        // 其余仍然只进待确认，由用户决定。
+        const created = autoCreateIntent(intent, intentCfg);
+        if (created) {
+          intents.push(created);
+          added++;
+          totalNew++;
+          totalAuto++;
+          continue;
+        }
         intents.push(intent);
         added++;
         totalNew++;
-        // 意图识别只生成“待确认建议”，不自动创建正式任务，也不自动入 DSH 执行队列。
-        // 用户确认后由「任务」页/待确认页手动转为正式任务。
       }
       const staleText = skippedStale ? `，跳过过期/已完成 ${skippedStale} 条` : '';
       console.log(`[intent] ${key} 新增 ${added} 条意图${staleText}`);
@@ -302,12 +344,109 @@ async function runIntentExtractionInternal(opts = {}) {
     log('info', 'intent', `自动过期 ${expired} 条过期的待确认事项（改为已忽略）`);
   }
 
-  console.log(`[intent] 本次扫描 ${totalScanned} 条消息，新增意图 ${totalNew} 条，跳过过期/已完成 ${totalStale} 条`);
-  log('info', 'intent', `本次扫描 ${totalScanned} 条消息，新增意图 ${totalNew} 条，跳过过期/已完成 ${totalStale} 条`);
+  console.log(`[intent] 本次扫描 ${totalScanned} 条消息，新增意图 ${totalNew} 条（其中自动创建 ${totalAuto} 条），跳过过期/已完成 ${totalStale} 条`);
+  log('info', 'intent', `本次扫描 ${totalScanned} 条消息，新增意图 ${totalNew} 条（其中自动创建 ${totalAuto} 条），跳过过期/已完成 ${totalStale} 条`);
   await notifyNewIntents(intents, cfg);
   console.log('[intent] 完成');
   log('info', 'intent', '完成');
-  return { totalNew, totalScanned, totalStale, expired };
+  return { totalNew, totalScanned, totalStale, expired, autoCreated: totalAuto };
 }
 
-module.exports = { runIntentExtraction, buildIntent, isDuplicate, formatNow, staleReason, historyBefore };
+// ---------- 触发调度：合并连续复制 + 冷却 ----------
+// 每复制一条消息就全量扫一轮的代价太高（每个有新消息的联系人一次模型调用），
+// 所以触发分两层收口：
+//   1) 静默合并：触发后等 debounceMs 内没有新触发才真正扫。连续复制多条 → 只扫一轮，
+//      而且这一轮包含全部新消息（游标是在扫描时读的）。
+//   2) 冷却：两轮之间至少间隔 minIntervalMinutes。冷却期内的触发排队到点再跑一轮，
+//      既不丢，也不会一条一次。
+const DEFAULT_DEBOUNCE_MS = 2500;
+const DEFAULT_MIN_INTERVAL_MINUTES = 1;
+
+let pendingTimer = null;
+let pendingOptions = null;
+let lastRunFinishedAt = 0;
+let runRequestedWhileRunning = false;
+
+function schedulerTiming(config = loadConfig()) {
+  const intentCfg = (config && config.intent) || {};
+  const debounceRaw = Number(intentCfg.debounceMs);
+  const cooldownRaw = Number(intentCfg.minIntervalMinutes);
+  const debounceMs = Number.isFinite(debounceRaw) ? Math.max(0, debounceRaw) : DEFAULT_DEBOUNCE_MS;
+  const cooldownMinutes = Number.isFinite(cooldownRaw) ? Math.max(0, cooldownRaw) : DEFAULT_MIN_INTERVAL_MINUTES;
+  return { debounceMs, cooldownMinutes, minIntervalMs: cooldownMinutes * 60000 };
+}
+
+// 排队一次扫描（不等待结果）。复制归档、导入、定时扫描都走这里。
+function requestIntentExtraction(opts = {}) {
+  const config = opts.config || loadConfig();
+  const options = { ...opts, config };
+  if (extractionPromise) {
+    // 正在扫：记一笔，结束后按冷却补一轮，而不是并发再扫
+    runRequestedWhileRunning = true;
+    pendingOptions = options;
+    return { scheduled: true, merged: true, delayMs: 0 };
+  }
+  const { debounceMs, minIntervalMs } = schedulerTiming(config);
+  const delayMs = Math.max(debounceMs, lastRunFinishedAt + minIntervalMs - Date.now(), 0);
+  pendingOptions = options;
+  if (pendingTimer) clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(() => {
+    pendingTimer = null;
+    void runScheduled(pendingOptions);
+  }, delayMs);
+  if (pendingTimer && typeof pendingTimer.unref === 'function') pendingTimer.unref();
+  return { scheduled: true, merged: false, delayMs };
+}
+
+async function runScheduled(options) {
+  let result = null;
+  try {
+    result = await runIntentExtraction(options || {});
+  } catch (error) {
+    log('error', 'intent', '意图识别异常：' + ((error && error.message) || error));
+  } finally {
+    lastRunFinishedAt = Date.now();
+  }
+  if (runRequestedWhileRunning) {
+    runRequestedWhileRunning = false;
+    requestIntentExtraction(pendingOptions || options || {});
+  }
+  return result;
+}
+
+// 立刻跑一轮（跳过静默与冷却）：测试、导入后需要马上看结果、手动刷新时用
+async function flushIntentExtraction(opts = {}) {
+  if (pendingTimer) {
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+  const options = { ...(pendingOptions || {}), ...opts };
+  pendingOptions = null;
+  return runScheduled(options);
+}
+
+function resetIntentScheduler() {
+  if (pendingTimer) clearTimeout(pendingTimer);
+  pendingTimer = null;
+  pendingOptions = null;
+  lastRunFinishedAt = 0;
+  runRequestedWhileRunning = false;
+}
+
+function intentSchedulerState() {
+  return { pending: !!pendingTimer, running: !!extractionPromise, lastRunFinishedAt };
+}
+
+module.exports = {
+  runIntentExtraction,
+  requestIntentExtraction,
+  flushIntentExtraction,
+  resetIntentScheduler,
+  intentSchedulerState,
+  schedulerTiming,
+  buildIntent,
+  isDuplicate,
+  formatNow,
+  staleReason,
+  historyBefore
+};

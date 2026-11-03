@@ -79,6 +79,8 @@ dashboard/              看板前端：index.html 骨架 + styles.css + src/
 tests/                  单元测试与集成测试（node --test）
 ```
 
+`agent/dsh-plugins/` 是随包分发的 DSH profile 插件（目前是 `tinypelican-market`：在侧栏「插件」页的添加插件菜单里加一个「从插件市场安装」，弹窗里嵌 dsh-market 市场本体）。它随安装包进入 `resources/content/agent/dsh-plugins/`，由 `core/agent/dsh-bundled-plugins.js` 在拉起 DSH 前同步进 `$DSH_HOME/profiles/web/plugins/` 并登记到 profile；失败只记日志，不影响启动。
+
 根目录另有 `start.ps1`（开发模式一键启动）。PowerShell 组件仅薄壳，核心逻辑全部在 Node 侧。
 
 ## 全局状态与心跳
@@ -148,11 +150,11 @@ tests/                  单元测试与集成测试（node --test）
 npm run dist          # = scripts/build-installer.ps1
 ```
 
-产物 `app/dist/TinyPelican-Setup-<版本>.exe`（本机实测 147MB；NSIS oneClick，装到当前用户目录、无需管理员，装完自动启动）。
+产物 `app/dist/TinyPelican-Setup-<版本>.exe`（NSIS oneClick，装到当前用户目录、无需管理员，装完自动启动；体积随内置依赖增长 —— 内置 DSH 约 147MB，再带上 `node.exe` 约 +30MB）。
 
 自包含三件套（都已落地）：
 
-1. **Node 运行时**：不再要求用户安装 Node —— Electron 壳用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 直接把核心当 Node 进程跑（`app/main.js` 的 `coreEnv()/startCore()`）；
+1. **Node 运行时**：不再要求用户安装 Node —— 安装包里带一份真正的 `node.exe`（构建时从构建机复制到 `packaging/runtime/`，再由 electron-builder 放到 `resources/content/runtime/node.exe`），核心用它起进程（`app/main.js` 的 `coreRunner()/coreEnv()`，选择逻辑在 `core/lib/runtime-node.js`）。**不能拿 Electron 自带 Node 跑核心**：`electron.exe` 是 GUI 子系统程序，当 Node 用时整棵进程树**没有控制台**，而 DSH 执行工具命令走的是自带的 `windows-job` runner（原生 `CreateProcessW`，creationFlags 只有 `CREATE_UNICODE_ENVIRONMENT|CREATE_SUSPENDED`，不带 `CREATE_NO_WINDOW`）—— `pwsh.exe` 在「父进程没有控制台」时会被系统配一个新控制台窗口，表现就是打包版**一用工具就疯狂弹 PowerShell 窗口**。开发版看不出来，是因为整条链是终端里的 `node.exe`，控制台一路继承。真正的 `node.exe`（控制台子系统）被 `windowsHide: true` 启动后，隐藏控制台会继承给 DSH / 它的 runner / pwsh，DSH 内部那些没带 `windowsHide` 的 spawn 也不再冒窗；老安装目录里没有 `runtime/node.exe` 时退回 `process.execPath` + `ELECTRON_RUN_AS_NODE=1`；
 2. **DSH 内置**：`packaging/vendor/node_modules` 里装好 `@deepseek-ai/dsh`（约 223MB，`scripts/build-installer.ps1` 会自动安装），由 electron-builder 复制到 `resources/content/vendor/node_modules`；`findDshBin()` 与 `app/main.js` 都优先用它（`XIAOTIHU_DSH_BIN`）。注意 dsh 0.1.5-rc.2 自己的依赖里有个不存在的版本（`…sidebar-documentpreview@^0.1.5-rc.3`），所以 `packaging/vendor/package.json` 用 npm `overrides` 钉到 rc.2；
 3. **DSH home 与配置**：首次启动把 `DSH_HOME` 指向 `<用户数据目录>/dsh-home`（DSH 自己生成 `web` profile，实测 4 秒完成、不需要联网），并把「设置 → 模型服务」里的模型与 API Key 通过 `buildDshEnv()` 传给 DSH；配置只带 `config.example.json`，首次运行生成 `config.json`（**安装包里不含开发者的 Key**）。
 
@@ -196,7 +198,7 @@ npm run dist          # = scripts/build-installer.ps1
 
 **`--expose-internals`（打包版必须带）**：DSH 的 `web` profile 模板里 `patchReload: live`，
 而 live reload 的 `@deepseek-ai/cordis-plugin-hmr` 依赖 Node 的 `--expose-internals`。
-打包版用 Electron 当 Node（`ELECTRON_RUN_AS_NODE`），不带这个 flag 时 DSH 会**在启动阶段直接崩**
+打包版用 Electron 当 Node（`ELECTRON_RUN_AS_NODE`；新安装包已经换成内置 `node.exe`，见上文「Node 运行时」），不带这个 flag 时 DSH 会**在启动阶段直接崩**
 （`--expose-internals is required for HMR service`）：全新机器上第一次装完就是这个表现——
 3080 打不开、对话报 `fetch failed`。所以 `spawnDshWeb()` 拉起 DSH 时固定加上该 flag。
 老安装目录里的核心没有这个 flag，`scripts/start-dsh.{cmd,js}`（排障脚本）会把该 profile 的
