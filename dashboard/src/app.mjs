@@ -203,15 +203,15 @@ function show(id, params) {
   try {
     const h = await api.health();
     foot.textContent = '核心 v' + (h.version || '') + ' 在线';
-    const editionButton = el('button', { class: 'sidebar-edition-button', type: 'button', text: '�����汾' });
+    const editionButton = el('button', { class: 'sidebar-edition-button', type: 'button', text: '\u5207\u6362\u7248\u672c' });
     editionButton.onclick = async () => {
-      const code = window.prompt('����������');
+      const code = window.prompt('\u8bf7\u8f93\u5165\u7248\u672c\u9884\u8bbe\u7801');
       if (!code) return;
       try {
         await api.edition.activate(code.trim());
-        editionButton.textContent = '�����л�...';
+        editionButton.textContent = '\u6b63\u5728\u5207\u6362...';
       } catch (error) {
-        window.alert(error.message || '��������Ч');
+        window.alert(error.message || '\u9884\u8bbe\u7801\u65e0\u6548');
       }
     };
     foot.append(editionButton);
