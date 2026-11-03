@@ -22,10 +22,10 @@ const { effectiveEngineProvider } = require(path.join(PROJECT_ROOT, 'core/agent/
 const { waitForCore } = require(path.join(PROJECT_ROOT, 'core/lib/readiness'));
 const { resolveCoreRuntime, needsElectronAsNode } = require(path.join(PROJECT_ROOT, 'core/lib/runtime-node'));
 try {
-  const stableUserData = app.getPath('userData');
-  const activeEdition = readActiveEdition(stableUserData, PROJECT_ROOT);
   const id = workspaceId(PROJECT_ROOT);
-  const preferred = isPackaged ? editionDataDir(stableUserData, activeEdition) : path.join(app.getPath('appData'), 'TinyPelican-dev', id);
+  const stableUserData = isPackaged ? app.getPath('userData') : path.join(app.getPath('appData'), 'TinyPelican-dev', id);
+  const activeEdition = readActiveEdition(stableUserData, PROJECT_ROOT);
+  const preferred = editionDataDir(stableUserData, activeEdition);
   const developmentFallback = isPackaged ? null : path.join(PROJECT_ROOT, 'tmp', 'electron-user-data', id);
   const candidates = process.env.XIAOTIHU_USER_DATA_DIR ? [process.env.XIAOTIHU_USER_DATA_DIR] : [
     preferred,
