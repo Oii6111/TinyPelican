@@ -23,10 +23,13 @@ const { waitForCore } = require(path.join(PROJECT_ROOT, 'core/lib/readiness'));
 const { resolveCoreRuntime, needsElectronAsNode } = require(path.join(PROJECT_ROOT, 'core/lib/runtime-node'));
 try {
   const id = workspaceId(PROJECT_ROOT);
-  const stableUserData = isPackaged ? app.getPath('userData') : path.join(app.getPath('appData'), 'TinyPelican-dev', id);
+  const developmentFallback = isPackaged ? null : path.join(PROJECT_ROOT, 'tmp', 'electron-user-data', id);
+  const stableCandidates = isPackaged
+    ? [process.env.XIAOTIHU_DATA_DIR, app.getPath('userData')]
+    : [process.env.XIAOTIHU_DATA_DIR, path.join(app.getPath('appData'), 'TinyPelican-dev', id), developmentFallback];
+  const stableUserData = selectWritableDirectory(stableCandidates, { label: 'XIAOTIHU_DATA_DIR' });
   const activeEdition = readActiveEdition(stableUserData, PROJECT_ROOT);
   const preferred = editionDataDir(stableUserData, activeEdition);
-  const developmentFallback = isPackaged ? null : path.join(PROJECT_ROOT, 'tmp', 'electron-user-data', id);
   const candidates = process.env.XIAOTIHU_USER_DATA_DIR ? [process.env.XIAOTIHU_USER_DATA_DIR] : [
     preferred,
     ...userDirectories().map(directory => path.join(directory, isPackaged ? 'TinyPelican' : 'TinyPelican-dev', ...(isPackaged ? [] : [id]), 'electron')),
@@ -37,6 +40,7 @@ try {
   app.setPath('sessionData', path.join(userData, 'browser-session-v2'));
   process.env.XIAOTIHU_STABLE_DATA_DIR = stableUserData;
   process.env.XIAOTIHU_EDITION_ID = activeEdition.id;
+  process.env.XIAOTIHU_DATA_DIR = preferred;
   initializeRuntime({ root: PROJECT_ROOT, packaged: isPackaged, dataDir: preferred });
 } catch (error) {
   if (dialog && typeof dialog.showErrorBox === 'function') {

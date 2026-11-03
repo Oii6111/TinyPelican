@@ -5,5 +5,8 @@
   "main": "main.js",
   "engines": {
     "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "npm --prefix app start"
   }
 }
