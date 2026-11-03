@@ -203,18 +203,42 @@ function show(id, params) {
   try {
     const h = await api.health();
     foot.textContent = '核心 v' + (h.version || '') + ' 在线';
-    const editionButton = el('button', { class: 'sidebar-edition-button', type: 'button', text: '\u5207\u6362\u7248\u672c' });
-    editionButton.onclick = async () => {
-      const code = window.prompt('\u8bf7\u8f93\u5165\u7248\u672c\u9884\u8bbe\u7801');
-      if (!code) return;
+    const editionDialog = el('div', { class: 'edition-dialog-backdrop', hidden: true },
+      el('div', { class: 'edition-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'edition-dialog-title' },
+        el('div', { class: 'edition-dialog-kicker', text: '\u5c0f\u9e48\u9e55 / EDITIONS' }),
+        el('h2', { id: 'edition-dialog-title', text: '\u5207\u6362\u4e13\u5c5e\u7248\u672c' }),
+        el('p', { class: 'edition-dialog-copy', text: '\u8f93\u5165\u7248\u672c\u9884\u8bbe\u7801\uff0c\u52a0\u8f7d\u5bf9\u5e94\u7684\u5c0f\u9e48\u9e55\u5de5\u4f5c\u7a7a\u95f4\u3002' }),
+        el('input', { class: 'edition-code-input', type: 'text', placeholder: '\u4f8b\u5982 TINYPELICAN-ROMANCE', autocomplete: 'off', spellcheck: 'false' }),
+        el('div', { class: 'edition-dialog-status', role: 'status' }),
+        el('div', { class: 'edition-dialog-actions' },
+          el('button', { class: 'edition-dialog-cancel', type: 'button', text: '\u53d6\u6d88' }),
+          el('button', { class: 'edition-dialog-confirm', type: 'button', text: '\u52a0\u8f7d\u7248\u672c' })
+        )
+      )
+    );
+    const input = editionDialog.querySelector('.edition-code-input');
+    const status = editionDialog.querySelector('.edition-dialog-status');
+    const closeEditionDialog = () => { editionDialog.hidden = true; status.textContent = ''; };
+    editionDialog.querySelector('.edition-dialog-cancel').addEventListener('click', closeEditionDialog);
+    editionDialog.addEventListener('click', event => { if (event.target === editionDialog) closeEditionDialog(); });
+    editionDialog.querySelector('.edition-dialog-confirm').addEventListener('click', async () => {
+      const code = input.value.trim();
+      if (!code) { status.textContent = '\u8bf7\u5148\u8f93\u5165\u9884\u8bbe\u7801'; return; }
+      status.textContent = '\u6b63\u5728\u9a8c\u8bc1...';
       try {
-        await api.edition.activate(code.trim());
-        editionButton.textContent = '\u6b63\u5728\u5207\u6362...';
+        await api.edition.activate(code);
+        status.textContent = '\u7248\u672c\u5df2\u52a0\u8f7d\uff0c\u6b63\u5728\u91cd\u542f...';
       } catch (error) {
-        window.alert(error.message || '\u9884\u8bbe\u7801\u65e0\u6548');
+        status.textContent = error.message || '\u9884\u8bbe\u7801\u65e0\u6548';
       }
-    };
+    });
+    const editionButton = el('button', { class: 'sidebar-edition-button', type: 'button' },
+      el('span', { class: 'edition-button-mark', html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 14 8l4.5 2-4.5 2-2 4.5-2-4.5-4.5-2 4.5-2 2-4.5Z"/><path d="m19 15 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8L19 15Z"/></svg>' }),
+      el('span', { text: '\u5207\u6362\u7248\u672c' })
+    );
+    editionButton.addEventListener('click', () => { editionDialog.hidden = false; input.focus(); });
     foot.append(editionButton);
+    document.body.append(editionDialog);
   } catch {
     foot.textContent = '核心未连接';
   }

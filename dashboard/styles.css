@@ -155,7 +155,40 @@ body {
 }
 .settings-nav { margin-bottom: 2px; }
 .settings-nav:hover:not(.active) { background: transparent; }
-.sidebar-foot { font-size: 11px; color: var(--text-3); padding: 0 8px; }
+.sidebar-foot { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-3); padding: 0 8px; }
+.sidebar-edition-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(118, 83, 26, .18);
+  border-radius: 999px;
+  padding: 6px 10px 6px 8px;
+  background: rgba(255, 248, 229, .82);
+  color: #76531a;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(91, 76, 33, .06);
+}
+.sidebar-edition-button:hover { background: #fff3d6; border-color: rgba(118, 83, 26, .34); transform: translateY(-1px); }
+.edition-button-mark { display: inline-grid; place-items: center; width: 16px; height: 16px; }
+.edition-button-mark svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.edition-dialog-backdrop[hidden] { display: none; }
+.edition-dialog-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px; background: rgba(35, 37, 31, .22); backdrop-filter: blur(4px); }
+.edition-dialog { width: min(390px, 100%); padding: 26px; border: 1px solid rgba(118, 83, 26, .16); border-radius: 22px; background: #fffdf7; box-shadow: 0 22px 70px rgba(49, 45, 27, .22); }
+.edition-dialog-kicker { color: #9a7a3c; font-size: 10px; font-weight: 750; letter-spacing: .14em; }
+.edition-dialog h2 { margin: 8px 0 7px; color: #292a24; font-size: 22px; letter-spacing: -.02em; }
+.edition-dialog-copy { margin: 0 0 18px; color: #77776e; font-size: 13px; line-height: 1.65; }
+.edition-code-input { width: 100%; box-sizing: border-box; border: 1px solid #ddd9ca; border-radius: 12px; padding: 11px 13px; background: #fff; color: #292a24; font: inherit; font-size: 13px; outline: none; }
+.edition-code-input:focus { border-color: #c69b4d; box-shadow: 0 0 0 4px rgba(198, 155, 77, .14); }
+.edition-dialog-status { min-height: 19px; margin-top: 9px; color: #9a7a3c; font-size: 12px; }
+.edition-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.edition-dialog-actions button { border-radius: 10px; padding: 9px 14px; font: inherit; font-size: 13px; cursor: pointer; }
+.edition-dialog-cancel { border: 1px solid transparent; background: transparent; color: #77776e; }
+.edition-dialog-cancel:hover { background: #f3f1e9; color: #292a24; }
+.edition-dialog-confirm { border: 1px solid #c69b4d; background: #c69b4d; color: #fffdf7; box-shadow: 0 3px 10px rgba(118, 83, 26, .16); }
+.edition-dialog-confirm:hover { background: #ae8338; border-color: #ae8338; }
 
 /* ---------- 内容区 ---------- */
 .content { flex: 1; min-width: 0; overflow: hidden; position: relative; }
