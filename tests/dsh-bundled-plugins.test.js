@@ -10,6 +10,7 @@ const {
   BUNDLED_PROFILE_PLUGINS,
   REQUIRED_PROFILE_PACKAGES,
   ensureBundledPlugins,
+  ensureInstallationDependencies,
   registerInManifest,
   copyTree
 } = require('../core/agent/dsh-bundled-plugins');
@@ -140,8 +141,7 @@ test('plugin-market dialog is mounted outside the add-plugin menu lifecycle', ()
   assert.doesNotMatch(source.slice(menuStart, exportsStart), /MarketDialog/);
 });
 
-test('copyTree 跳过开发期目录，只写真正变了的文件', () => {
-  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-src-'));
+test('copyTree 跳过开发期目录，只写真正变了的文件', () => {  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-src-'));
   fs.mkdirSync(path.join(src, 'src'), { recursive: true });
   fs.mkdirSync(path.join(src, 'lib'), { recursive: true });
   fs.writeFileSync(path.join(src, 'lib', 'index.js'), 'ok', 'utf8');
@@ -161,3 +161,76 @@ test('copyTree 跳过开发期目录，只写真正变了的文件', () => {
   assert.deepStrictEqual(third, { files: 1, changed: true });
   assert.strictEqual(fs.readFileSync(path.join(dst, 'lib', 'index.js'), 'utf8'), 'changed');
 });
+
+// ── 安装作用域：DSH 只认 @deepseek-ai/dsh 自己的依赖图 ─────────────────────
+function fakeVendor({ marketVersion = '1.66.47', dshDeps = {} } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-vendor-'));
+  const vendor = path.join(root, 'vendor', 'node_modules');
+  const market = path.join(vendor, 'dshmarket');
+  fs.mkdirSync(market, { recursive: true });
+  fs.writeFileSync(path.join(market, 'package.json'), JSON.stringify({ name: 'dshmarket', version: marketVersion }, null, 2));
+  const dshDir = path.join(vendor, '@deepseek-ai', 'dsh');
+  fs.mkdirSync(path.join(dshDir, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(dshDir, 'lib', 'bin.js'), '// fixture\n');
+  fs.writeFileSync(path.join(dshDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.2.1-rc.2', dependencies: dshDeps }, null, 2) + '\n');
+  return { root, dshBin: path.join(dshDir, 'lib', 'bin.js'), manifest: path.join(dshDir, 'package.json') };
+}
+
+test('把随包市场包写进内置 DSH 的 dependencies，第二次为空操作', (context) => {
+  const { root, dshBin, manifest } = fakeVendor({ dshDeps: { '@deepseek-ai/dsh-base': '^0.2.1' } });
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const first = ensureInstallationDependencies({ dshBin });
+  assert.strictEqual(first.error, '');
+  assert.strictEqual(first.changed, true);
+  assert.deepStrictEqual(first.added, ['dshmarket']);
+
+  const onDisk = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+  assert.strictEqual(onDisk.dependencies.dshmarket, '1.66.47', '写随包实际版本，而不是 profile 里的 ^range');
+  assert.strictEqual(onDisk.dependencies['@deepseek-ai/dsh-base'], '^0.2.1', '原有依赖不能被动');
+
+  const second = ensureInstallationDependencies({ dshBin });
+  assert.strictEqual(second.changed, false, '已经认领过就不再写盘');
+});
+
+test('内置 DSH 清单带 BOM 也能读，写回时不带 BOM', (context) => {
+  const { root, dshBin, manifest } = fakeVendor();
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const text = fs.readFileSync(manifest, 'utf8');
+  fs.writeFileSync(manifest, '\uFEFF' + text, 'utf8');
+
+  const result = ensureInstallationDependencies({ dshBin });
+  assert.strictEqual(result.error, '', '带 BOM 不该被当成读不到');
+  assert.strictEqual(result.changed, true);
+  const bytes = fs.readFileSync(manifest);
+  assert.notDeepStrictEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], '写回必须是纯 UTF-8（DSH 用 JSON.parse 读）');
+  assert.strictEqual(JSON.parse(bytes.toString('utf8')).dependencies.dshmarket, '1.66.47');
+});
+
+test('DSH 清单不可写时如实报错，不抛异常', (context) => {
+  const { root, dshBin } = fakeVendor();
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const manifestDir = path.dirname(dshBin);
+  const manifest = path.join(manifestDir, '..', 'package.json');
+  fs.rmSync(manifest);
+  fs.mkdirSync(manifest); // 用目录占住路径，写入必然失败
+
+  const result = ensureInstallationDependencies({ dshBin });
+  assert.ok(result.error);
+  assert.strictEqual(result.changed, false);
+});
+
+test('自举时先认领市场包，即使 profile 还没生成', () => {
+  const { root, dshBin, manifest } = fakeVendor();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-noprofile2-'));
+  try {
+    const result = ensureBundledPlugins({ home, contentRoot: ROOT, dshBin });
+    assert.strictEqual(result.ok, true, result.errors.join('\n'));
+    assert.ok(result.applied.some((line) => line.includes('认领')), '应记录认领动作');
+    assert.strictEqual(JSON.parse(fs.readFileSync(manifest, 'utf8')).dependencies.dshmarket, '1.66.47');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+

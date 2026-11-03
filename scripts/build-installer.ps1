@@ -42,6 +42,13 @@ foreach ($required in @('dshmarket\package.json', 'dshmarket\lib\index.js', 'dsh
   }
 }
 
+# 1.1) 让内置 DSH 认领随包市场包：DSH 的安装作用域只认 @deepseek-ai/dsh 自己的依赖图，
+# 光把 dshmarket 放在 vendor/node_modules 里，profile 一登记就会报
+# 「dsh-market (dshmarket): Cannot find package 'dshmarket'」。
+Step '内置 DSH 依赖声明'
+node (Join-Path $root 'scripts\patch-vendor-dsh.js') $dshBin
+if ($LASTEXITCODE -ne 0) { throw '内置 DSH 依赖修补失败' }
+
 # 1.2) 随包 DSH 插件：浏览器半边是已构建好的 CJS bundle（无需 tsc/tsdown），
 # 只校验产物齐全，避免装出一个「插件页少一个入口」的包。
 Step '随包 DSH 插件'

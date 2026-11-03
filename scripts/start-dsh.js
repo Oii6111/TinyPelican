@@ -376,6 +376,24 @@ function ownLaunch(bin) {
     proxySummary = systemProxy.applyToEnv(childEnv).summary;
   } catch {}
   if (proxySummary) say('出站代理：' + proxySummary);
+  // 和核心启动时同一套随包插件自举：否则手工启动会看见
+  // 「dsh-market (dshmarket): Cannot find package 'dshmarket'」
+  try {
+    const bundled = fs.existsSync(path.join(CONTENT, 'core', 'agent', 'dsh-bundled-plugins.js'))
+      ? require(path.join(CONTENT, 'core', 'agent', 'dsh-bundled-plugins.js'))
+      : require('../core/agent/dsh-bundled-plugins');
+    const result = bundled.ensureBundledPlugins({
+      home: dshHome || process.env.DSH_HOME || '',
+      contentRoot: CONTENT,
+      dshBin: bin,
+      profile: 'web',
+      env: childEnv,
+      log: (level, message) => say(message)
+    });
+    for (const line of result.errors) say('随包插件：' + line);
+  } catch (error) {
+    say('随包插件自举失败（不影响启动）：' + String((error && error.message) || error));
+  }
   ownChild = spawn(process.execPath, ['--expose-internals', bin, 'web', '--port', String(PORT), '--no-open'], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: childEnv,

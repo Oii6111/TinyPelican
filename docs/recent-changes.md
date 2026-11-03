@@ -1,5 +1,13 @@
 # 近期功能更新
 
+## 修复安装包启动时的 dsh-market 告警（2026-11-04）
+
+- 现象：装完包启动 DSH 报 `dsh: warning: 1 entry did not activate` / `dsh-market (dshmarket): Cannot find package 'dshmarket'`，侧栏少一个插件市场入口。
+- 原因：DSH 的「安装作用域」不是「安装目录里有什么」，而是顺着 `@deepseek-ai/dsh` 自己的 `dependencies` 走依赖图；`dshmarket` 只是被放在 `vendor/node_modules` 里当邻居，不在图里，profile 一登记就解析不到。
+- 修复：构建时（`scripts/patch-vendor-dsh.js`）和启动时（`ensureInstallationDependencies`）都把随包市场包写进内置 DSH 的 `dependencies`，写回是无 BOM 的 UTF-8；已装坏的旧版本在下次启动时自愈，不需要重装，也不动用户的 profile。
+- 手工启动脚本 `scripts/start-dsh.js` 也走同一套自举，避免排查时再看到同一条告警。
+- 用打包产物（`app/dist/win-unpacked`）实测：新装首启会打日志「随包插件：内置 DSH 已认领 dshmarket」，随后 DSH 不再出现该告警；6 项新测试覆盖幂等、BOM、不可写与首启顺序。
+
 ## 剪贴板聊天记录的图片与文件（2026-10-31）
 
 - 微信复制带图片/文件的聊天时，附件不在剪贴板的位图里：`CF_HDROP` 给的是 `temp\RWTemp` 下已解密的明文文件，私有格式 `x-xwechat-multiselect-copy` 的 item 数组给出「第 i 项 ↔ 第 i 条消息」的映射。

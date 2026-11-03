@@ -41,6 +41,83 @@ const PROFILE_PLUGINS_DIR = 'plugins';
 const SKIP_COPY = new Set(['.git', 'node_modules', 'src', 'test', 'tests', '*.tsbuildinfo']);
 
 /**
+ * 读取随包市场包的实际版本（vendor/node_modules/<name>），拿不到就退回清单里的 spec。
+ * @param {string} dshBin dsh 入口
+ * @param {{ name: string, spec: string }} pkg 包名与版本说明
+ * @returns {string}
+ */
+function shippedVersion(dshBin, pkg) {
+  try {
+    const vendorRoot = path.resolve(path.dirname(dshBin), '..', '..', '..');
+    const manifest = JSON.parse(fs.readFileSync(path.join(vendorRoot, pkg.name, 'package.json'), 'utf8'));
+    if (manifest && typeof manifest.version === 'string' && manifest.version) return manifest.version;
+  } catch {}
+  return String((pkg && pkg.spec) || '*');
+}
+
+/**
+ * 让内置 DSH「认领」随包市场包。
+ *
+ * DSH 给 profile 的模块解析是两段式：先在安装作用域里找，再找 profile。
+ * 但安装作用域不是「安装目录里有什么」，而是顺着 @deepseek-ai/dsh 自己的
+ * dependencies 走一遍依赖图（dsh-app-boot 的 collectInstallationScopePackages）。
+ * dshmarket 只是被我们放在 vendor/node_modules 里当邻居，不在那张图里，
+ * 于是 profile 的 bundles 一登记就解析不到，DSH 启动时报：
+ *   dsh: warning: 1 entry did not activate
+ *   dsh-market (dshmarket): failed to import ... Cannot find package 'dshmarket'
+ *
+ * 这里把随包市场包写进内置 DSH 的 dependencies（幂等），它才会被带进安装作用域。
+ * 只动我们自己随包的那份 DSH，不碰用户的 profile 依赖记录。
+ * @param {object} options
+ * @param {string} options.dshBin dsh 入口
+ * @param {Array<{ name: string, spec: string }>} [options.packages] 需要认领的包
+ * @returns {{ changed: boolean, manifestPath: string, added: string[], error: string, missing: boolean }}
+ */
+function ensureInstallationDependencies({ dshBin, packages = REQUIRED_PROFILE_PACKAGES } = {}) {
+  const result = { changed: false, manifestPath: '', added: [], error: '', missing: false };
+  if (!dshBin) {
+    result.error = '缺少 dsh 入口';
+    return result;
+  }
+  const manifestPath = path.resolve(path.dirname(dshBin), '..', 'package.json');
+  result.manifestPath = manifestPath;
+  // 没有内置 DSH 的清单（开发态 / 精简安装）：不是错误，只是没得改
+  if (!fs.existsSync(manifestPath)) {
+    result.missing = true;
+    return result;
+  }
+  let manifest;
+  try {
+    // 有些工具写出来的 package.json 带 BOM，JSON.parse 会直接报错
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8').replace(/^\uFEFF/, ''));
+  } catch (error) {
+    result.error = `读不到内置 DSH 的 package.json（${String((error && error.message) || error)}）`;
+    return result;
+  }
+  if (!manifest || typeof manifest !== 'object') {
+    result.error = '内置 DSH 的 package.json 不是对象';
+    return result;
+  }
+  if (!manifest.dependencies || typeof manifest.dependencies !== 'object') manifest.dependencies = {};
+
+  for (const pkg of packages) {
+    if (typeof manifest.dependencies[pkg.name] === 'string') continue;
+    manifest.dependencies[pkg.name] = shippedVersion(dshBin, pkg);
+    result.added.push(pkg.name);
+  }
+  if (!result.added.length) return result;
+
+  try {
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    result.changed = true;
+  } catch (error) {
+    result.added = [];
+    result.error = `内置 DSH 的 package.json 不可写（${String((error && error.message) || error)}）`;
+  }
+  return result;
+}
+
+/**
  * 递归复制目录，只写真正变了的文件（产品升级时 profile 里那份要跟着更新）。
  * 逐项判断，不做 shell 调用（Windows 路径更省心）。
  * @param {string} from 源目录
@@ -185,9 +262,21 @@ function ensureBundledPlugins({ home, contentRoot, dshBin, profile = 'web', env 
     return { ok: false, applied, skipped, errors: ['缺少 DSH_HOME / content 根目录 / dsh 入口，跳过随包插件'] };
   }
 
+  // 先修内置 DSH 的依赖声明：让随包市场包进入 DSH 的「安装作用域」。
+  // 这一步不依赖 profile 是否已经生成，所以放在最前面。
+  const installation = ensureInstallationDependencies({ dshBin });
+  if (installation.changed) {
+    applied.push(`内置 DSH 已认领 ${installation.added.join('、')}（否则 profile 登记的市场包解析不到）`);
+  }
+  if (installation.error) errors.push(`内置 DSH 依赖修补：${installation.error}`);
+
   const profileDir = path.join(home, 'profiles', profile);
   if (!fs.existsSync(path.join(profileDir, 'package.json'))) {
     // 全新安装：profile 由 DSH 自己首次启动时生成，下一次启动再登记。
+    // 但安装作用域的修补已经在上面做完了，这里也要把日志打出去，否则
+    // 「首启静默修好」在日志里看不出来，排查时会以为根本没跑。
+    for (const line of applied) say('info', `随包插件：${line}`);
+    for (const line of errors) say('warn', `随包插件：${line}`);
     skipped.push('profile 尚未生成');
     return { ok: true, applied, skipped, errors };
   }
@@ -266,6 +355,7 @@ module.exports = {
   BUNDLED_PROFILE_PLUGINS,
   REQUIRED_PROFILE_PACKAGES,
   ensureBundledPlugins,
+  ensureInstallationDependencies,
   registerInManifest,
   copyTree
 };
