@@ -7,7 +7,9 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "start": "electron . --no-sandbox",
+    "start": "set XIAOTIHU_DEV_EDITION=base&& electron . --no-sandbox",
+    "start:base": "set XIAOTIHU_DEV_EDITION=base&& electron . --no-sandbox",
+    "start:romance": "set XIAOTIHU_DEV_EDITION=romance&& electron . --no-sandbox",
     "dist": "electron-builder"
   },
   "devDependencies": {

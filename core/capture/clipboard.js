@@ -4,6 +4,8 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
+const { getPaths } = require('../lib/paths');
 const { parseChatDetail, getBatchContact, looksLikeChatText } = require('../lib/chat-parser');
 const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
@@ -45,7 +47,7 @@ function usableWindowBounds(bounds) {
 //   兼容格式 CHANGE <handle> <b64>
 //   旧格式 CHANGE <b64>
 function parseSensorLine(line) {
-  const full = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(\d+)\s+(.+)$/);
+  const full = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(\d+)\s+([A-Za-z0-9+/]+={0,2})$/);
   if (full) {
     return {
       handle: full[1] === '0' ? null : full[1],
@@ -61,7 +63,7 @@ function parseSensorLine(line) {
       encoded: full[9]
     };
   }
-  const current = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+(.+)$/);
+  const current = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+([A-Za-z0-9+/]+={0,2})$/);
   if (current) {
     return {
       handle: current[1] === '0' ? null : current[1],
@@ -70,9 +72,9 @@ function parseSensorLine(line) {
       encoded: current[4]
     };
   }
-  const two = line.match(/^CHANGE\s+(-?\d+)\s+(.+)$/);
+  const two = line.match(/^CHANGE\s+(-?\d+)\s+([A-Za-z0-9+/]+={0,2})$/);
   if (two) return { handle: two[1] === '0' ? null : two[1], encoded: two[2] };
-  const legacy = line.match(/^CHANGE\s+(.+)$/);
+  const legacy = line.match(/^CHANGE\s+([A-Za-z0-9+/]+={0,2})$/);
   if (legacy) return { handle: null, encoded: legacy[1] };
   return null;
 }
@@ -115,6 +117,7 @@ class ClipboardWatcher {
     this._pendingBatches = [];
     this._debounceTimer = null;
     this._restartTimer = null;
+    this._healthTimer = null;
   }
 
   start() {
@@ -125,20 +128,55 @@ class ClipboardWatcher {
       return;
     }
     this.running = true;
+    this._buffer = '';
+    this._pendingMedia = null;
     const sensor = path.join(__dirname, 'clipboard-sensor.ps1');
+    const sensorEnv = { ...process.env };
+    try {
+      const temporary = path.join(getPaths().dataDir, 'tmp', 'clipboard-sensor');
+      fs.mkdirSync(temporary, { recursive: true });
+      sensorEnv.TEMP = temporary;
+      sensorEnv.TMP = temporary;
+    } catch (error) {
+      log('warn', 'capture', '无法创建剪贴板组件临时目录：' + error.message);
+    }
     this.child = spawn('powershell.exe', [
       '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', sensor, '-PollMs', String(this.pollMs)
-    ], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    ], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: sensorEnv });
     this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (chunk) => this._onSensorData(chunk));
+    const child = this.child;
+    let lastActivity = Date.now();
+    let connected = false;
+    child.stdout.on('data', (chunk) => {
+      lastActivity = Date.now();
+      if (!connected) {
+        connected = true;
+        log('info', 'capture', `剪贴板传感器已连接，通道编码=${chunk.includes('\0') ? 'UTF-16' : 'UTF-8'}`);
+      }
+      this._onSensorData(chunk);
+    });
+    this._healthTimer = setInterval(() => {
+      if (Date.now() - lastActivity > Math.max(15000, this.pollMs * 5)) {
+        log('warn', 'capture', '剪贴板传感器无响应，正在重新启动');
+        child.kill();
+      }
+    }, 3000);
+    this._healthTimer.unref();
     this.child.on('exit', () => {
+      if (this.child !== child) return;
+      clearInterval(this._healthTimer);
+      this._healthTimer = null;
       this.child = null;
       if (this.running) {
         log('warn', 'capture', '剪贴板传感器退出，5 秒后重启');
-        this._restartTimer = setTimeout(() => this.start(), 5000);
+        this._restartTimer = setTimeout(() => {
+          this.running = false;
+          this.start();
+        }, 5000);
       }
     });
     this.child.on('error', (e) => {
+      clearInterval(this._healthTimer);
       log('error', 'capture', '剪贴板传感器启动失败：' + (e && e.message ? e.message : e));
       this.running = false;
     });
@@ -151,6 +189,15 @@ class ClipboardWatcher {
     while ((idx = this._buffer.indexOf('\n')) >= 0) {
       const line = this._buffer.slice(0, idx).trim();
       this._buffer = this._buffer.slice(idx + 1);
+
+      if (line.startsWith('SENSOR_ERROR ')) {
+        log('warn', 'capture', '剪贴板组件异常：' + Buffer.from(line.slice(13), 'base64').toString('utf8'));
+        continue;
+      }
+      if (line.startsWith('SENSOR_READY ')) {
+        log('info', 'capture', '剪贴板读取就绪，字符数=' + Number(line.slice(13)));
+        continue;
+      }
 
       if (line.startsWith('MEDIA ')) {
         const media = parseSensorMedia(line.slice(6).trim());
@@ -174,7 +221,9 @@ class ClipboardWatcher {
           bounds: parsed.bounds || null,
           dpi: parsed.dpi || 0
         }, media);
-      } catch {}
+      } catch (error) {
+        log('error', 'capture', '剪贴板消息处理失败：' + ((error && error.message) || error));
+      }
     }
   }
 
@@ -215,7 +264,10 @@ class ClipboardWatcher {
       }
       return;
     }
-    if (detail.matchedLines < this.minMatchLines) return;
+    if (detail.matchedLines < this.minMatchLines) {
+      if (isWeChat) log('warn', 'capture', '微信复制内容未达到聊天记录识别条件，请多选聊天消息后使用复制');
+      return;
+    }
     const fresh = msgs.filter((m) => !this.seen.has(msgKey(m)));
     if (fresh.length) {
       for (const m of fresh) this.seen.add(msgKey(m));
@@ -273,6 +325,8 @@ class ClipboardWatcher {
 
   stop() {
     this.running = false;
+    clearInterval(this._healthTimer);
+    this._healthTimer = null;
     // 停止前把排队中还没交付的批次先交出去，别让最后一次复制丢在缓冲里
     if (this._pendingBatches.length) this._flushBatches();
     else if (this._debounceTimer) {

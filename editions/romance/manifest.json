@@ -1,15 +1,20 @@
 {
   "id": "romance",
   "apiVersion": 1,
-  "name": "小鹈鹕·关系指导",
-  "description": "面向恋爱沟通与关系复盘的版本基础包",
+  "name": "小鹈鹕·关系陪伴",
+  "description": "为重要关系提供温柔、具体、可执行的陪伴与指导。",
   "presetCode": "TINYPELICAN-ROMANCE",
-  "brand": { "title": "小鹈鹕·关系指导", "subtitle": "更清楚地理解关系，更真诚地表达" },
+  "brand": { "title": "小鹈鹕·关系陪伴", "subtitle": "把感受说清楚，把关系过具体" },
   "defaultModel": { "provider": "deepseek", "model": "deepseek-flash" },
+  "theme": { "id": "romance-soft", "accent": "#d9857a", "accentSoft": "#fff0ed", "background": "#fffaf8", "surface": "#ffffff" },
+  "home": { "view": "romance-home", "hero": "relationship-care", "refreshableStatus": true },
   "navigation": [
-    { "id": "romance-home", "label": "关系首页", "icon": "heart", "status": "placeholder" },
-    { "id": "romance-reply", "label": "回复指导", "icon": "message", "status": "planned" },
-    { "id": "romance-review", "label": "关系复盘", "icon": "history", "status": "planned" }
+    { "id": "romance-home", "label": "首页", "icon": "heart", "status": "ready" },
+    { "id": "romance-relationships", "label": "我的关系", "icon": "heart", "status": "ready" },
+    { "id": "romance-coach", "label": "AI 教练", "icon": "spark", "status": "ready" },
+    { "id": "schedule-dashboard", "label": "日程", "icon": "calendar", "status": "ready" },
+    { "id": "channels", "label": "消息", "icon": "channels", "status": "ready" }
   ],
-  "features": { "relationshipGuidance": true, "replyCoaching": true, "relationshipReview": true }
+  "features": { "relationshipGuidance": true, "replyCoaching": true, "relationshipReview": true, "relationshipAnalysis": true, "email": false, "romanceHome": true },
+  "resources": { "illustration": "assets/romance/relationship-care.svg" }
 }

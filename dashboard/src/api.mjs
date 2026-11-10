@@ -171,6 +171,14 @@ export const api = {
     reset: (id) => post('/api/reply-suggestions/' + encodeURIComponent(id) + '/reset')
   },
 
+  romance: {
+    coachHistory: (id) => get('/api/romance/coach/' + encodeURIComponent(id)),
+    coachChat: (data) => post('/api/romance/coach/chat', data),
+    home: () => get('/api/romance/home'),
+    relationships: { list: () => get('/api/romance/relationships'), create: (data) => post('/api/romance/relationships', data), update: (id, data) => post('/api/romance/relationships/' + encodeURIComponent(id), data), remove: (id) => del('/api/romance/relationships/' + encodeURIComponent(id)), setPrimary: (id) => post('/api/romance/relationships/' + encodeURIComponent(id) + '/primary') },
+    coach: (data) => post('/api/romance/coach', data)
+  },
+
   agent: {
     webui: () => post('/api/agent/webui'),
     list: (limit = 50) => get('/api/agent/tasks?limit=' + limit),

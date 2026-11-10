@@ -85,6 +85,7 @@ function createRestServer({ config = null, onRestart = null, onEditionChange = n
   require('./routes/agent')(router, ctx);
   require('./routes/dsh-webui')(router, ctx);
   require('./routes/reply-suggestions')(router, ctx);
+  require('./routes/romance')(router, ctx);
   require('./routes/import')(router, ctx);
 
   const server = http.createServer(async (req, res) => {

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" role="img" aria-labelledby="title desc">
+  <title id="title">温柔的关系陪伴</title>
+  <desc id="desc">两片相互靠近的暖色叶片与柔和光点</desc>
+  <defs><linearGradient id="a" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#f7c6b9"/><stop offset="1" stop-color="#d9857a"/></linearGradient><linearGradient id="b" x1="0" x2="1" y1="1" y2="0"><stop stop-color="#f6dfc4"/><stop offset="1" stop-color="#e7a98e"/></linearGradient></defs>
+  <circle cx="580" cy="76" r="58" fill="#fff0ed"/><circle cx="626" cy="128" r="18" fill="#f9ded7"/>
+  <path d="M375 245C315 190 292 123 332 74c38-47 105-38 137 8 31 45 11 105-94 163Z" fill="url(#a)" opacity=".92"/>
+  <path d="M385 249c63-39 109-89 103-144-6-54-59-78-101-50-45 30-52 96-2 194Z" fill="url(#b)" opacity=".96"/>
+  <path d="M374 242c30-58 65-104 104-135M386 242c-12-51-13-93-2-131" fill="none" stroke="#fff8f5" stroke-width="5" stroke-linecap="round" opacity=".72"/>
+  <circle cx="255" cy="82" r="7" fill="#e7a98e"/><circle cx="287" cy="54" r="4" fill="#f7c6b9"/><circle cx="518" cy="42" r="5" fill="#e7a98e"/>
+</svg>

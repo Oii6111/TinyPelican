@@ -35,6 +35,7 @@ function getPaths() {
     intents: path.join(b, 'intents.json'),
     tasks: path.join(b, 'tasks.json'),
     schedules: path.join(b, 'schedules.json'),
+    romanceRelationships: path.join(b, 'romance-relationships.json'),
     relationPushed: path.join(b, 'relation-pushed.json'),
     conversations: path.join(b, 'conversations.json'),
     agentQueue: path.join(b, 'agent-tasks.jsonl'),

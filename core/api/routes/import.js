@@ -7,8 +7,46 @@
 const { importChatArchives } = require('../../import/chat-archive');
 const { loadConfig } = require('../../lib/config');
 const { log } = require('../../lib/log');
+const chatDb = require('../../memory/chat-db');
+const { parseAny } = require('../../import/chat-archive');
+const { getBatchContact } = require('../../lib/chat-parser');
+const { getPaths } = require('../../lib/paths');
+const { readJson, writeJson } = require('../../lib/store');
+
+async function readImportBody(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 32 * 1024 * 1024) throw new Error('导入内容超过 32 MB，请分批导入');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
 
 module.exports = (router, ctx) => {
+  router.post('/api/import/content', async (req, res) => {
+    try {
+      const body = await readImportBody(req);
+      const nickname = String(body.selfNickname || '').trim();
+      if (body.mode === 'clipboard' && !nickname) return ctx.json(res, 400, { error: '请先填写自己的微信昵称' });
+      const filename = String(body.filename || '微信聊天.txt');
+      if (!/\.(jsonl|txt|json)$/i.test(filename)) return ctx.json(res, 400, { error: '请选择 JSONL 或 TXT 聊天文件' });
+      const parsed = parseAny(String(body.text || ''), filename);
+      if (!parsed.messages.length) return ctx.json(res, 400, { error: '未识别到聊天消息，请检查文件格式或重新批量复制微信消息' });
+      const cfg = loadConfig();
+      const owners = [...new Set([...(cfg.selfNicknames || []), ...(parsed.ownerNames || []), nickname].filter(Boolean))];
+      const contact = getBatchContact(parsed.messages, owners) || parsed.contactHint;
+      if (!contact || owners.includes(contact)) return ctx.json(res, 400, { error: '无法确定聊天对象，请填写正确的本人昵称，并导入与同一个对象的聊天记录' });
+      const current = readJson(getPaths().config, {});
+      writeJson(getPaths().config, { ...current, selfNicknames: owners });
+      ctx.config = loadConfig();
+      const added = chatDb.ingestMessages(contact, parsed.messages);
+      return ctx.json(res, 200, { ok: true, contacts: { [contact]: added }, added, messages: parsed.messages.length, format: parsed.format });
+    } catch (error) {
+      return ctx.json(res, 400, { error: error.message || '导入失败，请检查聊天格式' });
+    }
+  });
   router.post('/api/import/archive', async (req, res) => {
     let body = {};
     try {

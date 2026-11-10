@@ -7,6 +7,9 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "start": "npm --prefix app start"
+    "start": "npm --prefix app run start:base",
+    "start:base": "npm --prefix app run start:base",
+    "start:romance": "npm --prefix app run start:romance",
+    "dist": "npm --prefix app run dist"
   }
 }

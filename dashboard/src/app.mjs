@@ -6,6 +6,9 @@ import { mount as contacts } from './views/contacts.mjs';
 import { mount as email } from './views/email.mjs';
 import { mount as scheduleDashboard } from './views/proactive.mjs';
 import { mount as settings } from './views/settings.mjs';
+import { mount as romanceHome } from './views/romance-home.mjs';
+import { mount as romanceRelationships } from './views/romance-relationships.mjs';
+import { mount as romanceCoach } from './views/romance-coach.mjs';
 document.documentElement.classList.toggle('desktop-shell', /Windows/.test(navigator.userAgent) && /Electron\//.test(navigator.userAgent));
 
 const NAV_ICONS = {
@@ -13,7 +16,9 @@ const NAV_ICONS = {
   memory: '<svg viewBox="0 0 24 24"><path d="M12 4a7.5 7.5 0 0 0-7.2 9.5L4 18l4.2-.8A7.5 7.5 0 1 0 12 4Z"/><circle cx="12" cy="11.5" r="2.2"/><path d="M12 8v1"/></svg>',
   agent: '<svg viewBox="0 0 24 24"><path d="M14.3 6.5a4.5 4.5 0 0 0-5.6 5.6L3.6 17.2a2.2 2.2 0 0 0 3.2 3.2l5.1-5.1a4.5 4.5 0 0 0 5.6-5.6l-3.2 3.2-3.2-3.2Z"/><path d="m17.5 3 .6 2.4L20.5 6l-2.4.6-.6 2.4-.6-2.4L14.5 6l2.4-.6ZM5 3v4M3 5h4"/></svg>',
   chat: '<svg viewBox="0 0 24 24"><path d="M5 18.5 4 21l3.3-1.3A8 8 0 1 0 5 18.5Z"/></svg>',
-  calendar: '<svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="15" rx="2"/><path d="M8 3.5v4M16 3.5v4M4 10h16M8 14h2M14 14h2M8 17.5h2"/></svg>'
+  calendar: '<svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="15" rx="2"/><path d="M8 3.5v4M16 3.5v4M4 10h16M8 14h2M14 14h2M8 17.5h2"/></svg>',
+  heart: '<svg viewBox="0 0 24 24"><path d="M20.8 8.8c0 5.2-8.8 10.2-8.8 10.2S3.2 14 3.2 8.8A4.5 4.5 0 0 1 12 6.5a4.5 4.5 0 0 1 8.8 2.3Z"/></svg>',
+  spark: '<svg viewBox="0 0 24 24"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3ZM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></svg>'
 };
 
 function navIcon(name) {
@@ -105,6 +110,32 @@ const channelsBtn = el('button', { class: 'nav-item nav-standalone', 'data-view'
 channelsBtn.onclick = () => show('channels');
 nav.append(channelsBtn);
 mountView('channels', channels);
+
+mountView('romance-home', romanceHome);
+mountView('romance-relationships', romanceRelationships);
+mountView('romance-coach', romanceCoach);
+mountView('romance-reply', romanceCoach);
+mountView('romance-review', romanceCoach);
+
+function enableRomanceShell(manifest) {
+  if (!manifest || manifest.id !== 'romance') return false;
+  document.documentElement.classList.add('romance-edition');
+  const primary = (manifest.navigation || []).filter(item => item && item.id && item.status !== 'hidden').map(item => [item.id, item.label, item.icon]);
+  const fragment = document.createDocumentFragment();
+  for (const [rawId, label, icon] of primary) {
+    const id = rawId === 'romance-reply' || rawId === 'romance-review' ? 'romance-coach' : rawId;
+    const button = el('button', { class: 'nav-item romance-primary-nav nav-standalone', 'data-view': id }, navIcon(icon), el('span', { text: label }));
+    button.onclick = () => show(id, rawId === 'romance-review' ? { type: 'review' } : rawId === 'romance-reply' ? { type: 'reply' } : undefined);
+    fragment.append(button);
+  }
+  nav.prepend(fragment);
+  document.querySelector('[data-view="email"]')?.remove();
+  const title = manifest.brand?.title || '小鹈鹕';
+  const subtitle = manifest.brand?.subtitle || '关系陪伴空间';
+  document.querySelector('.brand-copy strong')?.replaceChildren(document.createTextNode(title));
+  document.querySelector('.brand-copy span')?.replaceChildren(document.createTextNode(subtitle));
+  return true;
+}
 
 for (const g of NAV) {
   const sub = el('div', { class: 'nav-sub', id: 'nav-sub-' + g.id });
@@ -239,10 +270,14 @@ function show(id, params) {
     editionButton.addEventListener('click', () => { editionDialog.hidden = false; input.focus(); });
     foot.append(editionButton);
     document.body.append(editionDialog);
+    try {
+      const edition = await api.edition.get();
+      if (enableRomanceShell(edition?.active)) show('romance-home');
+    } catch {}
   } catch {
     foot.textContent = '核心未连接';
   }
 })();
 
 // 默认启动：空的新对话
-show('chat');
+if (!document.documentElement.classList.contains('romance-edition')) show('chat');

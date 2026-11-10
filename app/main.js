@@ -17,7 +17,7 @@ const PORT = 18791;
 const RESTART_EXIT_CODE = 42;
 
 const { initializeRuntime, selectWritableDirectory, userDirectories, workspaceId } = require(path.join(PROJECT_ROOT, 'core/lib/startup'));
-const { readActiveEdition, editionDataDir } = require(path.join(PROJECT_ROOT, 'core/lib/editions'));
+const { readActiveEdition, readManifest, editionDataDir } = require(path.join(PROJECT_ROOT, 'core/lib/editions'));
 const { effectiveEngineProvider } = require(path.join(PROJECT_ROOT, 'core/agent/dsh-client'));
 const { waitForCore } = require(path.join(PROJECT_ROOT, 'core/lib/readiness'));
 const { resolveCoreRuntime, needsElectronAsNode } = require(path.join(PROJECT_ROOT, 'core/lib/runtime-node'));
@@ -28,7 +28,9 @@ try {
     ? [process.env.XIAOTIHU_DATA_DIR, app.getPath('userData')]
     : [process.env.XIAOTIHU_DATA_DIR, path.join(app.getPath('appData'), 'TinyPelican-dev', id), developmentFallback];
   const stableUserData = selectWritableDirectory(stableCandidates, { label: 'XIAOTIHU_DATA_DIR' });
-  const activeEdition = readActiveEdition(stableUserData, PROJECT_ROOT);
+  const forcedEditionId = !isPackaged ? String(process.env.XIAOTIHU_DEV_EDITION || '').trim() : '';
+  const forcedEdition = forcedEditionId ? readManifest(PROJECT_ROOT, forcedEditionId) : null;
+  const activeEdition = forcedEdition || readActiveEdition(stableUserData, PROJECT_ROOT);
   const preferred = editionDataDir(stableUserData, activeEdition);
   const candidates = process.env.XIAOTIHU_USER_DATA_DIR ? [process.env.XIAOTIHU_USER_DATA_DIR] : [
     preferred,
@@ -263,6 +265,7 @@ function startCore() {
       return;
     }
     if (code === 43) {
+      if (!isPackaged) delete process.env.XIAOTIHU_DEV_EDITION;
       app.relaunch();
       app.exit(0);
       return;

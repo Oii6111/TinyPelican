@@ -199,6 +199,8 @@ function parseStructured(text, filename) {
 // 注意：这里直接调 block/line 两个解析器，按「谁解析出的消息多」取结果，
 // 兼容导出文件里混着两种格式的情况（parseChatText 是给剪贴板单段文本用的简化版）。
 function parseAny(text, filename = '') {
+  const chatlab = require('./chatlab').parseChatLab(text);
+  if (chatlab) return chatlab;
   const forward = parseWechatForwardExport(text);
   if (forward.length) return { messages: forward, format: 'wechat-forward' };
 
@@ -324,7 +326,8 @@ async function importChatArchives({ paths = [], config = null, dryRun = false, c
   };
 
   const handleText = (label, text, contactHint, opts = {}) => {
-    const { messages, format } = parseAny(text, label);
+    const parsed = parseAny(text, label);
+    const { messages, format } = parsed;
     if (!messages.length) {
       summary.skipped++;
       summary.files.push({ file: label, status: 'unparsed', preview: previewOf(text) });
@@ -332,9 +335,9 @@ async function importChatArchives({ paths = [], config = null, dryRun = false, c
     }
     // 一个文件 = 一段会话：联系优先取消息里唯一的「非自己昵称」，
     // 拿不到再用文件名推断（「与张三的聊天记录.txt」）。
-    const derived = getBatchContact(messages, selfNicknames);
+    const derived = getBatchContact(messages, [...selfNicknames, ...(parsed.ownerNames || [])]);
     const isForwardExport = format === 'wechat-forward';
-    const resolved = derived || contactHint || '';
+    const resolved = derived || parsed.contactHint || contactHint || '';
     const finalContact = contactOverride || resolved || (isForwardExport ? unassignedContact : '');
     if (!finalContact) {
       summary.skipped++;
