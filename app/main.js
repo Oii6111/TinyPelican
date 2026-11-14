@@ -237,7 +237,10 @@ function coreEnv(runner) {
   if (isPackaged) {
     env.NODE_PATH = [path.join(PROJECT_ROOT, 'vendor', 'node_modules'), env.NODE_PATH].filter(Boolean).join(path.delimiter);
     env.XIAOTIHU_DATA_DIR = process.env.XIAOTIHU_DATA_DIR || '';
-    env.DSH_HOME = process.env.DSH_HOME || path.join(env.XIAOTIHU_DATA_DIR, 'dsh-home');
+    // 用产品自己的变量指定内置 DSH 的数据目录：环境里继承来的 DSH_HOME 属于宿主 DSH，
+    // 直接沿用会把 preset/插件写进别人的 profile（见 core/lib/startup.js）。
+    env.XIAOTIHU_DSH_HOME = process.env.XIAOTIHU_DSH_HOME || path.join(env.XIAOTIHU_DATA_DIR, 'dsh-home');
+    env.DSH_HOME = env.XIAOTIHU_DSH_HOME;
     if (process.env.XIAOTIHU_DSH_BIN) env.XIAOTIHU_DSH_BIN = process.env.XIAOTIHU_DSH_BIN;
   }
   env.XIAOTIHU_STABLE_DATA_DIR = process.env.XIAOTIHU_STABLE_DATA_DIR || '';

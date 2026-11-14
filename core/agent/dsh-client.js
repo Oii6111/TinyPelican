@@ -15,6 +15,8 @@ const STREAM_MARKER = '@@DSH_EVENT@@';
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_DSH_HOME = path.join(PROJECT_ROOT, 'agent', 'dsh-home');
 const DEFAULT_PROFILE = 'tinypelican';
+// 最低可用 DSH 版本：WebUI 协议在 0.1.5 才换成 Typert Remote，更老的接上去只会 404。
+const MIN_DSH_VERSION = '0.1.5';
 // Agent 默认工作区 = 项目根目录（后续记忆/文件全部落在这个文件夹里）
 const DEFAULT_WORKSPACE = PROJECT_ROOT;
 
@@ -322,6 +324,10 @@ function buildDshEnv(dshHome, config) {
     TINYPELICAN_DATA_DIR: runtimeDataDir,
     TINYPELICAN_EMAIL_CONFIG: runtimeDataDir
   };
+  // 继承来的 DSH_WEB_URL 属于「宿主 DSH」的地址，不是小鹈鹕的配置。
+  // 留着它会让内置 DSH 误以为自己该监听宿主那个端口（被占用 → 起不来），
+  // 所以一律清掉：端口由小鹈鹕自己通过 --port 决定。
+  delete env.DSH_WEB_URL;
   if (config && config.engine) {
     const prov = effectiveEngineProvider(config);
     if (prov) {
@@ -358,61 +364,82 @@ function compareVersions(a, b) {
   return pre(a) - pre(b);
 }
 
-// 定位 dsh 的 lib/bin.js：
+// 选型结果只记一次日志：findDshBin() 会被多处调用，重复写会把 activity.log 刷满
+const loggedDecisions = new Set();
+function logOnce(level, message) {
+  const key = level + '|' + message;
+  if (loggedDecisions.has(key)) return;
+  loggedDecisions.add(key);
+  try {
+    require('../lib/log').log(level, 'agent', message);
+  } catch {}
+}
+
+// 定位 dsh 的 lib/bin.js，优先级从高到低：
 // 1. 显式指定：XIAOTIHU_DSH_BIN（打包后由 Electron 壳指向随包内置的那份）/ DSH_BIN
-// 2. 随包内置：<项目根>/vendor/dsh/lib/bin.js（electron-builder 把 DSH 放进 extraResources）
-// 3. 项目依赖 / 全局安装 / npx 缓存里，取版本号最高的那个
-//    （WebUI 协议在 0.1.5 才换成 Typert Remote，捡到老的会直接 404）
+// 2. 随包内置：<项目根>/vendor/...
+// 3. 项目依赖：node_modules/@deepseek-ai/dsh
+// 4. 全局安装 / npx 缓存（仅兜底）
+// 跳过低版本（WebUI 协议在 0.1.5 才换成 Typert Remote，更老的会直接 404）。
+// 注意：这里**不**按版本号挑选——机器上装了新版全局 DSH 时跟着它跑，会造成
+// profile/插件与随包版本不配套，表现为「内置 DSH 起不来」。
 function findDshBin() {
   for (const explicit of [process.env.XIAOTIHU_DSH_BIN, process.env.DSH_BIN]) {
     if (explicit && fs.existsSync(explicit)) return explicit;
   }
 
-  const candidates = [];
+  // 按优先级收集：随包内置 > 项目依赖 > 全局安装 > npx 缓存。
+  // 不能「挑版本最高的那个」：机器上全局装了新版 DSH 时，小鹈鹕会去跑它，而那份的
+  // profile/插件与随包版本不配套（插件安装对不上 lockfile、profile 结构也不保证兼容），
+  // 表现就是「内置 DSH 起不来」。用户装的是小鹈鹕，期望跑的就是随包那份。
+  const ordered = [];
+  const push = (file, source) => {
+    if (file && fs.existsSync(file)) ordered.push({ file, source });
+  };
+
   // 随包内置（打包分发时唯一保证存在的那份）
   for (const bundled of [
     path.join(PROJECT_ROOT, 'vendor', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
     path.join(PROJECT_ROOT, 'vendor', 'dsh', 'lib', 'bin.js')
   ]) {
-    if (fs.existsSync(bundled)) candidates.push(bundled);
+    push(bundled, 'bundled');
   }
   try {
-    const resolved = require.resolve('@deepseek-ai/dsh/lib/bin.js');
-    if (resolved && fs.existsSync(resolved)) candidates.push(resolved);
+    push(require.resolve('@deepseek-ai/dsh/lib/bin.js'), 'project');
   } catch {}
 
-  // 全局安装（npm i -g @deepseek-ai/dsh）
+  // 全局安装（npm i -g @deepseek-ai/dsh）——只在没有随包/项目依赖时兜底
   const globalRoot = process.env.APPDATA
     ? path.join(process.env.APPDATA, 'npm', 'node_modules')
     : '';
   if (globalRoot) {
-    const p = path.join(globalRoot, '@deepseek-ai', 'dsh', 'lib', 'bin.js');
-    if (fs.existsSync(p)) candidates.push(p);
+    push(path.join(globalRoot, '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'global');
   }
 
   // npx 缓存
   const npxRoot = path.join(process.env.LOCALAPPDATA || '', 'npm-cache', '_npx');
   if (fs.existsSync(npxRoot)) {
     for (const dir of fs.readdirSync(npxRoot)) {
-      const p = path.join(npxRoot, dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
-      if (fs.existsSync(p)) candidates.push(p);
+      push(path.join(npxRoot, dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'npx');
     }
   }
 
-  if (!candidates.length) {
+  if (!ordered.length) {
     throw new Error('未找到 DSH（@deepseek-ai/dsh）。请先执行 npm install，或设置 DSH_BIN 环境变量。');
   }
 
-  let best = candidates[0];
-  let bestVersion = dshPackageVersion(best);
-  for (const candidate of candidates.slice(1)) {
-    const version = dshPackageVersion(candidate);
-    if (compareVersions(version, bestVersion) > 0) {
-      best = candidate;
-      bestVersion = version;
-    }
+  // 优先级优先，但过老的版本要跳过：WebUI 协议在 0.1.5 才换成 Typert Remote，
+  // 更老的接上去只会 404。随包版本达标时不会走到全局那份。
+  const usable = ordered.find((entry) => compareVersions(dshPackageVersion(entry.file), MIN_DSH_VERSION) >= 0);
+  const chosen = usable || ordered[0];
+  if (!usable) {
+    logOnce(
+      'warn',
+      `找到的 DSH 都低于 ${MIN_DSH_VERSION}（最低可用版本），只能用 ${chosen.source} 那份（${dshPackageVersion(chosen.file)}），WebUI 可能不可用`
+    );
   }
-  return best;
+  logOnce('info', `内置 DSH：${chosen.file}（来源 ${chosen.source}，版本 ${dshPackageVersion(chosen.file)}）`);
+  return chosen.file;
 }
 
 // 把一行 stdout 转成事件对象；不是事件流的行返回 null。

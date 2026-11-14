@@ -65,9 +65,17 @@ async function main() {
   // 用户只看到「DSH 没起来」。这里明确写日志并退出。
   server.on('error', (e) => {
     if (e && e.code === 'EADDRINUSE') {
-      log('error', 'core', `端口 ${PORT} 已被占用：多半是已经开着另一个小鹈鹕（开发实例或另一个安装版本）。请关掉多余的实例后重开。`);
+      const message = `端口 ${PORT} 已被占用：多半是已经开着另一个小鹈鹕（开发实例或另一个安装版本）。请关掉多余的实例后重开。`;
+      log('error', 'core', message);
+      // 同时打到控制台。log() 只写 activity.log，而 `npm start` 的窗口里看不到它，
+      // 用户只会看到 launcher 的「核心退出，code=1」，完全不知道是端口冲突
+      // —— 表现就是「内置 DSH 起不来」。
+      console.error('[core] ' + message);
+      console.error(`[core] 已占用的地址：http://127.0.0.1:${PORT}（先关掉它就占用的那个实例）`);
     } else {
-      log('error', 'core', '核心 HTTP 服务启动失败：' + String((e && e.message) || e));
+      const message = '核心 HTTP 服务启动失败：' + String((e && e.message) || e);
+      log('error', 'core', message);
+      console.error('[core] ' + message);
     }
     setTimeout(() => process.exit(1), 300);
   });

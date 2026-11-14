@@ -59,7 +59,18 @@ function initializeRuntime({ root = projectRoot(), env = process.env, filesystem
   } catch (error) {
     if (error.code !== 'EEXIST') throw new Error(`无法初始化配置 ${config}: ${error.message}`);
   }
-  if (!env.DSH_HOME) env.DSH_HOME = path.join(directory, packaged || directory !== path.resolve(root) ? 'dsh-home' : 'agent/dsh-home');
+  // DSH_HOME 必须属于小鹈鹕自己。从 DSH / IDE 托管的终端里启动时，环境里带着宿主 DSH 的
+  // DSH_HOME（通常是 ~/.dsh），沿用它会把自己的 preset、插件、settings.yaml 全写进别人的
+  // profile —— 随包插件还会因为宿主的 pnpm lockfile 对不上而安装失败。
+  // 要显式指定请用 XIAOTIHU_DSH_HOME。
+  const inheritedHome = env.DSH_HOME;
+  if (!env.XIAOTIHU_DSH_HOME) {
+    env.XIAOTIHU_DSH_HOME = path.join(directory, packaged || directory !== path.resolve(root) ? 'dsh-home' : 'agent/dsh-home');
+  }
+  if (inheritedHome && path.resolve(inheritedHome) !== path.resolve(env.XIAOTIHU_DSH_HOME)) {
+    warn(`[启动] 已忽略继承的 DSH_HOME=${inheritedHome}（那是宿主 DSH 的数据目录）；如需指定内置 DSH 的数据目录，请用 XIAOTIHU_DSH_HOME`);
+  }
+  env.DSH_HOME = env.XIAOTIHU_DSH_HOME;
   selectWritableDirectory([env.DSH_HOME], { filesystem, label: 'DSH_HOME' });
   return { dataDir: directory, config, dshHome: env.DSH_HOME };
 }
