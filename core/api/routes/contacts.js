@@ -1,10 +1,15 @@
 'use strict';
 
 const fs = require('fs');
-const { listContactsMeta, contactFile, readContact, saveContact, updateContact, deleteContact, clearContactMessages } = require('../../memory/stores/contacts');
+const { listContactsMeta, contactFile, readContact, saveContact, updateContact, deleteContact, clearContactMessages, readContactRelationshipFields, saveContactRelationshipFields } = require('../../memory/stores/contacts');
 const chatDb = require('../../memory/chat-db');
 const memory = require('../../memory/chat-memory');
+const { computeRelationshipMetrics } = require('../../memory/relationship-metrics');
+const { loadConfig } = require('../../lib/config');
 const { TEMPLATE, profileGaps } = require('../../memory/profile-template');
+
+// 关系概览只统计最近这么多条消息：样本足够看模式，又不让大聊天记录把接口拖慢。
+const RELATIONSHIP_MESSAGE_LIMIT = 500;
 
 module.exports = (router, ctx) => {
   router.get('/api/profile-template', (req, res) => ctx.json(res, 200, TEMPLATE));
@@ -54,6 +59,38 @@ module.exports = (router, ctx) => {
     return ctx.json(res, 200, { contact: doc.name, total: messages.length, messages: page });
   });
 
+  // 关系概览：只描述「消息怎么流动」+ 用户自己填的维护字段（社交目的/阶段/备忘），
+  // 不做关系判断、不给话术建议。群和群成员不是联系人，明确拒绝而不是静默当成联系人。
+  router.get('/api/contacts/:name/relationship', (req, res, c, params) => {
+    const member = chatDb.getMember(params.name);
+    if (!member) return ctx.json(res, 404, { error: '联系人不存在' });
+    if (member.kind === 'group' || member.kind === 'member') return ctx.json(res, 400, { error: '群和群成员不是联系人，没有关系概览' });
+    const config = ctx.config || loadConfig();
+    const social = readContactRelationshipFields(member);
+    const rows = chatDb.messages(member.name, '', RELATIONSHIP_MESSAGE_LIMIT, false, '', 0, config)?.messages || [];
+    const metrics = rows.length
+      ? computeRelationshipMetrics(rows, {
+        ownerNames: ['我', ...(Array.isArray(config.selfNicknames) ? config.selfNicknames : [])],
+        contactNames: [member.name, member.remark].filter(Boolean)
+      })
+      : null;
+    const lastMessageAt = String(member.updatedAt || '');
+    const lastMs = lastMessageAt ? Date.parse(lastMessageAt.replace(/ (\d):/, ' 0$1:')) : NaN;
+    return ctx.json(res, 200, {
+      name: member.name,
+      kind: member.kind || 'contact',
+      socialGoal: social.socialGoal || member.socialGoal || '',
+      stage: social.relationship,
+      notes: social.notes,
+      metrics,
+      recent: {
+        lastMessageAt,
+        messages: Number(member.messages || 0),
+        daysSinceLast: Number.isFinite(lastMs) ? Math.max(0, Math.floor((Date.now() - lastMs) / 86400000)) : null
+      }
+    });
+  });
+
   router.get('/api/contacts/:name/profile', (req, res, c, params) => {
     const contact = chatDb.getMember(params.name);
     if (!contact) return ctx.json(res, 404, { error: 'not found' });
@@ -64,9 +101,16 @@ module.exports = (router, ctx) => {
     const body = JSON.parse((await ctx.readBody(req)) || '{}');
     if (body.profileMode !== undefined && !['merge', 'replace'].includes(body.profileMode)) return ctx.json(res, 400, { error: '画像保存模式无效' });
     if (body.profileMode === 'replace' && (!body.profile || typeof body.profile !== 'object' || Array.isArray(body.profile))) return ctx.json(res, 400, { error: '请提供完整画像对象，清空时使用空对象' });
-    const updated = chatDb.updateMember(params.name, body, { replaceProfile: body.profileMode === 'replace' });
+    for (const [field, label] of [['relationship', '阶段'], ['stage', '阶段'], ['notes', '备忘']]) {
+      if (body[field] !== undefined && typeof body[field] !== 'string') return ctx.json(res, 400, { error: label + '必须是文本' });
+    }
+    // 只改关系维护字段时不要动画像，避免把「来源：完整历史分析」改写成手动编辑
+    const touchesProfile = ['profile', 'remark', 'important', 'profileMode', 'profileSkipped', 'profileMeta', 'socialGoal'].some((key) => body[key] !== undefined);
+    const updated = touchesProfile ? chatDb.updateMember(params.name, body, { replaceProfile: body.profileMode === 'replace' }) : chatDb.getMember(params.name);
     if (!updated) return ctx.json(res, 404, { error: 'not found' });
-    return ctx.json(res, 200, { ok: true, profile: updated.profile, profileMeta: updated.profileMeta || {}, remark: updated.remark, important: updated.important, socialGoal: updated.socialGoal || '' });
+    const hasRelationshipFields = body.relationship !== undefined || body.stage !== undefined || body.notes !== undefined;
+    const social = hasRelationshipFields ? saveContactRelationshipFields(updated, { relationship: body.relationship ?? body.stage, notes: body.notes }) : readContactRelationshipFields(updated);
+    return ctx.json(res, 200, { ok: true, profile: updated.profile, profileMeta: updated.profileMeta || {}, remark: updated.remark, important: updated.important, socialGoal: updated.socialGoal || '', stage: social?.relationship || '', notes: social?.notes || '' });
   });
 
   router.post('/api/contacts/:name/analyze-profile', (req, res, c, params) => {

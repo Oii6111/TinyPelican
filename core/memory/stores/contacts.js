@@ -135,6 +135,60 @@ function updateContact(contact, patch = {}) {
   return doc;
 }
 
+// 「关系维护」三个字段：社交目的(social_goal) / 阶段(relationship) / 备忘(notes)。
+// 它们和画像一起存在 chat-db 的 contact_profile 表里（不另开表），
+// 这里按 member_id 读写，只存用户自己写的内容，不做任何推断。
+function emptyRelationshipFields() {
+  return { socialGoal: '', relationship: '', notes: '' };
+}
+
+// contact 可以是名字，也可以直接传 chat-db 的 member 对象（调用方已经查过就省一次查询）。
+function relationshipMemberOf(contact) {
+  try {
+    const chatDb = require('../chat-db');
+    if (contact && typeof contact === 'object') {
+      if (contact.id) return contact;
+      return chatDb.getMember(String(contact.name || '').trim());
+    }
+    return chatDb.getMember(String(contact || '').trim());
+  } catch { return null; }
+}
+
+function readContactRelationshipFields(contact) {
+  try {
+    const member = relationshipMemberOf(contact);
+    if (!member || !member.id) return emptyRelationshipFields();
+    const chatDb = require('../chat-db');
+    const row = chatDb.db.prepare('SELECT social_goal AS socialGoal, relationship, notes FROM contact_profile WHERE member_id=?').get(member.id);
+    return {
+      socialGoal: String(row?.socialGoal || ''),
+      relationship: String(row?.relationship || ''),
+      notes: String(row?.notes || '')
+    };
+  } catch { return emptyRelationshipFields(); }
+}
+
+// 只写这三列：画像、语气、边界等其它列保持原样。
+// patch 里没给的字段保持原值，给空字符串表示清空；返回写完后的字段。
+function saveContactRelationshipFields(contact, patch = {}) {
+  try {
+    const member = relationshipMemberOf(contact);
+    if (!member || !member.id) return null;
+    const chatDb = require('../chat-db');
+    const current = readContactRelationshipFields(member);
+    const next = {
+      socialGoal: patch.socialGoal === undefined ? current.socialGoal : String(patch.socialGoal ?? '').trim(),
+      relationship: patch.relationship === undefined ? current.relationship : String(patch.relationship ?? '').trim(),
+      notes: patch.notes === undefined ? current.notes : String(patch.notes ?? '').trim()
+    };
+    chatDb.db.prepare(`INSERT INTO contact_profile(contact_key,member_id,display_name,notes,relationship,social_goal,tone,boundaries,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(member_id) DO UPDATE SET notes=excluded.notes,relationship=excluded.relationship,social_goal=excluded.social_goal,updated_at=excluded.updated_at`)
+      .run(member.name, member.id, String(member.remark || member.name), next.notes, next.relationship, next.socialGoal, '', '', new Date().toISOString());
+    return next;
+  } catch { return null; }
+}
+
 // 删除联系人：移除档案文件 + 从全量流水中移除该联系人的聊天记录
 function deleteContact(contact) {
   const name = String(contact || '');
@@ -171,6 +225,8 @@ module.exports = {
   msgKey,
   listContactsMeta,
   updateContact,
+  readContactRelationshipFields,
+  saveContactRelationshipFields,
   deleteContact,
   clearContactMessages,
   EMPTY_PROFILE

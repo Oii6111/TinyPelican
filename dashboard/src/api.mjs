@@ -75,6 +75,7 @@ export const api = {
     analyzeProfile: (name) => post('/api/contacts/' + encodeURIComponent(name) + '/analyze-profile', {}),
     profile: (name) => get('/api/contacts/' + encodeURIComponent(name) + '/profile'),
     saveProfile: (name, patch) => post('/api/contacts/' + encodeURIComponent(name) + '/profile', patch),
+    relationship: (name) => get('/api/contacts/' + encodeURIComponent(name) + '/relationship'),
     save: (name, patch) => post('/api/contacts/' + encodeURIComponent(name), patch),
     emails: (name) => get('/api/contacts/' + encodeURIComponent(name) + '/emails'),
     linkEmail: (name, address) => post('/api/contacts/' + encodeURIComponent(name) + '/email-links', { address }),
