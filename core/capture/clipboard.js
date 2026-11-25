@@ -58,8 +58,10 @@ const resolveBatchTarget = chatParser.resolveBatchTarget;
 // （例如原生 GetWindowRect 不可用、字段变空）会把 "0 - 0 0 0 0 0 xxxx" 整段
 // 当成 base64 解出一串乱码，看起来像一次成功的剪贴板变化。宁可不认，也不能认错。
 const B64_RE = '([A-Za-z0-9+/]+={0,2})';
-const CHANGE_FULL_RE = new RegExp(`^CHANGE\\s+(-?\\d+)\\s+(\\d+)\\s+([^\\s]+)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(\\d+)\\s+${B64_RE}$`);
-const CHANGE_META_RE = new RegExp(`^CHANGE\\s+(-?\\d+)\\s+(\\d+)\\s+([^\\s]+)\\s+${B64_RE}$`);
+// 进程名允许带空格（老版本传感器没净化，例如 "DeepSeek Harness"）：用惰性匹配让它吃到
+// 后面五个数字字段之前为止。否则整帧会被判为非法、连剪贴板正文一起丢掉。
+const CHANGE_FULL_RE = new RegExp(`^CHANGE\\s+(-?\\d+)\\s+(\\d+)\\s+(.+?)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(\\d+)\\s+${B64_RE}$`);
+const CHANGE_META_RE = new RegExp(`^CHANGE\\s+(-?\\d+)\\s+(\\d+)\\s+(.+?)\\s+${B64_RE}$`);
 const CHANGE_HANDLE_RE = new RegExp(`^CHANGE\\s+(-?\\d+)\\s+${B64_RE}$`);
 const CHANGE_LEGACY_RE = new RegExp(`^CHANGE\\s+${B64_RE}$`);
 
@@ -306,7 +308,7 @@ class ClipboardWatcher {
     } : null;
     // 有句柄却定位不了时打一条日志：下次「弹窗跑到角落」能直接看出是哪个进程/什么矩形
     if (windowRef && !windowRef.bounds && msgs.length) {
-      log('info', 'capture', `窗口未识别，建议卡片不使用微信定位：process=${windowRef.processName || '未知'} rect=${b ? `${b.left},${b.top},${b.right},${b.bottom}` : '无'}`);
+      log('info', 'capture', `窗口未识别，建议卡片不使用微信定位：process=${windowRef.processName || '未知'} pid=${windowRef.pid || '-'} handle=${windowRef.handle || '-'} rect=${b ? `${b.left},${b.top},${b.right},${b.bottom}` : '无'}`);
     }
     // 不是聊天记录：若存在待回填语音，则把这段文本当作语音转写内容回填。
     // 但「看着像聊天记录却没解析出消息」的文本不能当作语音转写，否则复制的聊天内容

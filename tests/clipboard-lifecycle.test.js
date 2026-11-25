@@ -98,6 +98,24 @@ test('a live but stalled sensor is replaced, heartbeats keep a healthy one alive
 // 交付失败不能让内容被永久当成「已导入」：
 // 曾经是在解析时就把消息写进 seen，结果数据库被占用导致交付失败后，同一段聊天
 // 无论再复制多少次都只报「重复消息」，永远不重试落库（真实踩到过：联系人 0 条消息）。
+test('传感器帧：进程名带空格也要能解析出窗口信息', () => {
+  const b64 = Buffer.from('聊天内容').toString('base64');
+  const line = `CHANGE 67506 19972 DeepSeek Harness 3220 596 4512 1424 96 ${b64}`;
+  const parsed = parseSensorLine(line);
+  assert.ok(parsed, '带空格的进程名不能把整帧判为非法');
+  assert.equal(parsed.processName, 'DeepSeek Harness');
+  assert.equal(parsed.handle, '67506');
+  assert.deepEqual(parsed.bounds, { left: 3220, top: 596, right: 4512, bottom: 1424 });
+  assert.equal(parsed.dpi, 96);
+
+  // 微信正常帧（无空格）不受影响
+  const wechat = parseSensorLine(`CHANGE 67506 3572 Weixin 100 200 900 700 96 ${b64}`);
+  assert.equal(wechat.processName, 'Weixin');
+  // 取不到进程名时是占位符 '-'，转成 null 交给上层判「未知」
+  const unknown = parseSensorLine(`CHANGE 67506 0 - 0 0 0 0 0 ${b64}`);
+  assert.equal(unknown.processName, null);
+});
+
 test('交付失败的消息不算已导入，重新复制还能入库', () => {
   const text = [
     '张三', '2026年11月20日 10:00', '你好',

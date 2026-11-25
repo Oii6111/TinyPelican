@@ -142,9 +142,16 @@ while ($true) {
             } catch { $handle = 0; $procId = 0 }
         }
         if ($procId -gt 0) {
-            try { $pname = (Get-Process -Id $procId).ProcessName } catch {}
+            # 取进程名：Get-Process 最稳；拿不到时退回 .NET（个别受保护进程前者会抛错），
+            # 还拿不到才用占位符 '-'。别让一次失败把整条窗口信息丢成「未知」。
+            try { $pname = (Get-Process -Id $procId).ProcessName } catch {
+                try { $pname = [System.Diagnostics.Process]::GetProcessById($procId).ProcessName } catch {}
+            }
         }
         if (-not $pname) { $pname = '-' }
+        # 协议是按空格分列的：进程名里的空格会顶歪后面所有字段（"DeepSeek Harness" 会让整帧解析失败），
+        # 这里统一换成下划线，保证一帧永远是 9 个令牌。
+        $pname = ($pname -replace '\s+', '_')
 
         $left = 0; $top = 0; $right = 0; $bottom = 0; $dpi = 0
         if ($handle -ne 0 -and [XTHClipboard]::IsWindow($handlePtr)) {
