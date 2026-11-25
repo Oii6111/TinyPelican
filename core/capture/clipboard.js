@@ -4,7 +4,10 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
-const { parseChatDetail, getBatchContact, looksLikeChatText } = require('../lib/chat-parser');
+const fs = require('fs');
+const { getPaths } = require('../lib/paths');
+const chatParser = require('../lib/chat-parser');
+const { parseChatDetail, looksLikeChatText } = chatParser;
 const { loadConfig } = require('../lib/config');
 const { log } = require('../lib/log');
 const { applyVoiceFill } = require('../ingest/pipeline');
@@ -39,13 +42,81 @@ function usableWindowBounds(bounds) {
   return true;
 }
 
+// ── 批次归属判定（T3 接缝）─────────────────────────────────────────────
+// main 基线里 chat-parser 还没有 resolveBatchTarget（由 T3 数据模型任务合入）。
+// 这里优先用上游实现：模块加载时 chat-parser 已导出就以它为准，本地兜底不参与判定；
+// 所以 T3 落地前后不会出现「两套逻辑都生效」。切换条件只在 resolveBatchTarget() 里。
+const UPSTREAM_RESOLVE_BATCH_TARGET = typeof chatParser.resolveBatchTarget === 'function'
+  ? chatParser.resolveBatchTarget
+  : null;
+
+// [LOCAL-FALLBACK-START] 上游缺失时的等价实现（T3 落地后整段可删）
+// 语义与 chat-parser.resolveBatchTarget 一致：
+//   kind='contact' -> 私聊，name 是对方；kind='group' -> 群聊，members 是本批发言人；
+//   kind='unknown' -> 判不出来（自己昵称没配、或只有空白消息）。
+// session 是截屏 + 视觉模型读出的窗口会话名，比「数发言人」可靠：群里只有一个人说话时，
+// 启发式会把群判成私聊，而窗口上显示的就是群名。截图读到的是显示名，进 remark。
+function localGroupDisplayName(members = [], total = null) {
+  const names = (Array.isArray(members) ? members : [])
+    .map((n) => String(n || '').trim()).filter(Boolean);
+  if (!names.length) return '';
+  const head = names.slice(0, 3).join('、');
+  const count = Number(total) > names.length ? Number(total) : names.length;
+  return names.length > 3 ? `${head} 等 ${count} 人` : head;
+}
+
+function localResolveBatchTarget(msgs, selfNicknames = [], { session = null } = {}) {
+  const list = Array.isArray(msgs) ? msgs : [];
+  const names = [...new Set(list.map((m) => String(m.name || '').trim()).filter(Boolean))];
+  const self = new Set((Array.isArray(selfNicknames) ? selfNicknames : [])
+    .map((n) => String(n || '').trim()).filter(Boolean));
+  const others = names.filter((n) => !self.has(n));
+
+  if (session && session.name) {
+    const sessionName = String(session.name).trim();
+    if (session.kind === 'group') {
+      // 群的身份名仍按发言人拼（用户定的规则）；截图里的真群名放进 remark。
+      const identity = others.length ? localGroupDisplayName(others) : sessionName;
+      return {
+        kind: 'group', name: identity, displayName: sessionName, remark: sessionName,
+        members: others, memberCount: Number(session.memberCount) || 0, source: 'window'
+      };
+    }
+    // 私聊：剪贴板里的发言人是从消息原文来的，比窗口标题更可靠（标题可能被截断）。
+    const name = others.length === 1 ? others[0] : sessionName;
+    return { kind: 'contact', name, displayName: sessionName, remark: sessionName, members: [], source: 'window' };
+  }
+
+  if (others.length === 1) return { kind: 'contact', name: others[0], displayName: others[0], members: [], source: 'speakers' };
+  if (others.length < 1) return { kind: 'unknown', name: '', displayName: '', members: [], source: 'speakers' };
+  const display = localGroupDisplayName(others);
+  return { kind: 'group', name: display, displayName: display, members: others, source: 'speakers' };
+}
+// [LOCAL-FALLBACK-END]
+
+// 归属判定的唯一调用入口：上游存在时完全走 chat-parser，本地兜底不会执行。
+function resolveBatchTarget(msgs, selfNicknames, options) {
+  const resolver = UPSTREAM_RESOLVE_BATCH_TARGET || localResolveBatchTarget;
+  return resolver(msgs, selfNicknames, options);
+}
+
 // 解析传感器输出：
 //   新格式 CHANGE <handle> <pid> <processName> <left> <top> <right> <bottom> <dpi> <b64>
 //   兼容格式 CHANGE <handle> <pid> <processName> <b64>
 //   兼容格式 CHANGE <handle> <b64>
 //   旧格式 CHANGE <b64>
+//
+// base64 通道收紧成合法字符集：旧实现用 (.+)$ 兜底，传感器元数据错位时
+// （例如原生 GetWindowRect 不可用、字段变空）会把 "0 - 0 0 0 0 0 xxxx" 整段
+// 当成 base64 解出一串乱码，看起来像一次成功的剪贴板变化。宁可不认，也不能认错。
+const B64_RE = '([A-Za-z0-9+/]+={0,2})';
+const CHANGE_FULL_RE = new RegExp(`^CHANGE\\s+(-?\\d+)\\s+(\\d+)\\s+([^\\s]+)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(-?\\d+)\\s+(\\d+)\\s+${B64_RE}$`);
+const CHANGE_META_RE = new RegExp(`^CHANGE\\s+(-?\\d+)\\s+(\\d+)\\s+([^\\s]+)\\s+${B64_RE}$`);
+const CHANGE_HANDLE_RE = new RegExp(`^CHANGE\\s+(-?\\d+)\\s+${B64_RE}$`);
+const CHANGE_LEGACY_RE = new RegExp(`^CHANGE\\s+${B64_RE}$`);
+
 function parseSensorLine(line) {
-  const full = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(\d+)\s+(.+)$/);
+  const full = line.match(CHANGE_FULL_RE);
   if (full) {
     return {
       handle: full[1] === '0' ? null : full[1],
@@ -61,7 +132,7 @@ function parseSensorLine(line) {
       encoded: full[9]
     };
   }
-  const current = line.match(/^CHANGE\s+(-?\d+)\s+(\d+)\s+([^\s]+)\s+(.+)$/);
+  const current = line.match(CHANGE_META_RE);
   if (current) {
     return {
       handle: current[1] === '0' ? null : current[1],
@@ -70,9 +141,9 @@ function parseSensorLine(line) {
       encoded: current[4]
     };
   }
-  const two = line.match(/^CHANGE\s+(-?\d+)\s+(.+)$/);
+  const two = line.match(CHANGE_HANDLE_RE);
   if (two) return { handle: two[1] === '0' ? null : two[1], encoded: two[2] };
-  const legacy = line.match(/^CHANGE\s+(.+)$/);
+  const legacy = line.match(CHANGE_LEGACY_RE);
   if (legacy) return { handle: null, encoded: legacy[1] };
   return null;
 }
@@ -96,9 +167,14 @@ function parseSensorMedia(encoded) {
 }
 
 class ClipboardWatcher {
-  constructor({ onBatch = () => {}, config = null } = {}) {
+  constructor({ onBatch = () => {}, config = null, sessionReader = null, stripCapture = null } = {}) {
     this.onBatch = onBatch;
     this.config = config || loadConfig();
+    // 读「当前窗口是哪个会话」的实现（截标题条 + 视觉模型）。测试可注入假实现。
+    // 传 null / 不传就用内置的；显式传 false 关掉（只靠发言人名字推断）。
+    this.sessionReader = sessionReader;
+    // 截图实现（测试可注入假实现，避免真的去截屏）
+    this.stripCapture = stripCapture;
     this.pollMs = this.config.pollMs || 700;
     // 最少匹配行数：按「参与匹配的原始行数」判定（一条块格式消息 = 3 行起），
     // 不是按消息条数，这样复制单条聊天消息也能被识别。
@@ -114,7 +190,13 @@ class ClipboardWatcher {
     // 不能用「覆盖定时器」的写法——那样前一批的新消息会被丢掉，而它们已经进了 seen，等于永久丢失。
     this._pendingBatches = [];
     this._debounceTimer = null;
+    // 交付串行化：上一轮还在等异步结果（如会话名识别）时，新一轮不能插进来，
+    // 否则两轮各拿一半队列，交付顺序会乱。
+    this._flushing = false;
     this._restartTimer = null;
+    // 心跳看门狗：传感器启动成功但卡死（PowerShell 侧 Get-Clipboard 卡住 /
+    // 原生调用被安全软件拦下）时，仅靠 exit 事件是等不到的，必须看输出流。
+    this._healthTimer = null;
   }
 
   start() {
@@ -125,24 +207,85 @@ class ClipboardWatcher {
       return;
     }
     this.running = true;
+    this._buffer = '';
+    this._pendingMedia = null;
     const sensor = path.join(__dirname, 'clipboard-sensor.ps1');
-    this.child = spawn('powershell.exe', [
-      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', sensor, '-PollMs', String(this.pollMs)
-    ], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-    this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (chunk) => this._onSensorData(chunk));
-    this.child.on('exit', () => {
+    // 临时目录隔离：传感器进程跑的是 PowerShell，安全软件常把它往 TEMP 写东西的行为
+    // 当成可疑；把 TEMP/TMP 指到我们自己的数据目录下，权限和清理都可控。
+    const sensorEnv = { ...process.env };
+    try {
+      const temporary = path.join(getPaths().dataDir, 'tmp', 'clipboard-sensor');
+      fs.mkdirSync(temporary, { recursive: true });
+      sensorEnv.TEMP = temporary;
+      sensorEnv.TMP = temporary;
+    } catch (error) {
+      log('warn', 'capture', '无法创建剪贴板组件临时目录：' + error.message);
+    }
+    let child;
+    try {
+      child = spawn('powershell.exe', [
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', sensor, '-PollMs', String(this.pollMs)
+      ], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: sensorEnv });
+    } catch (error) {
+      // 同步 spawn 失败（常见：安全软件 / 组策略拦了 powershell.exe）不能把核心整个带崩：
+      // 剪贴板只是「录聊天」这一条链路，核心退出会让用户连设置页都进不去。
+      this.running = false;
+      log('error', 'capture', '剪贴板传感器启动失败：' + ((error && error.message) || error) + '，15 秒后重试');
+      this._scheduleRestart(15000);
+      return;
+    }
+    this.child = child;
+    child.stdout.setEncoding('utf8');
+    let lastActivity = Date.now();
+    let connected = false;
+    child.stdout.on('data', (chunk) => {
+      lastActivity = Date.now();
+      if (!connected) {
+        connected = true;
+        log('info', 'capture', `剪贴板传感器已连接，通道编码=${chunk.includes('\0') ? 'UTF-16' : 'UTF-8'}`);
+      }
+      this._onSensorData(chunk);
+    });
+    this._healthTimer = setInterval(() => {
+      if (Date.now() - lastActivity > Math.max(15000, this.pollMs * 5)) {
+        log('warn', 'capture', '剪贴板传感器无响应，正在重新启动');
+        child.kill();
+      }
+    }, 3000);
+    this._healthTimer.unref();
+    child.on('exit', () => {
+      if (this.child !== child) return;
+      clearInterval(this._healthTimer);
+      this._healthTimer = null;
       this.child = null;
       if (this.running) {
         log('warn', 'capture', '剪贴板传感器退出，5 秒后重启');
-        this._restartTimer = setTimeout(() => this.start(), 5000);
+        this.running = false;
+        this._scheduleRestart(5000);
       }
     });
-    this.child.on('error', (e) => {
+    child.on('error', (e) => {
+      clearInterval(this._healthTimer);
+      this._healthTimer = null;
       log('error', 'capture', '剪贴板传感器启动失败：' + (e && e.message ? e.message : e));
-      this.running = false;
+      if (this.child === child) this.child = null;
+      if (this.running) {
+        this.running = false;
+        this._scheduleRestart(15000);
+      }
     });
     log('info', 'capture', '剪贴板监听已启动');
+  }
+
+  // 传感器起不来时按固定间隔重试；安全软件首次拦截往往只拦第一次，
+  // 重试能让它在用户放行后自动恢复，而不是整个进程就没了。
+  _scheduleRestart(delayMs) {
+    if (this._restartTimer) return;
+    this._restartTimer = setTimeout(() => {
+      this._restartTimer = null;
+      if (this.running) return;
+      this.start();
+    }, delayMs);
   }
 
   _onSensorData(chunk) {
@@ -151,6 +294,17 @@ class ClipboardWatcher {
     while ((idx = this._buffer.indexOf('\n')) >= 0) {
       const line = this._buffer.slice(0, idx).trim();
       this._buffer = this._buffer.slice(idx + 1);
+
+      // 传感器自身的健康信号：不再是「只有剪贴板变化才有输出」，
+      // 这样 Node 侧的心跳看门狗才能区分「没复制东西」和「进程卡死」。
+      if (line.startsWith('SENSOR_ERROR ')) {
+        log('warn', 'capture', '剪贴板组件异常：' + Buffer.from(line.slice(13), 'base64').toString('utf8'));
+        continue;
+      }
+      if (line.startsWith('SENSOR_READY ')) {
+        log('info', 'capture', '剪贴板读取就绪，字符数=' + Number(line.slice(13)));
+        continue;
+      }
 
       if (line.startsWith('MEDIA ')) {
         const media = parseSensorMedia(line.slice(6).trim());
@@ -174,7 +328,10 @@ class ClipboardWatcher {
           bounds: parsed.bounds || null,
           dpi: parsed.dpi || 0
         }, media);
-      } catch {}
+      } catch (error) {
+        // 单行失败不能带走整个传感器连接：后面还可能有别的复制
+        log('error', 'capture', '剪贴板消息处理失败：' + ((error && error.message) || error));
+      }
     }
   }
 
@@ -215,7 +372,11 @@ class ClipboardWatcher {
       }
       return;
     }
-    if (detail.matchedLines < this.minMatchLines) return;
+    if (detail.matchedLines < this.minMatchLines) {
+      // 微信里复制了但没到识别门槛：给一条可诊断的日志，否则用户只看到「没反应」
+      if (isWeChat) log('warn', 'capture', '微信复制内容未达到聊天记录识别条件，请多选聊天消息后使用复制');
+      return;
+    }
     const fresh = msgs.filter((m) => !this.seen.has(msgKey(m)));
     if (fresh.length) {
       for (const m of fresh) this.seen.add(msgKey(m));
@@ -225,13 +386,14 @@ class ClipboardWatcher {
     }
     // 同一段聊天又被复制了一次：不重复归档（见上面的 seen 去重），但要告诉上层「用户又要了一次」，
     // 否则回复建议卡片不会再弹出来。
-    this._emitBatch(msgs, fresh, windowRef, !fresh.length, media);
+    // 复制这一刻微信还在前台，先把标题条截下来；识别推迟到交付前
+    this._emitBatch(msgs, fresh, windowRef, !fresh.length, media, this._startStrip(windowRef));
   }
 
   // 静默窗口 250ms：把窗口内的复制都排进队列，结束时按复制顺序逐批交付。
   // 连续复制（比如快速连按 Ctrl+C 复制两段不同聊天）时不能吞掉任何一批：
   // 只要内容符合聊天记录格式，每一批都必须入库。
-  _emitBatch(msgs, fresh, windowRef, repeat, media = null) {
+  _emitBatch(msgs, fresh, windowRef, repeat, media = null, stripPromise = null) {
     const queued = this._pendingBatches;
     const previous = queued[queued.length - 1];
     const sameSelection = (a, b) => a.length === b.length && a.every((m, i) => msgKey(m) === msgKey(b[i]));
@@ -243,43 +405,134 @@ class ClipboardWatcher {
         fresh: previous.fresh.length ? previous.fresh : fresh,
         windowRef: windowRef || previous.windowRef,
         repeat: previous.repeat && repeat,
-        media: previous.media || media
+        media: previous.media || media,
+        stripPromise: previous.stripPromise || stripPromise
       };
     } else {
-      queued.push({ msgs, fresh, windowRef, repeat, media });
+      queued.push({ msgs, fresh, windowRef, repeat, media, stripPromise });
     }
     if (this._debounceTimer) clearTimeout(this._debounceTimer);
     this._debounceTimer = setTimeout(() => this._flushBatches(), 250);
   }
 
-  _flushBatches() {
-    if (this._debounceTimer) clearTimeout(this._debounceTimer);
-    this._debounceTimer = null;
+  // 复制那一刻就把标题条截下来。微信这时还是前台，晚一点可能被别的窗口盖住——
+  // Qt 窗口被遮挡时 PrintWindow 会返回一片纯色，那就白截了。
+  // 只负责截，不负责识别；识别在交付前那一刻做。
+  _startStrip(windowRef) {
+    if (this.sessionReader === false) return null;
+    if (!windowRef || !windowRef.handle) return null;
+    if (!isWeixinProcess(windowRef.processName)) return null;
+    const captureCfg = this.config.capture || {};
+    if (captureCfg.readSessionTitle !== true) return null;
+    try {
+      const capture = this.stripCapture || require('./session-title').captureStrip;
+      return Promise.resolve(capture(windowRef.handle)).catch(() => null);
+    } catch {
+      return null;
+    }
+  }
+
+  // 把「截图 + 识别」两部分接起来。读当前窗口的会话名；任何一步失败都返回 null，
+  // 调用方退回「数发言人」的启发式，绝不挡住入库。
+  //
+  // 读不到会重截一次：复制那一刻微信理应在前台，但可能刚好被通知/弹窗盖住，
+  // 或者 Qt 窗口还没绘完就 PrintWindow。隔 250ms 再试一次基本都能拿到。
+  async _readSession(windowRef, stripPromise = null) {
+    if (this.sessionReader === false) return null;
+    if (!windowRef || !windowRef.handle) return null;
+    if (!isWeixinProcess(windowRef.processName)) return null;
+    const captureCfg = this.config.capture || {};
+    // 必须显式 true 才调用：这一步会截屏 + 调视觉模型，不该在无关调用里被动触发。
+    if (captureCfg.readSessionTitle !== true) return null;
+
+    const attempt = async (preCaptured) => {
+      let bytes = null;
+      try {
+        if (preCaptured) bytes = await preCaptured;
+        else {
+          const capture = this.stripCapture || require('./session-title').captureStrip;
+          bytes = await capture(windowRef.handle);
+        }
+      } catch {
+        bytes = null;
+      }
+      if (!bytes || !bytes.length) return null;
+      try {
+        const reader = this.sessionReader || require('./session-title').readTitleFromBytes;
+        const session = await reader(bytes, this.config);
+        return session && session.name ? session : null;
+      } catch (error) {
+        log('warn', 'capture', '读取窗口会话名失败，改用发言人推断：' + String((error && error.message) || error).slice(0, 200));
+        return null;
+      }
+    };
+
+    const first = await attempt(stripPromise);
+    if (first) return first;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (!this.running) return null;
+    return attempt(null);
+  }
+
+  _deliver(item, target = { kind: 'unknown', name: '' }) {
+    const contact = target.kind === 'contact' ? target.name : '';
+    log('info', 'capture', item.repeat
+      ? `捕获 ${item.msgs.length} 条重复消息（同一段聊天再次复制）`
+      : `捕获 ${item.fresh.length} 条新消息${target.kind === 'group' ? `（群聊：${target.displayName}）` : ''}`);
+    try {
+      this.onBatch({ msgs: item.fresh, allMsgs: item.msgs, contact, target, targetWindow: item.windowRef, repeat: item.repeat, media: item.media || null });
+    } catch (error) {
+      // 一批出错不影响后面的批次：只要没入库就是数据丢失，所以逐批兜住并记日志
+      log('error', 'capture', '批次交付失败：' + ((error && error.message) || error));
+    }
+  }
+
+  // 退出时用：不等视觉模型，直接按发言人推断交付，别把最后一次复制丢在缓冲里。
+  _flushSync() {
+    if (this._debounceTimer) { clearTimeout(this._debounceTimer); this._debounceTimer = null; }
     const queued = this._pendingBatches;
     this._pendingBatches = [];
     for (const item of queued) {
-      const contact = getBatchContact(item.msgs, this.selfNicknames);
-      log('info', 'capture', item.repeat
-        ? `捕获 ${item.msgs.length} 条重复消息（同一段聊天再次复制）`
-        : `捕获 ${item.fresh.length} 条新消息`);
-      try {
-        this.onBatch({ msgs: item.fresh, allMsgs: item.msgs, contact, targetWindow: item.windowRef, repeat: item.repeat, media: item.media || null });
-      } catch (error) {
-        // 一批出错不影响后面的批次：只要没入库就是数据丢失，所以逐批兜住并记日志
-        log('error', 'capture', '批次交付失败：' + ((error && error.message) || error));
+      this._deliver(item, resolveBatchTarget(item.msgs, this.selfNicknames, {}));
+    }
+  }
+
+  async _flushBatches() {
+    if (this._debounceTimer) clearTimeout(this._debounceTimer);
+    this._debounceTimer = null;
+    // 上一轮还在等视觉模型：让它先把队列吃完，避免两轮交错交付打乱顺序。
+    // 这里只 return，不清队列——正在跑的那轮 while 会看到新排进来的批次。
+    if (this._flushing) return;
+    this._flushing = true;
+    try {
+      while (this._pendingBatches.length) {
+        const queued = this._pendingBatches;
+        this._pendingBatches = [];
+        for (const item of queued) {
+          // 窗口能告诉我们是哪个会话；读不到就退回「数发言人」。
+          const session = await this._readSession(item.windowRef, item.stripPromise);
+          this._deliver(item, resolveBatchTarget(item.msgs, this.selfNicknames, { session }));
+        }
       }
+    } finally {
+      this._flushing = false;
     }
   }
 
   stop() {
     this.running = false;
+    clearInterval(this._healthTimer);
+    this._healthTimer = null;
     // 停止前把排队中还没交付的批次先交出去，别让最后一次复制丢在缓冲里
-    if (this._pendingBatches.length) this._flushBatches();
+    if (this._pendingBatches.length) this._flushSync();
     else if (this._debounceTimer) {
       clearTimeout(this._debounceTimer);
       this._debounceTimer = null;
     }
-    if (this._restartTimer) clearTimeout(this._restartTimer);
+    if (this._restartTimer) {
+      clearTimeout(this._restartTimer);
+      this._restartTimer = null;
+    }
     if (this.child) {
       try { this.child.kill(); } catch {}
       this.child = null;

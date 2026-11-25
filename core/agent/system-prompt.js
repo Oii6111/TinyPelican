@@ -2,6 +2,15 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { projectRoot, dataDir } = require('../lib/paths');
+
+// 降级必须留痕：这条链路上的失败不会报错、不会崩，只是产品人设悄悄换回 DSH 的 standard，
+// 界面上一切正常。历史上正是因为静默，测试红了很久都没人知道线上到底用没用自己的 preset。
+function warnDegraded(message) {
+  const text = `[system-prompt] ${message}`;
+  try { console.warn(text); } catch {}
+  try { if (dataDir()) require('../lib/log').log('warn', 'system-prompt', text); } catch {}
+}
 
 const SYSTEM_PROMPT_PATH = path.resolve(__dirname, '../../agent/Agent.md');
 // 产品随包的技能目录（records-query / todo / reminder / schedule / intent-review / chat-search）。
@@ -84,13 +93,32 @@ function writeIfChanged(file, content) {
   return true;
 }
 
-// 定位 DSH 随附的 standard preset 模板：
-// 1. 与 dsh 的 lib/bin.js 同一次安装（开发时 node_modules/@deepseek-ai/，
-//    打包后 vendor/node_modules/@deepseek-ai/ —— 两种布局都是 bin 往上两级）
-// 2. 从本进程解析（开发机 / 测试兜底）
+// 找 DSH 随附的 standard preset 模板。
+//
+// 两种安装布局都是「bin 往上两级 = @deepseek-ai/」：
+//   开发检出  <root>/packaging/vendor/node_modules/@deepseek-ai/dsh/lib/bin.js
+//   打包后    <install>/resources/content/packaging/vendor/node_modules/@deepseek-ai/…
+// 另有部分环境把依赖装在 <root>/node_modules。
+//
+// 不能只靠 require.resolve 的默认解析：那条路之所以在生产能走通，是因为
+// core/lib/startup.js 把 vendor 目录塞进了 NODE_PATH —— 一个隐式的全局副作用。
+// 任何没先加载 startup 的入口（测试、脚本、将来的新启动路径）都会解析失败，
+// 而失败后不会报错，只会静默退回不带人设的 fallback overlay。这里改成显式解析。
 function agentPresetTemplate(dshBin = '') {
   const candidates = [];
+  // 1) 从 dsh 的 bin 反推：最准确，随包安装位置变了也跟得上
   if (dshBin) candidates.push(path.resolve(path.dirname(dshBin), '..', '..', AGENT_PRESET_TEMPLATE));
+  // 2) 按已知根目录显式解析（paths 里传「包含 node_modules 的那一层」）
+  const roots = [path.join(projectRoot(), 'packaging/vendor'), projectRoot()];
+  for (const root of roots) {
+    try {
+      candidates.push(path.join(
+        path.dirname(require.resolve('@deepseek-ai/dsh-web-app/cordis.patch.yml', { paths: [root] })),
+        'presets', 'standard.patch.yml'
+      ));
+    } catch {}
+  }
+  // 3) 最后才依赖进程自身的解析链（含 startup 设的 NODE_PATH）
   try {
     candidates.push(path.join(
       path.dirname(require.resolve('@deepseek-ai/dsh-web-app/cordis.patch.yml')),
@@ -209,7 +237,7 @@ function ensureAgentPreset({ dshHome = '', id = AGENT_PRESET_ID, dshBin = '', sk
     if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new Error(`agent preset id 不合法：${id}`);
     const prompt = readSystemPrompt();
     const templatePath = agentPresetTemplate(dshBin);
-    if (!templatePath) throw new Error('找不到 DSH 随附的 standard preset 模板（@deepseek-ai/dsh-web-app）');
+    if (!templatePath) throw new Error('找不到 DSH 随附的 standard preset 模板（@deepseek-ai/dsh-web-app；已试 dshBin 反推、packaging/vendor、node_modules、进程解析链）');
     const source = fs.readFileSync(templatePath, 'utf8').replace(/\r\n/g, '\n');
     if (!source.includes('        plugins:\n')) throw new Error('DSH standard preset 模板缺少 plugins');
     const plugins = source.slice(source.indexOf('        plugins:\n') + '        plugins:\n'.length)
@@ -235,7 +263,9 @@ function ensureAgentPreset({ dshHome = '', id = AGENT_PRESET_ID, dshBin = '', sk
     ].join('\n'));
     return { ok: true, id, dir };
   } catch (error) {
-    return { ok: false, id, reason: String((error && error.message) || error) };
+    const reason = String((error && error.message) || error);
+    warnDegraded(`生成 agent preset 失败：${reason}`);
+    return { ok: false, id, reason };
   }
 }
 
@@ -259,7 +289,15 @@ function patchFile(dshHome, kind) {
 function ensureSystemPromptPatch({ dshHome = '', surface = 'task', defaultPreset = '', skillsDir = SKILLS_PATH } = {}) {
   if (!dshHome) return '';
   try {
-  if (defaultPreset && !ensureAgentPreset({ dshHome, id: defaultPreset, skillsDir }).ok) defaultPreset = '';
+  if (defaultPreset) {
+    const preset = ensureAgentPreset({ dshHome, id: defaultPreset, skillsDir });
+    if (!preset.ok) {
+      // 留空会转到 web-fallback：overlay 照样生效（会话能起），但 Web 会话退回 DSH 随附的
+      // standard preset —— 产品人设在这条路径上不生效，而这从界面上看不出来。
+      warnDegraded(`未生成 agent preset（${preset.reason}）；改用 web-fallback，Web 会话将退回 DSH 的 standard preset`);
+      defaultPreset = '';
+    }
+  }
   const rows = [
     '- id: system-prompt',
     '  config:',
@@ -304,8 +342,10 @@ function ensureSystemPromptPatch({ dshHome = '', surface = 'task', defaultPreset
     const next = `${rows.join('\n')}\n`;
     if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== next) fs.writeFileSync(file, next, 'utf8');
     return file;
-  } catch {
-    return '';   // 写不进去就不打 overlay：产品照常启动，只是白标失效
+  } catch (error) {
+    // 写不进去就不打 overlay：产品照常启动，只是白标失效 —— 但要在日志里留一条。
+    warnDegraded(`写入 system-prompt overlay 失败，已跳过 --patch：${String((error && error.message) || error)}`);
+    return '';
   }
 }
 

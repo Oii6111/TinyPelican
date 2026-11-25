@@ -48,6 +48,18 @@ async function uploadWechatMedia(file) {
 }
 
 export const api = {
+  // 聊天导入页：文件内容直接交给核心（JSON body，正文 ≤16 MB）
+  chatImport: { file: (body) => post('/api/import/content', body) },
+  // 思必驰（AIWorks）云笔记导入
+  aiworks: {
+    status: () => get('/api/import/aiworks'),
+    connect: (body) => post('/api/import/aiworks/connect', body),
+    disconnect: () => post('/api/import/aiworks/disconnect', {}),
+    list: (page) => get('/api/import/aiworks/notes?page=' + page),
+    note: (uid) => get('/api/import/aiworks/notes/' + encodeURIComponent(uid)),
+    previewText: (body) => post('/api/import/aiworks/preview-text', body),
+    commit: (body) => post('/api/import/aiworks/commit', body)
+  },
   health: () => get('/api/health'),
   status: () => get('/api/status'),
   unread: { read: () => post('/api/unread/read') },

@@ -199,6 +199,9 @@ function parseStructured(text, filename) {
 // 注意：这里直接调 block/line 两个解析器，按「谁解析出的消息多」取结果，
 // 兼容导出文件里混着两种格式的情况（parseChatText 是给剪贴板单段文本用的简化版）。
 function parseAny(text, filename = '') {
+  // ChatLab 是带显式格式头的结构化导出，优先识别；不匹配时返回 null 并回落原有解析链。
+  const chatlab = require('./chatlab').parseChatLab(text);
+  if (chatlab) return chatlab;
   const forward = parseWechatForwardExport(text);
   if (forward.length) return { messages: forward, format: 'wechat-forward' };
 

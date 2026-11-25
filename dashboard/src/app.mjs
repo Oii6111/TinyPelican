@@ -3,6 +3,8 @@ import { el } from './ui.mjs';
 import { mount as chat } from './views/chat.mjs';
 import { mount as channels } from './views/channels.mjs';
 import { mount as contacts } from './views/contacts.mjs';
+import { mount as chatImport } from './views/chat-import.mjs';
+import { mount as mountDailyActions } from './components/daily-actions.mjs';
 import { mount as email } from './views/email.mjs';
 import { mount as scheduleDashboard } from './views/proactive.mjs';
 import { mount as settings } from './views/settings.mjs';
@@ -36,6 +38,14 @@ const NAV = [
 ];
 
 NAV.find((group) => group.id === 'mem').items.push({ id: 'email', label: '邮件', mount: email });
+NAV.find((group) => group.id === 'mem').items.push({ id: 'chat-import', label: '聊天导入', mount: chatImport });
+// 今日行动：组件自己返回 { element, show, hide }，这里按 app.mjs 的 mount(sec, ctx) 约定包一层
+const dailyActions = (sec, ctx) => {
+  const view = mountDailyActions(ctx);
+  sec.append(view.element);
+  return view;
+};
+NAV.find((group) => group.id === 'mem').items.push({ id: 'daily-actions', label: '今日行动', mount: dailyActions });
 
 const nav = document.getElementById('nav');
 const channelNavigation = NAV.find(group => group.id === 'msg');

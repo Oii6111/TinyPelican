@@ -8,7 +8,9 @@ const { TEMPLATE, profileGaps } = require('../../memory/profile-template');
 
 module.exports = (router, ctx) => {
   router.get('/api/profile-template', (req, res) => ctx.json(res, 200, TEMPLATE));
-  router.get('/api/contacts', (req, res, c, p, url) => ctx.json(res, 200, chatDb.listMembers(url.searchParams.get('q') || '')));
+  // 只回联系人：群和「群里的陌生人」(kind='member') 不该出现在联系人页
+  router.get('/api/contacts', (req, res, c, p, url) => ctx.json(res, 200,
+    chatDb.listMembers(url.searchParams.get('q') || '').filter((member) => member.kind !== 'group' && member.kind !== 'member')));
 
   // 聊天记录里的图片/文件：字节存在 SQLite（message_attachment），这里直接回给前端。
   // 图片默认 inline 预览，?download=1 走下载；非图片一律按下载处理。

@@ -18,7 +18,12 @@ const { loadConfig } = require('../lib/config');
 const { ensureSystemPromptPatch, ensureAgentPreset, systemPromptEnv } = require('./system-prompt');
 const { ensureBundledPlugins } = require('./dsh-bundled-plugins');
 
-const DEFAULT_BASE = process.env.DSH_WEB_URL || 'http://127.0.0.1:18792';
+// 内置 DSH 的地址覆盖项必须是小鹈鹕自己的变量。
+// 不能沿用环境里的 DSH_WEB_URL：从 DSH / IDE 的集成终端（或任何 DSH 托管的环境）里跑
+// `npm start` 时，这个变量指向的是**宿主 DSH 自己占着的端口**，内置 DSH 会去抢同一个
+// 端口然后启动失败（"DSH 端口 49672 已被其他进程占用"），用户看到的就是「内置 DSH 起不来」。
+const INHERITED_DSH_WEB_URL = process.env.DSH_WEB_URL || '';
+const DEFAULT_BASE = process.env.XIAOTIHU_DSH_WEB_URL || 'http://127.0.0.1:18792';
 const DEFAULT_PORT = new URL(DEFAULT_BASE).port ? Number(new URL(DEFAULT_BASE).port) : 18792;
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -625,6 +630,10 @@ function spawnDshWeb(base, port) {
     preset: preset.ok ? preset.id : '', presetError: preset.ok ? '' : preset.reason
   });
   log('info', 'agent', `启动 DSH：bin=${bin} DSH_HOME=${dshHome || '(默认 ~/.dsh)'} runner=${process.execPath}`);
+  if (INHERITED_DSH_WEB_URL) {
+    // 这一条是排障的关键线索：从 DSH 托管环境启动时，继承来的地址几乎总是宿主自己的端口
+    log('warn', 'agent', `已忽略继承的 DSH_WEB_URL=${INHERITED_DSH_WEB_URL}（那是宿主 DSH 的地址，不是内置 DSH 的）；如需指定请用 XIAOTIHU_DSH_WEB_URL`);
+  }
   // 出站代理决策落在日志里：以后出现「握手失败 / SSE 中断」时，第一眼就能看到当时走没走代理
   const proxyInfo = systemProxy.lastResolution();
   log('info', 'agent', `出站代理：${proxyInfo.summary}${proxyInfo.notes && proxyInfo.notes.length ? '｜' + proxyInfo.notes.join('；') : ''}`);
@@ -739,7 +748,7 @@ async function ensureWebReady({ port = DEFAULT_PORT, base = DEFAULT_BASE, waitMs
   refreshDshSettings();
   if (await isReachable(base, 1200)) {
     if (webChild && webChild.exitCode === null) return { ok: true, started: false };
-    return { ok: false, error: `DSH 端口 ${port} 已被其他进程占用，请关闭占用进程或修改 DSH_WEB_URL` };
+    return { ok: false, error: `DSH 端口 ${port} 已被其他进程占用，请关闭占用进程或设置 XIAOTIHU_DSH_WEB_URL 换一个端口` };
   }
   if (!webLaunchPromise) {
     try {

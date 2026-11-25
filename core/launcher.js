@@ -17,6 +17,12 @@ function start() {
       return;
     }
     console.log('[launcher] 核心退出，code=' + code);
+    // 核心的失败原因写进了 activity.log，控制台里只剩这一句会让人以为「DSH 自己起不来」。
+    // 端口冲突是最常见的启动失败，这里直接给出可执行的下一步。
+    if (code) {
+      console.log('[launcher] 启动失败。最常见的原因是已经开着一个小鹈鹕（端口被占用）；');
+      console.log('[launcher] 请先关闭已有的小鹈鹕窗口/进程，再重新 npm start。详细原因见 activity.log。');
+    }
     process.exit(code || 0);
   });
   child.on('error', (e) => {

@@ -232,28 +232,86 @@ function coreEnv(runner) {
   return env;
 }
 
+// 核心的 stdout/stderr 以前是 'ignore'：用户机器上核心起不来时，弹窗让人看
+// core-startup.log，可这个文件从来没人写过，等于没有任何可诊断信息。
+// 现在把核心输出同时落到 XIAOTIHU_DATA_DIR/core-startup.log，并把最后几行直接放进弹窗，
+// 用户截图就能说清失败原因，不必去翻目录。
+const CORE_LOG_TAIL_LIMIT = 12000;
+let coreLogTail = '';
+let coreLogStream = null;
+
+function coreLogPath() {
+  return path.join(process.env.XIAOTIHU_DATA_DIR || app.getPath('userData'), 'core-startup.log');
+}
+
+function appendCoreLog(chunk) {
+  if (!chunk) return;
+  const text = String(chunk);
+  coreLogTail = (coreLogTail + text).slice(-CORE_LOG_TAIL_LIMIT);
+}
+
+// 弹窗里的说明：日志路径 + 最后几行。日志为空时也把「空」这个事实说清楚，
+// 否则用户只会看到一句「请检查启动日志」，然后发现文件根本不存在。
+function coreLogSummary() {
+  const location = '日志：' + coreLogPath();
+  const lines = coreLogTail.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(-10);
+  if (!lines.length) {
+    return location + '\n（日志为空：核心还没输出任何内容就退出了，通常是内置运行时缺失、被杀毒软件拦截，或数据目录不可写。）';
+  }
+  return location + '\n\n最后几行：\n' + lines.join('\n');
+}
+
+function truncateCoreLog() {
+  try {
+    if (typeof fs.writeFileSync === 'function') fs.writeFileSync(coreLogPath(), '');
+  } catch {}
+}
+
 function startCore() {
   if (quitting) return;
   const runner = coreRunner();
   const startedAt = Date.now();
-  coreProc = spawn(runner, [CORE], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true, env: coreEnv(runner) });
-  coreProc.on('error', () => {
+  coreLogTail = '';
+  let stream = null;
+  if (coreLogStream) { try { coreLogStream.end(); } catch {} coreLogStream = null; }
+  try {
+    if (typeof fs.createWriteStream === 'function') {
+      stream = fs.createWriteStream(coreLogPath(), { flags: 'a' });
+      stream.on('error', () => { stream = null; });
+      coreLogStream = stream;
+    }
+  } catch { stream = null; }
+  const pipe = (chunk) => {
+    appendCoreLog(chunk);
+    if (stream) { try { stream.write(String(chunk)); } catch {} }
+  };
+  coreProc = spawn(runner, [CORE], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true, env: coreEnv(runner) });
+  const proc = coreProc;
+  if (proc.stdout) proc.stdout.on('data', pipe);
+  if (proc.stderr) proc.stderr.on('data', pipe);
+  proc.on('close', () => {
+    if (stream) { try { stream.end(); } catch {} }
+    if (coreLogStream === stream) coreLogStream = null;
+  });
+  proc.on('error', () => {
     // 内置 node.exe 起不来（被杀软删掉 / 文件损坏）：退回 Electron 自带 Node，
     // 至少让应用还能用（代价是打包版的 pwsh 弹窗会回来），总比整个用不了强。
+    if (coreProc !== proc) return;
     if (coreRuntime().kind === 'bundled') {
       cachedCoreRuntime = { runner: process.execPath, kind: 'electron' };
       startCore();
     }
   });
-  coreProc.on('exit', (code) => {
-    if (quitting) return;
+  proc.on('exit', (code) => {
+    if (quitting || coreProc !== proc) return;
     if (code === RESTART_EXIT_CODE) {
       startCore(); // 微信登录/登出后的热重启
       return;
     }
+    const quick = Date.now() - startedAt < 15000;
     // 刚起来就挂：最典型的原因是另一个小鹈鹕（开发实例/另一个安装版本）占着 18791，
-    // 核心会立刻退出，用户只看到「DSH 没起来」。这里直接把原因弹出来。
-    if (code !== 0 && Date.now() - startedAt < 15000 && !coreCrashNotified) {
+    // 核心会立刻退出，用户只看到「DSH 没起来」。这里把日志最后几行一并弹出来。
+    if (code !== 0 && quick && !coreCrashNotified) {
       coreCrashNotified = true;
       const showCoreError = win && !win.isDestroyed()
         ? options => dialog.showMessageBox(win, options)
@@ -262,9 +320,8 @@ function startCore() {
         type: 'error',
         title: '小鹈鹕 · 核心没能启动',
         message: '核心服务启动失败（退出码 ' + code + '）',
-        detail: '最常见的原因：已经开着一个「小鹈鹕」了（开发实例或另一个安装版本），端口 18791 被占用。\n'
-          + '请关掉多余的实例后，再重新打开小鹈鹕。\n\n'
-          + '日志：' + path.join(process.env.XIAOTIHU_DATA_DIR || '', 'activity.log'),
+        detail: '常见原因：端口 18791 被占用、杀毒软件拦截了内置运行时，或数据目录不可写。\n\n'
+          + coreLogSummary(),
         buttons: ['好']
       }).catch(() => {});
     }
@@ -471,6 +528,7 @@ async function pollSuggestions() {
 
 app.whenReady().then(async () => {
   if (!ownsInstance || quitting) return;
+  truncateCoreLog();
   if (await portFree(PORT)) {
     startCore();
   }
@@ -481,9 +539,13 @@ app.whenReady().then(async () => {
       fetchImpl: fetch
     });
   } catch (error) {
+    const code = coreProc && coreProc.exitCode;
+    const message = code !== null && code !== undefined && code !== 0
+      ? error.message + '（退出码 ' + code + '）'
+      : error.message;
     await dialog.showMessageBox({
-      type: 'error', title: '小鹈鹕 · 核心服务未就绪', message: error.message,
-      detail: '启动日志：' + path.join(process.env.XIAOTIHU_DATA_DIR, 'core-startup.log'),
+      type: 'error', title: '小鹈鹕 · 核心服务未就绪', message,
+      detail: coreLogSummary(),
       buttons: ['关闭']
     });
     app.quit();
@@ -558,6 +620,10 @@ app.on('before-quit', (event) => {
 });
 
 app.on('will-quit', () => {
+  if (coreLogStream) {
+    try { coreLogStream.end(); } catch {}
+    coreLogStream = null;
+  }
   if (tray) {
     tray.destroy();
     tray = null;

@@ -84,6 +84,9 @@ function createRestServer({ config = null, onRestart = null, emailService = null
   require('./routes/dsh-webui')(router, ctx);
   require('./routes/reply-suggestions')(router, ctx);
   require('./routes/import')(router, ctx);
+  require('./routes/aiworks')(router, ctx);
+  require('./routes/daily-actions')(router, ctx);
+  require('./routes/daily-action-plans')(router, ctx);
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${PORT}`);

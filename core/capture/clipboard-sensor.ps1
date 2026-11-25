@@ -14,7 +14,9 @@ param([int]$PollMs = 700)
 
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 
-Add-Type @"
+$nativeAvailable = $false
+try {
+Add-Type -ErrorAction Stop @"
 using System;
 using System.Runtime.InteropServices;
 
@@ -33,6 +35,7 @@ public static class XTHClipboard {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
 
     public static uint GetForegroundPid() {
         uint pid = 0;
@@ -41,6 +44,10 @@ public static class XTHClipboard {
     }
 }
 "@
+$nativeAvailable = $true
+} catch {
+    Write-Output ('SENSOR_ERROR ' + [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($_.Exception.Message)))
+}
 
 # 让传感器进程 DPI 感知：GetWindowRect 返回物理像素，Electron 侧再按 dpi/96 换算成 DIP。
 # 失败不影响主流程（dpi 为 0 时按 96 处理）。
@@ -87,14 +94,30 @@ function Get-ClipboardMedia {
 }
 
 $last = ''
+$lastSequence = 0
+$readFailed = $false
+$reported = $false
 while ($true) {
+    Write-Output 'HEARTBEAT'
+    $sequence = 0
+    if ($nativeAvailable) { $sequence = [XTHClipboard]::GetClipboardSequenceNumber() }
     try {
         $clip = Get-Clipboard -Raw -ErrorAction Stop
+        $readFailed = $false
     } catch {
+        if (-not $readFailed) {
+            Write-Output ('SENSOR_ERROR ' + [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($_.Exception.Message)))
+        }
+        $readFailed = $true
         $clip = $last
     }
-    if ($clip -and $clip -ne $last) {
+    if (-not $reported) {
+        Write-Output ('SENSOR_READY ' + $clip.Length)
+        $reported = $true
+    }
+    if ($clip -and ($clip -ne $last -or $sequence -ne $lastSequence)) {
         $last = $clip
+        $lastSequence = $sequence
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($clip)
         $b64 = [Convert]::ToBase64String($bytes)
 
@@ -108,13 +131,16 @@ while ($true) {
             }
         } catch {}
 
-        $handlePtr = [XTHClipboard]::GetForegroundWindow()
-        $handle = $handlePtr.ToInt64()
+        $handle = 0
         $procId = 0
-        if ($handle -ne 0) {
-            $procId = [XTHClipboard]::GetForegroundPid()
-        }
         $pname = '-'
+        if ($nativeAvailable) {
+            try {
+                $handlePtr = [XTHClipboard]::GetForegroundWindow()
+                $handle = $handlePtr.ToInt64()
+                if ($handle -ne 0) { $procId = [XTHClipboard]::GetForegroundPid() }
+            } catch { $handle = 0; $procId = 0 }
+        }
         if ($procId -gt 0) {
             try { $pname = (Get-Process -Id $procId).ProcessName } catch {}
         }

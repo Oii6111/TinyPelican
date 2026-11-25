@@ -51,6 +51,40 @@ test('未配置 API Key 时返回明确错误', async () => {
   assert.match(r.error, /API Key/);
 });
 
+test('余额不足和密钥无效：给出能照着办的提示，不重试，也不把原始 JSON 抛给用户', async () => {
+  function statusServer(status, body) {
+    return new Promise((resolve) => {
+      let hits = 0;
+      const srv = http.createServer((req, res) => {
+        hits += 1;
+        req.on('data', () => {});
+        req.on('end', () => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(body); });
+      });
+      srv.listen(0, '127.0.0.1', () => resolve({ srv, hits: () => hits }));
+    });
+  }
+  const billing = await statusServer(402, JSON.stringify({ error: { message: 'Insufficient Balance (request_id: db151a21-04ac)', type: 'insufficient_balance_error', code: 'invalid_request_error' } }));
+  try {
+    const port = billing.srv.address().port;
+    const cfg = { engine: { provider: 'custom', providers: { custom: { baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test', model: 'm' } }, retries: 2 } };
+    const r = await chatCompletion([{ role: 'user', content: 'hi' }], { config: cfg, timeoutMs: 5000 });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.billing, true, '计费错误要能被调用方识别出来');
+    assert.match(r.error, /余额不足/, '要用人话说清楚');
+    assert.doesNotMatch(r.error, /request_id|insufficient_balance_error/, '不要把这坨 JSON 抛给用户');
+    assert.strictEqual(billing.hits(), 1, '计费错误重试没有意义');
+  } finally { billing.srv.close(); }
+
+  const denied = await statusServer(401, JSON.stringify({ error: { message: 'invalid api key' } }));
+  try {
+    const port = denied.srv.address().port;
+    const cfg = { engine: { provider: 'custom', providers: { custom: { baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-bad', model: 'm' } }, retries: 2 } };
+    const r = await chatCompletion([{ role: 'user', content: 'hi' }], { config: cfg, timeoutMs: 5000 });
+    assert.strictEqual(r.auth, true);
+    assert.match(r.error, /API Key/);
+  } finally { denied.srv.close(); }
+});
+
 test('extractJsonArray 容忍 Markdown 与前后缀', () => {
   const arr = extractJsonArray('```json\n[{"type":"task"}]\n```');
   assert.deepStrictEqual(arr, [{ type: 'task' }]);

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { getPaths } = require('../lib/paths');
 const archive = require('./archive');
+const { speakerResolver, speakerLabel } = require('../lib/speaker');
 const attachmentStore = require('./attachment-store');
 const { mergeProfile } = require('./profile-template');
 const memoryState = require('./memory-state');
@@ -68,6 +69,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_message_content ON message(content);
   CREATE INDEX IF NOT EXISTS idx_member_name ON member(name);
 `);
+const messageColumns = new Set(db.prepare('PRAGMA table_info(message)').all().map(column => column.name));
+if (!messageColumns.has('source')) db.exec("ALTER TABLE message ADD COLUMN source TEXT NOT NULL DEFAULT ''");
+if (!messageColumns.has('is_owner')) db.exec('ALTER TABLE message ADD COLUMN is_owner INTEGER');
+archive.ensureMessageTime(db);
+db.exec('CREATE INDEX IF NOT EXISTS idx_message_member_time ON message(member_id, ts_ms, id)');
 db.exec(`
   CREATE TABLE IF NOT EXISTS member_email (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,6 +145,23 @@ function migrateAttachmentStorage() {
 migrateAttachmentStorage();
 try { db.exec('ALTER TABLE message ADD COLUMN conversation_id INTEGER REFERENCES conversation(id)'); } catch {}
 try { db.exec("ALTER TABLE member ADD COLUMN profile_meta_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
+// 群聊是独立实体，不再和联系人混在同一个桶里（早期把群消息塞进 'inbox' 那个 key）。
+// kind = 'contact' 一对一联系人 / 'group' 群聊；老库里的行默认都是 contact。
+// 群里的发言人仍然是 contact：一人一行，私聊和多个群共用同一个联系人，
+// 用 member_group_link 挂在群下面——这样「他在群里怎么说」和「他对你怎么说」不会互相污染。
+try { db.exec("ALTER TABLE member ADD COLUMN kind TEXT NOT NULL DEFAULT 'contact'"); } catch {}
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_member_kind ON member(kind);
+  CREATE TABLE IF NOT EXISTS member_group_link (
+    group_id INTEGER NOT NULL REFERENCES member(id) ON DELETE CASCADE,
+    member_id INTEGER NOT NULL REFERENCES member(id) ON DELETE CASCADE,
+    display_name TEXT NOT NULL DEFAULT '',
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    PRIMARY KEY (group_id, member_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_mgl_member ON member_group_link(member_id);
+`);
 try { db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(content, content="message", content_rowid="id")'); } catch {}
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='message_fts'").get()) {
   db.exec(`
@@ -171,7 +194,7 @@ function syncLegacy() {
   const now = new Date().toISOString();
   const insertMember = db.prepare('INSERT OR IGNORE INTO member(platform_id,name,remark,important,profile_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)');
   const updateMember = db.prepare('UPDATE member SET name=?,remark=?,important=?,profile_json=?,updated_at=? WHERE platform_id=?');
-  const insertMessage = db.prepare('INSERT OR IGNORE INTO message(member_id,sender,ts,type,content,content_hash) VALUES(?,?,?,?,?,?)');
+  const insertMessage = db.prepare('INSERT OR IGNORE INTO message(member_id,sender,ts,type,content,content_hash,ts_ms) VALUES(?,?,?,?,?,?,?)');
   const upsertConversation = db.prepare('INSERT INTO conversation(member_id,platform,last_message_at) VALUES(?,?,?) ON CONFLICT(member_id) DO UPDATE SET last_message_at=excluded.last_message_at');
   db.exec('BEGIN');
   try { for (const file of files) {
@@ -182,7 +205,10 @@ function syncLegacy() {
     if (!existing || !existing.updatedAt || String(doc.updatedAt || '') >= String(existing.updatedAt)) updateMember.run(name, String(doc.remark || ''), doc.important ? 1 : 0, JSON.stringify(doc.profile || {}), String(doc.updatedAt || now), name);
     const member = db.prepare('SELECT id FROM member WHERE platform_id=?').get(name);
     upsertConversation.run(member.id, 'weixin', doc.updatedAt || now);
-    for (const m of (Array.isArray(doc.messages) ? doc.messages : [])) insertMessage.run(member.id, String(m.name || ''), String(m.ts || ''), String(m.type || 'text'), String(m.content || ''), hashMessage(name, m));
+    for (const m of (Array.isArray(doc.messages) ? doc.messages : [])) {
+      const ts = String(m.ts || '');
+      insertMessage.run(member.id, String(m.name || ''), ts, String(m.type || 'text'), String(m.content || ''), hashMessage(name, m), archive.messageTime(ts));
+    }
   } db.exec('COMMIT');
   for (const file of files) { try { fs.unlinkSync(path.join(contactsDir, file)); } catch {} }
   db.prepare("INSERT OR REPLACE INTO meta(name,value) VALUES('legacy_json_migrated',?)").run(now);
@@ -192,7 +218,7 @@ function syncLegacy() {
 function listMembers(query = '') {
   syncLegacy();
   const q = String(query || '').trim();
-  return db.prepare(`SELECT member.id,member.platform_id AS platformId,member.name,member.remark,member.important,COALESCE(cp.social_goal,'') AS socialGoal,member.profile_json AS profileJson,member.profile_meta_json AS profileMetaJson,(SELECT COUNT(*) FROM message x WHERE x.member_id=member.id) AS messages,(SELECT MAX(ts) FROM message x WHERE x.member_id=member.id) AS updatedAt,(SELECT MAX(x.id) FROM message x WHERE x.member_id=member.id) AS lastMessageId FROM member LEFT JOIN contact_profile cp ON cp.member_id=member.id WHERE ?='' OR member.name LIKE ? OR member.remark LIKE ? ORDER BY important DESC, lastMessageId DESC, member.name COLLATE NOCASE`).all(q, `%${q}%`, `%${q}%`).map((member) => ({ ...member, important: !!member.important, socialGoal: member.socialGoal || '', profile: JSON.parse(member.profileJson || '{}'), profileMeta: JSON.parse(member.profileMetaJson || '{}'), messages: Number(member.messages || 0), lastMessageId: Number(member.lastMessageId || 0) }));
+  return db.prepare(`SELECT member.id,member.platform_id AS platformId,member.name,member.remark,member.important,member.kind,COALESCE(cp.social_goal,'') AS socialGoal,member.profile_json AS profileJson,member.profile_meta_json AS profileMetaJson,(SELECT COUNT(*) FROM message x WHERE x.member_id=member.id) AS messages,(SELECT MAX(ts) FROM message x WHERE x.member_id=member.id) AS updatedAt,(SELECT MAX(x.id) FROM message x WHERE x.member_id=member.id) AS lastMessageId FROM member LEFT JOIN contact_profile cp ON cp.member_id=member.id WHERE ?='' OR member.name LIKE ? OR member.remark LIKE ? ORDER BY important DESC, lastMessageId DESC, member.name COLLATE NOCASE`).all(q, `%${q}%`, `%${q}%`).map((member) => ({ ...member, kind: member.kind || 'contact', important: !!member.important, socialGoal: member.socialGoal || '', profile: JSON.parse(member.profileJson || '{}'), profileMeta: JSON.parse(member.profileMetaJson || '{}'), messages: Number(member.messages || 0), lastMessageId: Number(member.lastMessageId || 0) }));
 }
 
 function getMember(name) {
@@ -292,53 +318,64 @@ function descriptionForSha(sha256) {
   return row || null;
 }
 
-function messages(name, query = '', limit = 200, hotOnly = false, before = '', beforeId = 0) {
+function messages(name, query = '', limit = 200, hotOnly = false, before = '', beforeId = 0, config) {
   syncLegacy(); const member = getMember(name); if (!member) return null;
   const q = String(query || '').trim(); const n = Math.min(Math.max(Number(limit) || 200, 1), 500);
-  const config = (() => { try { return JSON.parse(fs.readFileSync(getPaths().config, 'utf8')); } catch { return {}; } })();
-  const owners = new Set(config.selfNicknames || []);
+  const resolve = resolveMemberSpeaker(member, config);
   const canonical = member.name;
-  const cutoff = new Date(Date.now() - archive.RETENTION_DAYS * 86400000).toISOString();
-  const cursorTs = String(before || '');
+  const cutoff = Date.now() - archive.RETENTION_DAYS * 86400000;
   const cursorId = Number(beforeId) || 0;
-  const rows = hotOnly
-    ? db.prepare(`SELECT message.id, sender, sender AS senderName, ts, ts AS timestamp, type, content FROM message JOIN member ON member.id=message.member_id WHERE member.name=? AND ts>=? AND (?='' OR content LIKE ?) AND (?='' OR ts<? OR (ts=? AND message.id<?)) ORDER BY ts DESC,message.id DESC LIMIT ?`).all(canonical, cutoff, q, `%${q}%`, cursorTs, cursorTs, cursorTs, cursorId, n + 1)
-    : db.prepare(`SELECT message.id, sender, sender AS senderName, ts, ts AS timestamp, type, content FROM message JOIN member ON member.id=message.member_id WHERE member.name=? AND (?='' OR content LIKE ?) AND (?='' OR ts<? OR (ts=? AND message.id<?)) ORDER BY ts DESC,message.id DESC LIMIT ?`).all(canonical, q, `%${q}%`, cursorTs, cursorTs, cursorTs, cursorId, n + 1);
+  const cursorTime = before || cursorId ? archive.messageTime(before) : Number.MAX_SAFE_INTEGER;
+  const rows = db.prepare(`SELECT id, sender, sender AS senderName, ts, ts AS timestamp, type, content, source, is_owner
+    FROM message WHERE member_id=? AND ts_ms>=? AND (?='' OR content LIKE ?) AND (ts_ms, id) < (?, ?)
+    ORDER BY ts_ms DESC, id DESC LIMIT ?`).all(member.id, hotOnly ? cutoff : Number.MIN_SAFE_INTEGER, q, `%${q}%`, cursorTime, cursorId, n + 1);
   const hasMore = rows.length > n;
   if (hasMore) rows.pop();
   const attachments = attachmentsFor(rows.map((row) => row.id));
   return { contact: canonical, total: rows.length, messages: rows.reverse().map((row) => {
     const files = attachments.get(row.id);
-    return { ...row, name: row.sender, isOwner: owners.has(row.sender), ...(files ? { attachments: files } : {}) };
-  }), hasMore, hasArchive: archive.exists(canonical) || !!db.prepare('SELECT 1 FROM message WHERE member_id=? AND ts<? LIMIT 1').get(member.id, cutoff) };
+    return { ...messageIdentity(row, resolve), name: row.sender, ...(files ? { attachments: files } : {}) };
+  }), hasMore, hasArchive: archive.exists(canonical) || !!db.prepare('SELECT 1 FROM message WHERE member_id=? AND ts_ms<? LIMIT 1').get(member.id, cutoff) };
+}
+
+function resolveMemberSpeaker(member, config = require('../lib/config').loadConfig()) {
+  const aliases = db.prepare('SELECT name FROM member_name_history WHERE member_id=?').all(member.id);
+  return speakerResolver(config.selfNicknames || [], [member.name, member.remark, member.platformId, ...aliases.map(row => row.name)]);
+}
+
+function messageIdentity({ is_owner, source, ...message }, resolve) {
+  const isOwner = resolve({ is_owner, sender: message.sender || message.name });
+  return { ...message, ...(source ? { source } : {}), isOwner, speakerRole: speakerLabel(isOwner) };
 }
 
 function archiveMessages(name, before = '', limit = 100, beforeId = 0) {
   const member = getMember(name);
   if (!member) return null;
   archiveExpired(member.name);
-  const owners = new Set(require('../lib/config').loadConfig().selfNicknames || []);
-  return { contact: member.name, messages: archive.list(member.name, { before, beforeId, limit }).map((message) => ({ ...message, isOwner: owners.has(message.sender) })) };
+  const resolve = resolveMemberSpeaker(member);
+  return { contact: member.name, messages: archive.list(member.name, { before, beforeId, limit }).map(message => messageIdentity(message, resolve)) };
 }
 function* historyPages(name, limit = 300) {
   const member = getMember(name);
   if (!member) return;
-  yield* archive.pages(member.name, limit);
+  const resolve = resolveMemberSpeaker(member);
+  for (const rows of archive.pages(member.name, limit)) yield rows.map(row => messageIdentity(row, resolve));
   let cursor = 0;
-  let timestamp = '';
+  let timestamp = Number.MIN_SAFE_INTEGER;
   const maximum = db.prepare('SELECT MAX(id) AS id FROM message WHERE member_id=?').get(member.id).id || 0;
   while (true) {
-    const rows = db.prepare('SELECT *,sender AS name FROM message WHERE member_id=? AND id<=? AND (ts>? OR (ts=? AND id>?)) ORDER BY ts,id LIMIT ?').all(member.id, maximum, timestamp, timestamp, cursor, limit);
+    const rows = db.prepare(`SELECT *,sender AS name FROM message WHERE member_id=? AND id<=? AND (ts_ms, id) > (?, ?)
+      ORDER BY ts_ms, id LIMIT ?`).all(member.id, maximum, timestamp, cursor, limit);
     if (!rows.length) break;
     cursor = rows[rows.length - 1].id;
-    timestamp = rows[rows.length - 1].ts;
-    yield rows;
+    timestamp = rows[rows.length - 1].ts_ms;
+    yield rows.map(({ ts_ms, ...row }) => messageIdentity(row, resolve));
   }
 }
 function allMessages(name) {
   const member = getMember(name);
   if (!member) return null;
-  const rows = [...historyPages(member.name)].flat().sort((left, right) => String(left.ts).localeCompare(String(right.ts)) || left.id - right.id);
+  const rows = [...historyPages(member.name)].flat().sort((left, right) => archive.messageTime(left.ts) - archive.messageTime(right.ts) || left.id - right.id);
   const attachments = attachmentsFor(rows.map((row) => row.id));
   return {
     contact: member.name,
@@ -350,11 +387,11 @@ function allMessages(name) {
   };
 }
 function archiveExpired(contact = '') {
-  const cutoff = new Date(Date.now() - archive.RETENTION_DAYS * 86400000).toISOString();
+  const cutoff = Date.now() - archive.RETENTION_DAYS * 86400000;
   const members = contact ? [getMember(contact)].filter(Boolean) : listMembers('');
   for (const member of members) {
     while (true) {
-      const rows = db.prepare('SELECT message.id,sender,ts,type,content,content_hash FROM message WHERE member_id=? AND ts<? ORDER BY id LIMIT 500').all(member.id, cutoff);
+      const rows = db.prepare('SELECT id,sender,ts,type,content,content_hash,source,is_owner,ts_ms FROM message WHERE member_id=? AND ts_ms<? ORDER BY ts_ms,id LIMIT 500').all(member.id, cutoff);
       if (!rows.length) break;
       archive.append(member.name, rows.map((message) => ({ ...message, name: message.sender })));
       db.exec('BEGIN');
@@ -407,9 +444,9 @@ function messagesSince(name, cursor = '', limit = 50) {
   const cursorTs = String(rawCursor.ts || rawCursor.timestamp || '').trim();
   let rows;
   if (cursorId > 0) {
-    rows = db.prepare(`SELECT id,sender,sender AS name,ts,type,content FROM message WHERE member_id=? AND id>? AND type='text' AND TRIM(content)<>'' ORDER BY id ASC LIMIT ?`).all(member.id, cursorId, n);
+    rows = db.prepare(`SELECT id,sender,sender AS name,ts,type,content,is_owner,source FROM message WHERE member_id=? AND id>? AND type='text' AND TRIM(content)<>'' ORDER BY id ASC LIMIT ?`).all(member.id, cursorId, n);
   } else {
-    const all = db.prepare(`SELECT id,sender,sender AS name,ts,type,content FROM message WHERE member_id=? AND type='text' AND TRIM(content)<>'' ORDER BY id ASC`).all(member.id);
+    const all = db.prepare(`SELECT id,sender,sender AS name,ts,type,content,is_owner,source FROM message WHERE member_id=? AND type='text' AND TRIM(content)<>'' ORDER BY id ASC`).all(member.id);
     const sinceMs = parseMessageTime(cursorTs);
     rows = all.filter((row) => {
       if (!cursorTs) return true;
@@ -418,10 +455,8 @@ function messagesSince(name, cursor = '', limit = 50) {
       return String(row.ts || '') > cursorTs;
     }).slice(0, n);
   }
-  const result = rows.map((row) => ({
-    id: Number(row.id), name: row.name || row.sender || '', sender: row.sender || row.name || '',
-    ts: row.ts || '', timestamp: row.ts || '', type: row.type || 'text', content: row.content || ''
-  }));
+  const resolve = resolveMemberSpeaker(member);
+  const result = rows.map(row => ({ ...messageIdentity(row, resolve), timestamp: row.ts }));
   const last = result[result.length - 1] || null;
   return { contact: member.name, messages: result, cursor: last ? { id: last.id, ts: last.ts } : (cursor && typeof cursor === 'object' ? cursor : { ts: cursorTs }) };
 }
@@ -457,12 +492,24 @@ function clearMemberMessages(name) {
   archive.remove(member.name);
   return Number(result.changes || 0);
 }
-function ingestMessages(name, items = []) {
-  const contact = String(name || '').trim() || 'inbox'; const now = new Date().toISOString();
-  db.prepare('INSERT OR IGNORE INTO member(platform_id,name,created_at,updated_at) VALUES(?,?,?,?)').run(contact, contact, now, now);
+function ingestMessages(name, items = [], { kind = 'contact', remark = '' } = {}) {
+  const contact = String(name || '').trim() || 'inbox';
+  const memberKind = kind === 'group' ? 'group' : 'contact';
+  const label = String(remark || '').trim();
+  const now = new Date().toISOString();
+  db.prepare('INSERT OR IGNORE INTO member(platform_id,name,kind,created_at,updated_at) VALUES(?,?,?,?,?)').run(contact, contact, memberKind, now, now);
+  if (memberKind === 'group') db.prepare("UPDATE member SET kind='group',updated_at=? WHERE platform_id=?").run(now, contact);
+  // 群里见过的人后来直接和你聊了（或用户手动加了），升级成联系人
+  if (memberKind === 'contact') db.prepare("UPDATE member SET kind='contact',updated_at=? WHERE platform_id=? AND kind='member'").run(now, contact);
   const member = db.prepare('SELECT id FROM member WHERE platform_id=?').get(contact);
-  const insert = db.prepare('INSERT OR IGNORE INTO message(member_id,sender,ts,type,content,content_hash) VALUES(?,?,?,?,?,?)');
-  const findMessage = db.prepare('SELECT id FROM message WHERE content_hash=?');
+  // 截图读到的是微信里显示的名字（设了备注就是备注）。只在备注为空时写入，
+  // 免得每次复制都把用户手改过的备注覆盖回去。
+  if (member && label) {
+    db.prepare("UPDATE member SET remark=?,updated_at=? WHERE id=? AND TRIM(COALESCE(remark,''))=''").run(label, now, member.id);
+  }
+  const insert = db.prepare('INSERT OR IGNORE INTO message(member_id,sender,ts,type,content,content_hash,source,is_owner,platform_message_id,ts_ms) VALUES(?,?,?,?,?,?,?,?,?,?)');
+  const findMessage = db.prepare('SELECT id, is_owner FROM message WHERE content_hash=?');
+  const confirmOwner = db.prepare('UPDATE message SET is_owner=? WHERE content_hash=? AND is_owner IS NULL');
   const insertAttachment = db.prepare(`INSERT OR IGNORE INTO message_attachment(message_id,kind,name,mime_type,size,sha256,path,description,description_source,description_model,description_error,source,created_at)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   let added = 0;
@@ -471,9 +518,24 @@ function ingestMessages(name, items = []) {
   try {
     for (const item of (Array.isArray(items) ? items : [])) {
       const message = { name: String(item.name || item.sender || ''), ts: String(item.ts || item.timestamp || now), type: String(item.type || 'text'), content: String(item.content || '') };
-      if (cold.has(message)) continue;
-      const hash = hashMessage(contact, message);
-      const result = insert.run(member.id, message.name, message.ts, message.type, message.content, hash);
+      const externalId = item.source === 'aiworks' ? item.externalId : undefined;
+      let hash = externalId
+        ? crypto.createHash('sha256').update(JSON.stringify(['aiworks', member.id, externalId])).digest('hex')
+        : hashMessage(contact, message);
+      const owner = typeof item.isOwner === 'boolean' ? Number(item.isOwner) : null;
+      if (owner != null && !externalId) {
+        const previous = findMessage.get(hash) || cold.byHash(hash);
+        // 同名双方在同一秒发送相同文本时，分别保留两人的原话。
+        if (previous?.is_owner != null && previous.is_owner !== owner) hash += ':owner:' + owner;
+        const archived = cold.byHash(hash);
+        if (archived) {
+          if (archived.is_owner == null) cold.confirm(hash, owner);
+          continue;
+        }
+      } else if (cold.has(message, externalId ? hash : '')) continue;
+      const result = insert.run(member.id, message.name, message.ts, message.type, message.content, hash,
+        externalId ? 'aiworks' : '', owner, externalId || null, archive.messageTime(message.ts));
+      if (!result.changes && owner != null) confirmOwner.run(owner, hash);
       added += Number(result.changes || 0);
       const files = Array.isArray(item.attachments) ? item.attachments : [];
       if (!files.length) continue;
@@ -499,6 +561,8 @@ function ingestMessages(name, items = []) {
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   finally { cold.close(); }
+  // 注意：romance 分支在这里会自动建立关系档案（require('./stores/romance-relationships')）。
+  // main 不引入 romance 关系存储，这一段刻意不移植——入库只负责消息本身。
   return added;
 }
 function updateMessageContent(p) {
@@ -506,29 +570,239 @@ function updateMessageContent(p) {
   return Number(r.changes || 0) > 0;
 }
 
-function searchMessages(query, { contact = '', limit = 50 } = {}) {
+function searchMessages(query, { contact = '', limit = 50, config = require('../lib/config').loadConfig() } = {}) {
   const q = String(query || '').trim();
   if (!q) return [];
   const n = Math.min(Math.max(Number(limit) || 50, 1), 200);
-  const cutoff = new Date(Date.now() - archive.RETENTION_DAYS * 86400000).toISOString();
+  const cutoff = Date.now() - archive.RETENTION_DAYS * 86400000;
+  const resolvers = new Map();
+  function identify({ memberId, platformId, remark, ...row }) {
+    if (!resolvers.has(memberId)) {
+      resolvers.set(memberId, resolveMemberSpeaker({ id: memberId, name: row.contact, platformId, remark }, config));
+    }
+    return messageIdentity(row, resolvers.get(memberId));
+  }
+  const fields = 'member.id AS memberId, member.platform_id AS platformId, member.remark, member.name AS contact, message.sender AS name, message.is_owner, message.source, message.ts, message.type, message.content';
   try {
-    const indexed = db.prepare(`SELECT member.name AS contact, message.sender AS name, message.ts, message.type, message.content
+    const indexed = db.prepare(`SELECT ${fields}
       FROM message_fts JOIN message ON message.id=message_fts.rowid JOIN member ON member.id=message.member_id
-      WHERE message_fts MATCH ? AND message.ts>=? AND (?='' OR member.name=? OR member.remark=?) ORDER BY message.id DESC LIMIT ?`)
+      WHERE message_fts MATCH ? AND message.ts_ms>=? AND (?='' OR member.name=? OR member.remark=?) ORDER BY message.id DESC LIMIT ?`)
       .all('"' + q.replace(/"/g, '""') + '"', cutoff, contact, contact, contact, n);
-    if (indexed.length) return indexed.reverse();
+    if (indexed.length) return indexed.reverse().map(identify);
   } catch {}
-  return db.prepare(`SELECT member.name AS contact, message.sender AS name, message.ts, message.type, message.content
+  return db.prepare(`SELECT ${fields}
     FROM message JOIN member ON member.id=message.member_id
-    WHERE message.content LIKE ? AND message.ts>=? AND (?='' OR member.name=? OR member.remark=?)
-    ORDER BY message.id DESC LIMIT ?`).all('%' + q + '%', cutoff, String(contact || ''), String(contact || ''), String(contact || ''), n).reverse();
+    WHERE message.content LIKE ? AND message.ts_ms>=? AND (?='' OR member.name=? OR member.remark=?)
+    ORDER BY message.id DESC LIMIT ?`).all('%' + q + '%', cutoff, String(contact || ''), String(contact || ''), String(contact || ''), n).reverse().map(identify);
 }
 
-function contactContext(name, { limit = 20, hotOnly = false } = {}) {
+function contactContext(name, { limit = 20, hotOnly = false, config } = {}) {
   const member = getMember(name);
   if (!member) return null;
-  const result = messages(member.name, '', limit, hotOnly);
-  return { contact: member.name, remark: member.remark || '', important: !!member.important, socialGoal: member.socialGoal || '', profile: member.profile || {}, profileSkipped: member.profileSkipped || [], chatSummary: member.chatSummary || {}, recentMessages: result ? result.messages : [] };
+  const result = messages(member.name, '', limit, hotOnly, '', 0, config);
+  const liveCoverage = db.prepare('SELECT COUNT(*) AS total, MIN(ts) AS fromTs, MAX(ts) AS toTs FROM message WHERE member_id=?').get(member.id);
+  const archivedCoverage = archive.stats(member.name);
+  const recentMessages = result ? result.messages : [];
+  const coverageFrom = [liveCoverage?.fromTs, archivedCoverage.fromTs].filter(Boolean).sort()[0] || '';
+  const coverageTo = [liveCoverage?.toTs, archivedCoverage.toTs].filter(Boolean).sort().at(-1) || '';
+  return {
+    contact: member.name,
+    remark: member.remark || '',
+    important: !!member.important,
+    socialGoal: member.socialGoal || '',
+    profile: member.profile || {},
+    profileSkipped: member.profileSkipped || [],
+    chatSummary: member.chatSummary || {},
+    recentMessages,
+    messageCoverage: {
+      previewLimit: Number(limit) || 20,
+      previewCount: recentMessages.length,
+      liveCount: Number(liveCoverage?.total || 0),
+      archivedCount: archivedCoverage.total,
+      totalCount: Number(liveCoverage?.total || 0) + archivedCoverage.total,
+      from: coverageFrom,
+      to: coverageTo,
+      previewIsPartial: recentMessages.length < Number(liveCoverage?.total || 0) + archivedCoverage.total
+    }
+  };
 }
 
-module.exports = { db, syncLegacy, listMembers, getMember, findUnannotatedMember, messages, archiveMessages, allMessages, historyPages, archiveExpired, messagesSince, searchMessages, contactContext, updateMember, deleteMember, clearMemberMessages, ingestMessages, updateMessageContent, getAttachment, attachmentExists, descriptionForSha, pruneAttachments, normalizeEmailAddress, listMemberEmails, findMembersByEmail, linkMemberEmail, unlinkMemberEmail };
+// ── 群聊 ────────────────────────────────────────────────────────────────
+// 群不是人：它有自己的 member 行（kind='group'），消息挂在群上。
+// 群里的发言人另存成 kind='contact' 的联系人，用 member_group_link 挂到群。
+// 一人一行：同一个人在私聊和若干个群里都是同一个联系人，但消息不属于任何一个联系人，
+// 所以「他在群里对别人怎么说」可以作为独立证据被画像引用，而不是混进「他对你怎么说」。
+
+// 按成员重合找到已经存在的群：同一批人换了个显示名又复制回来时，别裂成两个群。
+function findGroupByMembers(members = [], minimum = 2) {
+  const names = [...new Set((Array.isArray(members) ? members : []).map((n) => String(n || '').trim()).filter(Boolean))];
+  if (names.length < minimum) return null;
+  const rows = db.prepare(`SELECT group_member.id,group_member.name,COUNT(*) AS hits
+    FROM member_group_link link
+    JOIN member group_member ON group_member.id=link.group_id
+    JOIN member speaker ON speaker.id=link.member_id
+    WHERE group_member.kind='group' AND speaker.name IN (${names.map(() => '?').join(',')})
+    GROUP BY group_member.id ORDER BY hits DESC LIMIT 1`).get(...names);
+  if (!rows || Number(rows.hits) < minimum) return null;
+  return { id: Number(rows.id), name: rows.name };
+}
+
+// 群身份的兜底前缀：只有当群的名字和某个联系人重名时才用得上。
+// 例：一个群只有张三说过话 -> 身份名就是「张三」，和联系人张三撞了。
+// 这种情况下不能把联系人改成群，改用一个带前缀的独立身份。
+const GROUP_KEY_PREFIX = '群:';
+
+// 建/取群实体。identity 是 platform_id（默认按发言人拼出来的名字）；
+// remark 是截图读到的真实群名——它只做显示，不参与身份判定，但可以用来归并：
+// 同一个群名复制两次，就算发言人组合变了也认得回来。
+function ensureGroup(identity, { members = [], displayName = '', remark = '' } = {}) {
+  const base = String(identity || '').trim();
+  const label = String(remark || displayName || '').trim();
+  if (!base) return null;
+  const now = new Date().toISOString();
+
+  const lookup = (value) => db.prepare('SELECT id,name,kind FROM member WHERE platform_id=?').get(value);
+  const hit = lookup(base);
+  // 同名的联系人优先：绝不能让一个群把联系人行接管成 kind='group'
+  const key = hit && hit.kind !== 'group' ? GROUP_KEY_PREFIX + base : base;
+  const exact = key === base ? hit : lookup(key);
+
+  if (exact) {
+    db.prepare("UPDATE member SET kind='group',updated_at=? WHERE id=?").run(now, exact.id);
+    if (label) db.prepare("UPDATE member SET remark=? WHERE id=? AND TRIM(COALESCE(remark,''))=''").run(label, exact.id);
+    return { id: Number(exact.id), name: exact.name };
+  }
+  // 真实群名是更可靠的归并键：发言人换了、拼出来的名字变了，同一个群仍然认得回来
+  if (label) {
+    const byRemark = db.prepare("SELECT id,name FROM member WHERE kind='group' AND remark=?").get(label);
+    if (byRemark) return { id: Number(byRemark.id), name: byRemark.name };
+  }
+  const merged = findGroupByMembers(members);
+  if (merged) return merged;
+  // 群的 name 必须恒等于 platform_id：后续入库、成员挂靠、路由都拿 name 当 key 用。
+  // 给人看的名字放 remark（截图读到的真群名）。
+  db.prepare("INSERT OR IGNORE INTO member(platform_id,name,kind,remark,created_at,updated_at) VALUES(?,?,'group',?,?,?)")
+    .run(key, key, label, now, now);
+  const row = db.prepare('SELECT id,name FROM member WHERE platform_id=?').get(key);
+  return row ? { id: Number(row.id), name: row.name } : null;
+}
+
+// 把本批识别到的发言人挂到群下面。
+// 只在两种情况下建 member 行：已经是联系人（不动它的 kind），或者第一次见到——那时建成
+// kind='member'，即「群里出现过但还没加为联系人」。它不会出现在联系人列表里，
+// 只有用户自己点了「加为联系人」才会升级成 kind='contact'。
+function linkGroupMembers(groupName, members = []) {
+  const group = ensureGroup(groupName);
+  if (!group) return [];
+  const now = new Date().toISOString();
+  const insertMember = db.prepare("INSERT OR IGNORE INTO member(platform_id,name,kind,created_at,updated_at) VALUES(?,?,'member',?,?)");
+  const findMember = db.prepare('SELECT id,name,kind FROM member WHERE platform_id=?');
+  const upsertLink = db.prepare(`INSERT INTO member_group_link(group_id,member_id,display_name,first_seen,last_seen)
+    VALUES(?,?,?,?,?) ON CONFLICT(group_id,member_id) DO UPDATE SET display_name=excluded.display_name,last_seen=excluded.last_seen`);
+  const out = [];
+  for (const raw of (Array.isArray(members) ? members : [])) {
+    const display = String(raw || '').trim();
+    if (!display) continue;
+    insertMember.run(display, display, now, now);
+    const speaker = findMember.get(display);
+    if (!speaker) continue;
+    upsertLink.run(group.id, speaker.id, display, now, now);
+    out.push({ id: Number(speaker.id), name: speaker.name, displayName: display, kind: speaker.kind });
+  }
+  return out;
+}
+
+// 用户主动把群里的一个人加为联系人。
+function promoteContact(name) {
+  const key = String(name || '').trim();
+  if (!key) return null;
+  db.prepare("UPDATE member SET kind='contact',updated_at=? WHERE platform_id=? AND kind='member'").run(new Date().toISOString(), key);
+  const row = db.prepare('SELECT id,name,kind,remark FROM member WHERE platform_id=?').get(key);
+  return row ? { id: Number(row.id), name: row.name, kind: row.kind, remark: row.remark || '' } : null;
+}
+
+function listGroupMembers(groupName) {
+  const key = String(groupName || '').trim();
+  if (!key) return [];
+  return db.prepare(`SELECT speaker.id,speaker.name,speaker.kind,link.display_name AS displayName,link.last_seen AS lastSeen
+    FROM member_group_link link
+    JOIN member speaker ON speaker.id=link.member_id
+    JOIN member group_member ON group_member.id=link.group_id
+    WHERE group_member.platform_id=? ORDER BY link.last_seen DESC, speaker.name COLLATE NOCASE`).all(key)
+    .map((row) => ({ ...row, id: Number(row.id) }));
+}
+
+// 关系页面左侧「群聊」分区的数据：群名、人数、消息量、最近活跃。
+function listGroups() {
+  return db.prepare(`SELECT m.id,m.name,m.remark,m.important,'group' AS kind,
+      (SELECT COUNT(*) FROM message x WHERE x.member_id=m.id) AS messages,
+      (SELECT MAX(x.ts) FROM message x WHERE x.member_id=m.id) AS lastMessageAt,
+      (SELECT COUNT(*) FROM member_group_link l WHERE l.group_id=m.id) AS memberCount
+    FROM member m WHERE m.kind='group'
+    ORDER BY lastMessageAt DESC, m.name COLLATE NOCASE`).all()
+    .map((row) => ({
+      ...row,
+      id: Number(row.id),
+      important: !!row.important,
+      messages: Number(row.messages || 0),
+      memberCount: Number(row.memberCount || 0),
+      lastMessageAt: row.lastMessageAt || ''
+    }));
+}
+
+// 某个联系人出现在哪些群里——画像里「他在群里的表现」就是按这个取的。
+function listGroupsForMember(name) {
+  const member = getMember(name);
+  if (!member || member.kind === 'group') return [];
+  return db.prepare(`SELECT group_member.id,group_member.name
+    FROM member_group_link link
+    JOIN member group_member ON group_member.id=link.group_id
+    WHERE link.member_id=? ORDER BY group_member.name COLLATE NOCASE`).all(member.id)
+    .map((row) => ({ ...row, id: Number(row.id) }));
+}
+
+// 他在各个群里说过的话（只取他自己说的），带上群名和紧邻的上一条作为语境。
+// 这是画像里唯一的「第三方观察」来源：这些话说给群里其他人听，不是说给用户听。
+function groupObservationsForMember(name, { perGroup = 4 } = {}) {
+  const member = getMember(name);
+  if (!member || member.kind === 'group') return [];
+  const limit = Math.max(1, Math.min(Number(perGroup) || 4, 10));
+  const select = db.prepare(`SELECT m.id,m.sender,m.ts,m.content,
+      (SELECT p.sender FROM message p WHERE p.member_id=m.member_id AND p.id<m.id ORDER BY p.id DESC LIMIT 1) AS previousSender,
+      (SELECT p.content FROM message p WHERE p.member_id=m.member_id AND p.id<m.id ORDER BY p.id DESC LIMIT 1) AS previousContent
+    FROM message m JOIN member own ON own.id=m.member_id
+    WHERE own.platform_id=? AND m.sender=? AND m.type='text' AND TRIM(m.content)<>''
+    ORDER BY m.id DESC LIMIT ?`);
+  const out = [];
+  for (const group of listGroupsForMember(name)) {
+    const rows = select.all(group.name, member.name, limit);
+    if (!rows.length) continue;
+    out.push({
+      group: group.name,
+      messages: rows.reverse().map((row) => ({
+        id: Number(row.id),
+        ts: row.ts,
+        content: String(row.content || '').slice(0, 400),
+        repliedTo: row.previousSender && row.previousSender !== member.name
+          ? { sender: String(row.previousSender), content: String(row.previousContent || '').slice(0, 300) }
+          : null
+      }))
+    });
+  }
+  return out;
+}
+
+// 开发期清理：早期所有群消息都被塞进 'inbox' 这个假联系人里，结构上线后它没有意义了。
+// 只删这一个 key，不碰真实联系人和群。
+function purgeInbox() {
+  const row = db.prepare("SELECT id FROM member WHERE platform_id='inbox' OR name='inbox'").get();
+  if (!row) return 0;
+  const count = Number(db.prepare('SELECT COUNT(*) AS n FROM message WHERE member_id=?').get(row.id)?.n || 0);
+  db.prepare('DELETE FROM message WHERE member_id=?').run(row.id);
+  db.prepare('DELETE FROM conversation WHERE member_id=?').run(row.id);
+  db.prepare('DELETE FROM member WHERE id=?').run(row.id);
+  pruneAttachments();
+  return count;
+}
+
+module.exports = { db, resolveMemberSpeaker, syncLegacy, listMembers, getMember, findUnannotatedMember, messages, archiveMessages, allMessages, historyPages, archiveExpired, messagesSince, searchMessages, contactContext, updateMember, deleteMember, clearMemberMessages, ingestMessages, updateMessageContent, getAttachment, attachmentExists, descriptionForSha, pruneAttachments, normalizeEmailAddress, listMemberEmails, findMembersByEmail, linkMemberEmail, unlinkMemberEmail, ensureGroup, findGroupByMembers, linkGroupMembers, promoteContact, listGroupMembers, listGroups, listGroupsForMember, groupObservationsForMember, purgeInbox };

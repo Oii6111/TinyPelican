@@ -110,4 +110,59 @@ function getBatchContact(msgs, selfNicknames = []) {
   return nonSelf.length === 1 ? nonSelf[0] : '';
 }
 
-module.exports = { classifyContent, parseBlockFormat, parseLineFormat, parseChatText, parseChatDetail, looksLikeChatText, getBatchContact, STRUCTURAL_TYPES };
+// 群显示名：取识别到的发言人前三个；超过三个补「等 N 人」。
+// 只做显示用。群实体的身份走 member.platform_id，换一批人复制回来会按成员重合归并
+// （见 chatDb.ensureGroup / findGroupByMembers），不会因为名字不同裂成两个群。
+function groupDisplayName(members = [], total = null) {
+  const names = (Array.isArray(members) ? members : [])
+    .map((n) => String(n || '').trim()).filter(Boolean);
+  if (!names.length) return '';
+  const head = names.slice(0, 3).join('、');
+  const count = Number(total) > names.length ? Number(total) : names.length;
+  return names.length > 3 ? `${head} 等 ${count} 人` : head;
+}
+
+// 归属判定（剪贴板批次 / 导入都走这里）：返回 { kind, name, displayName, remark, members, source }
+//   kind='contact' -> 私聊，name 是对方
+//   kind='group'   -> 群聊，name 是群的身份名，members 是本批识别到的发言人
+//   kind='unknown' -> 判不出来（自己昵称没配、或只有空白消息）
+//
+// session 是截屏 + 视觉模型读出来的窗口会话名（可选）：
+//   { name, kind: 'contact'|'group'|'unknown', memberCount }
+// 它比「数发言人有几个」可靠得多——群里只有一个人说话时，名字数启发式会把群判成私聊，
+// 而窗口上显示的就是群名。
+//
+// 分工：截图读到的是微信里**显示的名字**（设了备注就是备注），所以它进 remark，不改 name。
+// name 是稳定标识（联系人的消息原文名 / 群按发言人拼出来的名字），用来去重和关联；
+// remark 是给人看的名字。
+function resolveBatchTarget(msgs, selfNicknames = [], { session = null } = {}) {
+  const list = Array.isArray(msgs) ? msgs : [];
+  const names = [...new Set(list.map((m) => String(m.name || '').trim()).filter(Boolean))];
+  const self = new Set((Array.isArray(selfNicknames) ? selfNicknames : [])
+    .map((n) => String(n || '').trim()).filter(Boolean));
+  const others = names.filter((n) => !self.has(n));
+
+  if (session && session.name) {
+    const sessionName = String(session.name).trim();
+    if (session.kind === 'group') {
+      // 群的身份名仍然按发言人拼（用户定的规则）；截图里的真群名放进 remark。
+      const identity = others.length ? groupDisplayName(others) : sessionName;
+      return {
+        kind: 'group', name: identity, displayName: sessionName, remark: sessionName,
+        // 群里发言人可能少于成员数，members 仍然只放本批真的说过话的人
+        members: others, memberCount: Number(session.memberCount) || 0, source: 'window'
+      };
+    }
+    // 私聊：剪贴板里的发言人是从消息原文里来的，比窗口标题更可靠（标题可能被截断）。
+    // 窗口这边用来确认「这不是群」，顺便把显示名（可能是备注）带上。
+    const name = others.length === 1 ? others[0] : sessionName;
+    return { kind: 'contact', name, displayName: sessionName, remark: sessionName, members: [], source: 'window' };
+  }
+
+  if (others.length === 1) return { kind: 'contact', name: others[0], displayName: others[0], members: [], source: 'speakers' };
+  if (others.length < 1) return { kind: 'unknown', name: '', displayName: '', members: [], source: 'speakers' };
+  const display = groupDisplayName(others);
+  return { kind: 'group', name: display, displayName: display, members: others, source: 'speakers' };
+}
+
+module.exports = { classifyContent, parseBlockFormat, parseLineFormat, parseChatText, parseChatDetail, looksLikeChatText, getBatchContact, groupDisplayName, resolveBatchTarget, STRUCTURAL_TYPES };

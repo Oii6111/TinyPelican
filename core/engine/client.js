@@ -28,6 +28,19 @@ function thinkingBody(provider, engine = {}) {
   throw new Error('当前服务未配置思考开关，请在设置 → 模型服务配置思考请求参数，或使用快速模式');
 }
 
+// 余额和密钥属于「账户侧」的问题：重试没有意义，报错也不该把一坨 JSON 丢给用户。
+// 归类之后，调用方（记忆队列等）可以把它当成「暂停等待」而不是「这条记录坏了」。
+function classifyFailure(status, text) {
+  const body = String(text || '');
+  if (status === 402 || /insufficient[_ ]?balance|余额不足|欠费|额度已用尽/i.test(body)) {
+    return { message: '模型账户余额不足，请到模型服务商充值后再试。', billing: true };
+  }
+  if (status === 401 || status === 403) {
+    return { message: `模型服务拒绝了这次请求（${status}）：API Key 可能无效或没有权限，请到「设置 → 模型服务」检查。`, auth: true };
+  }
+  return null;
+}
+
 async function chatCompletion(messages, opts = {}) {
   const cfg = opts.config || loadConfig();
   const engine = (cfg && cfg.engine) || {};
@@ -83,7 +96,12 @@ async function chatCompletion(messages, opts = {}) {
         lastErr = new Error('模型服务返回了空内容');
       } else {
         const text = await res.text().catch(() => '');
-        lastErr = new Error(`模型服务返回 ${res.status}：${String(text).slice(0, 200)}`);
+        const known = classifyFailure(res.status, text);
+        lastErr = new Error(known ? known.message : `模型服务返回 ${res.status}：${String(text).slice(0, 200)}`);
+        if (known) {
+          lastErr.billing = !!known.billing;
+          lastErr.auth = !!known.auth;
+        }
         // 4xx（如密钥错误）不重试
         if (res.status >= 400 && res.status < 500) break;
       }
@@ -92,7 +110,12 @@ async function chatCompletion(messages, opts = {}) {
     } finally { clearTimeout(timer); }
     if (i < maxRetries) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
   }
-  return { ok: false, error: lastErr ? String(lastErr.message || lastErr) : '未知错误' };
+  return {
+    ok: false,
+    error: lastErr ? String(lastErr.message || lastErr) : '未知错误',
+    ...(lastErr && lastErr.billing ? { billing: true } : {}),
+    ...(lastErr && lastErr.auth ? { auth: true } : {})
+  };
 }
 
 // 按任务执行：取提示词 -> 调用模型 -> 解析输出

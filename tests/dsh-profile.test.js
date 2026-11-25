@@ -9,9 +9,15 @@ const root = path.resolve(__dirname, '..');
 const profilePath = path.join(root, 'agent', 'dsh-home', 'profiles', 'xiaotihu', 'package.json');
 const installerPath = path.join(root, 'scripts', 'install-dsh-email.ps1');
 
-test('DSH email installer is pinned and does not poison an uninstalled profile', () => {
+test('DSH email installer is pinned and does not poison an uninstalled profile', (t) => {
   const installer = fs.readFileSync(installerPath, 'utf8');
   assert.match(installer, /fb7a9cbcace860af06c8d415aa85a8c3b21cd30d/);
+  // agent/dsh-home 是本地生成的运行态（已 gitignore），干净检出上不存在；
+  // 先跑一次 npm run daemon 生成 profile 才有东西可校验。
+  if (!fs.existsSync(profilePath)) {
+    t.skip('缺少本地生成的 agent/dsh-home/profiles/xiaotihu/package.json，先跑一次 npm run daemon');
+    return;
+  }
   const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
   if (!fs.existsSync(path.join(root, 'agent', 'dsh-email'))) {
     assert.equal(profile.dependencies?.['dsh-email'], undefined);

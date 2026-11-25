@@ -52,10 +52,41 @@ function processAllBatches() {
   return total;
 }
 
+// 归属目标归一化：老调用方传字符串（联系人名），新调用方传 resolveBatchTarget 的结果。
+//   { kind: 'contact' | 'group' | 'unknown', name, displayName, remark, members }
+function normalizeTarget(target) {
+  if (typeof target === 'string') {
+    const name = String(target || '').trim();
+    return { kind: 'contact', name, displayName: name, remark: '', members: [] };
+  }
+  if (!target || typeof target !== 'object') return { kind: 'unknown', name: '', displayName: '', remark: '', members: [] };
+  const kind = target.kind === 'group' ? 'group' : (target.kind === 'unknown' ? 'unknown' : 'contact');
+  const name = String(target.name || '').trim();
+  return {
+    kind,
+    name,
+    displayName: String(target.displayName || name).trim(),
+    // 截图读到的显示名（微信里设了备注就是备注）：只写 remark，不参与身份。
+    // 漏了这一行，备注永远写不进去——这是数据能进来、界面却看不到的唯一原因。
+    remark: String(target.remark || '').trim(),
+    members: Array.isArray(target.members) ? target.members : []
+  };
+}
+
+// 群先落到 member 行再入库：同一个群可能已经用别的显示名存在过，
+// 按成员重合归并成一个，避免同一批人复制两次变成两个群。
+function storageKeyFor(target) {
+  if (target.kind !== 'group' || !target.name) return target.name;
+  const group = chatDb.ensureGroup(target.name, { members: target.members, displayName: target.displayName, remark: target.remark });
+  return group ? group.name : target.name;
+}
+
 // 通道实时入站：去重归档；opts.unread 用于把通道消息计入顶部未读数
-function ingestMessages(msgs, contact, opts = {}) {
-  const key = String(contact || '').trim() || 'inbox';
-  const count = chatDb.ingestMessages(key, msgs);
+function ingestMessages(msgs, target, opts = {}) {
+  const t = normalizeTarget(target);
+  const key = storageKeyFor(t) || 'inbox';
+  const count = chatDb.ingestMessages(key, msgs, { kind: t.kind === 'group' ? 'group' : 'contact', remark: t.remark });
+  if (count && t.kind === 'group' && t.members.length) chatDb.linkGroupMembers(key, t.members);
   const added = count ? msgs : [];
   if (count) {
     for (const m of msgs) {
@@ -115,8 +146,10 @@ async function prepareAttachments(contact, msgs, media, allMsgs, cfg) {
 }
 
 // 带附件的批次入口（异步：要等落盘和描述）
-async function ingestCapturedBatch(msgs, contact, { media = null, allMsgs = null, config = null } = {}) {
-  const key = String(contact || '').trim() || 'inbox';
+// target 可以是联系人名字符串（老调用方），也可以是 resolveBatchTarget 的结果。
+async function ingestCapturedBatch(msgs, target, { media = null, allMsgs = null, config = null } = {}) {
+  const t = normalizeTarget(target);
+  const key = storageKeyFor(t) || 'inbox';
   const cfg = config || loadConfig();
   let prepared = msgs;
   let notes = { visionUnsupported: false, described: 0, failed: 0, saved: 0 };
@@ -125,13 +158,14 @@ async function ingestCapturedBatch(msgs, contact, { media = null, allMsgs = null
     prepared = result.messages;
     notes = result.notes;
   }
-  const count = chatDb.ingestMessages(key, prepared);
+  const count = chatDb.ingestMessages(key, prepared, { kind: t.kind === 'group' ? 'group' : 'contact', remark: t.remark });
   if (count) {
+    if (t.kind === 'group' && t.members.length) chatDb.linkGroupMembers(key, t.members);
     for (const m of msgs) {
       if (m.type === '语音') voice.enqueue(key, m);
     }
   }
-  return { added: count, ...notes };
+  return { added: count, kind: t.kind, name: key, ...notes };
 }
 
 // 语音回填：把转写文本写回 SQLite
@@ -143,4 +177,4 @@ function applyVoiceFill(p) {
   return updated;
 }
 
-module.exports = { processBatchFile, processAllBatches, ingestMessages, ingestCapturedBatch, applyVoiceFill };
+module.exports = { processBatchFile, processAllBatches, ingestMessages, ingestCapturedBatch, applyVoiceFill, normalizeTarget, storageKeyFor };

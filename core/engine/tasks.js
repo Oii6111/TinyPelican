@@ -7,8 +7,22 @@ const { buildRelationPrompt } = require('./prompts/relation');
 const { buildReminderPrompt } = require('./prompts/reminder');
 const { buildReplySuggestionsPrompt, buildReplyFollowUpPrompt } = require('./prompts/reply-suggestions');
 const { extractJsonArray } = require('./extract');
+const { buildDailyActionsPrompt, parseDailyActions, buildDailyActionPlanPrompt, parseDailyActionPlan } = require('./prompts/daily-actions');
 
 const TASKS = {
+  // 今日行动：按社交目的 + 客观聊天事实，为一位联系人给 1–2 条社交关系维护建议。
+  // 节奏（隔几天）和内容同一次判出来，服务端再套护栏（见 core/social/cadence.js）。
+  daily_actions: {
+    opts: { temperature: 0.5, timeoutMs: 60000, retries: 0, thinking: false },
+    buildPrompt: (ctx) => buildDailyActionsPrompt(ctx),
+    parse: (text, ctx) => parseDailyActions(text, ctx)
+  },
+  // 点开某条建议时按需生成的详细行动计划（3–5 步 + 分支 + 边界），不是常驻对话。
+  daily_action_plan: {
+    opts: { temperature: 0.5, timeoutMs: 60000, retries: 0, thinking: false },
+    buildPrompt: (ctx) => buildDailyActionPlanPrompt(ctx),
+    parse: (text) => parseDailyActionPlan(text)
+  },
   // 意图识别：返回原始文本 + 解析出的数组，由调用方按 NO_TASK / JSON 分流
   intent: {
     opts: { temperature: 0.1 },
