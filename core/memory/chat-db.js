@@ -340,7 +340,25 @@ function messages(name, query = '', limit = 200, hotOnly = false, before = '', b
 
 function resolveMemberSpeaker(member, config = require('../lib/config').loadConfig()) {
   const aliases = db.prepare('SELECT name FROM member_name_history WHERE member_id=?').all(member.id);
-  return speakerResolver(config.selfNicknames || [], [member.name, member.remark, member.platformId, ...aliases.map(row => row.name)]);
+  const contacts = [member.name, member.remark, member.platformId, ...aliases.map(row => row.name)];
+  const resolve = speakerResolver(config.selfNicknames || [], contacts);
+  if (member.kind === 'group') return resolve;
+  // 私聊只有两个人：发送者不是联系人（含历史别名）的，就是用户本人。
+  // 先确认这个联系人的发言者不超过两人，避免把转发/引用里的第三个人也当成用户。
+  let senders = 0;
+  try {
+    const row = db.prepare('SELECT COUNT(*) AS n FROM (SELECT sender FROM message WHERE member_id=? GROUP BY sender LIMIT 3)').get(member.id);
+    senders = Number(row && row.n) || 0;
+  } catch { senders = 0; }
+  if (senders < 1 || senders > 2) return resolve;
+  const known = new Set(contacts.map((name) => String(name || '').normalize('NFKC').trim()).filter(Boolean));
+  return (message) => {
+    const owner = resolve(message);
+    if (owner !== null) return owner;
+    const sender = String((message && (message.sender || message.name)) || '').normalize('NFKC').trim();
+    if (!sender || sender === '未标注' || known.has(sender)) return owner;
+    return true;
+  };
 }
 
 function messageIdentity({ is_owner, source, ...message }, resolve) {
@@ -513,15 +531,9 @@ function ingestMessages(name, items = [], { kind = 'contact', remark = '' } = {}
   const insertAttachment = db.prepare(`INSERT OR IGNORE INTO message_attachment(message_id,kind,name,mime_type,size,sha256,path,description,description_source,description_model,description_error,source,created_at)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   let added = 0;
-  // 冷库连接和 BEGIN 都放进 try：任何一步抛错都要确保连接被关闭。
-  // 之前它们在 try 外面，BEGIN 失败（例如上一次事务没收尾）时冷库连接会泄漏，
-  // 泄漏积累到一定程度，SQLite 就会报 "unable to open database file"。
-  let cold = null;
-  let inTransaction = false;
+  const cold = archive.duplicateReader(contact);
+  db.exec('BEGIN');
   try {
-    cold = archive.duplicateReader(contact);
-    db.exec('BEGIN');
-    inTransaction = true;
     for (const item of (Array.isArray(items) ? items : [])) {
       const message = { name: String(item.name || item.sender || ''), ts: String(item.ts || item.timestamp || now), type: String(item.type || 'text'), content: String(item.content || '') };
       const externalId = item.source === 'aiworks' ? item.externalId : undefined;
@@ -565,15 +577,10 @@ function ingestMessages(name, items = [], { kind = 'contact', remark = '' } = {}
     }
     if (added) db.prepare('INSERT INTO conversation(member_id,platform,last_message_at) VALUES(?,?,?) ON CONFLICT(member_id) DO UPDATE SET last_message_at=excluded.last_message_at').run(member.id, 'weixin', now);
     db.exec('COMMIT');
-    inTransaction = false;
-  } catch (error) {
-    if (inTransaction) { try { db.exec('ROLLBACK'); } catch {} }
-    throw error;
-  } finally {
-    if (cold) cold.close();
-  }
-  // 注意：romance 分支在这里会自动建立关系档案（require('./stores/romance-relationships')）。
-  // main 不引入 romance 关系存储，这一段刻意不移植——入库只负责消息本身。
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  finally { cold.close(); }
+  // romance 分支在这里会自动建立关系档案（require('./stores/romance-relationships')）；
+  // main 不引入 romance 关系存储，入库只负责消息本身。
   return added;
 }
 function updateMessageContent(p) {
@@ -587,13 +594,13 @@ function searchMessages(query, { contact = '', limit = 50, config = require('../
   const n = Math.min(Math.max(Number(limit) || 50, 1), 200);
   const cutoff = Date.now() - archive.RETENTION_DAYS * 86400000;
   const resolvers = new Map();
-  function identify({ memberId, platformId, remark, ...row }) {
+  function identify({ memberId, platformId, remark, kind, ...row }) {
     if (!resolvers.has(memberId)) {
-      resolvers.set(memberId, resolveMemberSpeaker({ id: memberId, name: row.contact, platformId, remark }, config));
+      resolvers.set(memberId, resolveMemberSpeaker({ id: memberId, name: row.contact, platformId, remark, kind }, config));
     }
     return messageIdentity(row, resolvers.get(memberId));
   }
-  const fields = 'member.id AS memberId, member.platform_id AS platformId, member.remark, member.name AS contact, message.sender AS name, message.is_owner, message.source, message.ts, message.type, message.content';
+  const fields = 'member.id AS memberId, member.platform_id AS platformId, member.remark, member.kind, member.name AS contact, message.sender AS name, message.is_owner, message.source, message.ts, message.type, message.content';
   try {
     const indexed = db.prepare(`SELECT ${fields}
       FROM message_fts JOIN message ON message.id=message_fts.rowid JOIN member ON member.id=message.member_id

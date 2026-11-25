@@ -13,15 +13,6 @@ const archivePath = (name) => path.join(archiveDir(), safeName(name) + '.sqlite'
 // 微信旧记录使用本地时间，录音和部分导入使用带时区的 ISO 时间。
 function messageTime(ts) { return Date.parse(ts) || 0; }
 
-// ⚠️ 一次性成本，不是零成本迁移：第一次打开一个还没有 ts_ms 的库时，这里会对 message
-// 全表做 `UPDATE message SET ts_ms=chat_time(ts)`（每行还要过一次 JS 的 Date.parse）。
-// 主库和每个 90 天冷库（archives/contacts/*.sqlite）都会各跑一次，量级是 O(全表行数)：
-//   - 主库：chat-db.js 启动时就会调用。消息多（几万行以上）时首次启动要慢几秒，
-//     WAL 也会临时涨到接近被回填数据量的大小；之后启动只做一次 PRAGMA 判断，几乎零成本。
-//   - 冷库：属于「懒迁移」——某个联系人的冷库第一次被 list/pages/stats/duplicateReader
-//     打开时才回填。所以升级后第一次翻一个很久没看的老联系人会明显变慢，第二次起就是普通查询。
-// 迁移本身幂等：ts_ms 已存在直接返回；回填在事务里，失败 ROLLBACK，下次打开重试。
-// 回填完成后所有分页/搜索走 idx_message_time 上的 (ts_ms,id) 游标，不再逐行解析 ts 字符串。
 function ensureMessageTime(db) {
   const hasColumn = () => db.prepare('PRAGMA table_info(message)').all().some(column => column.name === 'ts_ms');
   if (hasColumn()) return;
@@ -40,19 +31,8 @@ function ensureMessageTime(db) {
 }
 
 function open(name) {
-  const file = archivePath(name);
-  try {
-    fs.mkdirSync(archiveDir(), { recursive: true });
-  } catch (error) {
-    throw Object.assign(new Error(`冷库目录不可写：${archiveDir()}：${error.message}`), { code: 'ARCHIVE_DIR' });
-  }
-  let db;
-  try {
-    db = new DatabaseSync(file);
-  } catch (error) {
-    // SQLite 的 "unable to open database file" 不带路径，加了这一层才能知道是哪个库、哪条路径。
-    throw Object.assign(new Error(`冷库打开失败：${file}：${error.message}`), { code: 'ARCHIVE_OPEN', archivePath: file });
-  }
+  fs.mkdirSync(archiveDir(), { recursive: true });
+  const db = new DatabaseSync(archivePath(name));
   db.exec('PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, sender TEXT NOT NULL, ts TEXT NOT NULL, type TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT UNIQUE); CREATE INDEX IF NOT EXISTS idx_message_ts ON message(ts, id);');
   const columns = new Set(db.prepare('PRAGMA table_info(message)').all().map(column => column.name));
   if (!columns.has('source')) db.exec("ALTER TABLE message ADD COLUMN source TEXT NOT NULL DEFAULT ''");
