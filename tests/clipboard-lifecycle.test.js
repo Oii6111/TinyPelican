@@ -94,3 +94,64 @@ test('a live but stalled sensor is replaced, heartbeats keep a healthy one alive
   assert.ok(watcher.child);
   assert.notEqual(watcher.child, first);
 });
+
+// 交付失败不能让内容被永久当成「已导入」：
+// 曾经是在解析时就把消息写进 seen，结果数据库被占用导致交付失败后，同一段聊天
+// 无论再复制多少次都只报「重复消息」，永远不重试落库（真实踩到过：联系人 0 条消息）。
+test('交付失败的消息不算已导入，重新复制还能入库', () => {
+  const text = [
+    '张三', '2026年11月20日 10:00', '你好',
+    '', '我', '2026年11月20日 10:01', '在的', ''
+  ].join('\n');
+  const windowRef = { handle: '1', processName: 'Weixin', bounds: { left: 0, top: 0, right: 800, bottom: 600 }, dpi: 96 };
+
+  let attempts = 0;
+  const delivered = [];
+  const watcher = new ClipboardWatcher({
+    onBatch: (batch) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('unable to open database file');
+      delivered.push(batch);
+    },
+    config: { pollMs: 1, selfNicknames: ['我'], capture: { enabled: true, readSessionTitle: false } },
+    sessionReader: false,
+    stripCapture: async () => null
+  });
+
+  // 第一次：交付抛错
+  watcher._handleClip(text, windowRef);
+  watcher._flushSync();
+  assert.equal(attempts, 1);
+  assert.equal(delivered.length, 0);
+
+  // 第二次复制同一段：必须仍然被当作新消息（不能判成 repeat），并且这次成功交付
+  watcher._handleClip(text, windowRef);
+  watcher._flushSync();
+  assert.equal(attempts, 2);
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].repeat, false, '交付失败过的批次不能标记成「重复复制」');
+  assert.equal(delivered[0].msgs.length, 2);
+});
+
+// 交付成功后才去重：同一段再复制一次就是 repeat，且不会重复入库
+test('交付成功后同一段再复制判为重复', () => {
+  const text = ['张三', '2026年11月20日 10:00', '你好', '', '我', '2026年11月20日 10:01', '在的', ''].join('\n');
+  const windowRef = { handle: '1', processName: 'Weixin', bounds: { left: 0, top: 0, right: 800, bottom: 600 }, dpi: 96 };
+  const batches = [];
+  const watcher = new ClipboardWatcher({
+    onBatch: (batch) => batches.push(batch),
+    config: { pollMs: 1, selfNicknames: ['我'], capture: { enabled: true, readSessionTitle: false } },
+    sessionReader: false,
+    stripCapture: async () => null
+  });
+
+  watcher._handleClip(text, windowRef);
+  watcher._flushSync();
+  watcher._handleClip(text, windowRef);
+  watcher._flushSync();
+
+  assert.equal(batches.length, 2);
+  assert.equal(batches[0].msgs.length, 2);
+  assert.equal(batches[1].repeat, true);
+  assert.equal(batches[1].msgs.length, 0);
+});

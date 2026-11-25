@@ -277,7 +277,12 @@ async function main() {
           : '';
         notifyUser({ event: 'captureComplete', config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${batchName ? `，${batch.label}：${batchName}` : ''}。${newContactText}` })
           .catch((e) => log('warn', 'capture', '录入完成通知失败：' + String((e && e.message) || e)));
-      }).catch((e) => log('error', 'capture', '归档失败：' + String((e && e.message) || e)))
+      }).catch((e) => {
+        log('error', 'capture', '归档失败：' + String((e && e.message) || e));
+        // 抛出给采集层：让它把这批从「已导入」里撤掉，用户重新复制还能重试，
+        // 否则带附件的批次失败一次就永久丢失（和同步路径同样的坑）。
+        throw e;
+      })
         .finally(() => {
           // 回复建议只对私聊生成：群聊没有「对谁说」的上下文，硬套联系人逻辑会把群名当人名、
           // 拿群成员之外的资料拼建议。群聊建议需要单独策略（选谁回、群语境），留作后续。

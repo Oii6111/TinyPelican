@@ -131,6 +131,9 @@ class ClipboardWatcher {
     this.running = false;
     this.child = null;
     this.seen = new Set();
+    // 已排进队列、但还没交付成功的消息：避免同一批在静默窗口内被重复计入 fresh。
+    // 交付成功才转入 seen（失败则退回，允许重新复制重试）。
+    this._pendingSeen = new Set();
     this._buffer = '';
     // 传感器先发 MEDIA 再发 CHANGE：先收着，交给紧随其后的那条剪贴板内容
     this._pendingMedia = null;
@@ -325,17 +328,30 @@ class ClipboardWatcher {
       if (isWeChat) log('warn', 'capture', '微信复制内容未达到聊天记录识别条件，请多选聊天消息后使用复制');
       return;
     }
-    const fresh = msgs.filter((m) => !this.seen.has(msgKey(m)));
-    if (fresh.length) {
-      for (const m of fresh) this.seen.add(msgKey(m));
-      if (this.seen.size > 100000) {
-        this.seen = new Set([...this.seen].slice(-100000));
-      }
-    }
+    // 去重要在「交付成功」之后才算数：这里只挑出没见过、也没在队列里等着的消息。
+    // 之前是在这里就直接写进 seen，一旦交付失败（数据库被占用/锁住），这批内容就永远
+    // 被当成「已入库」，之后无论复制多少次都只报「重复消息」，再也不会重试落库——数据静默丢失。
+    const fresh = msgs.filter((m) => {
+      const key = msgKey(m);
+      return !this.seen.has(key) && !this._pendingSeen.has(key);
+    });
+    for (const m of fresh) this._pendingSeen.add(msgKey(m));
     // 同一段聊天又被复制了一次：不重复归档（见上面的 seen 去重），但要告诉上层「用户又要了一次」，
     // 否则回复建议卡片不会再弹出来。
     // 复制这一刻微信还在前台，先把标题条截下来；识别推迟到交付前
     this._emitBatch(msgs, fresh, windowRef, !fresh.length, media, this._startStrip(windowRef));
+  }
+
+  // 交付成功才把消息记进 seen；失败则从「等待中」移除，让下一次复制能重新入库。
+  _settleFresh(item, delivered) {
+    for (const m of item.fresh) {
+      const key = msgKey(m);
+      this._pendingSeen.delete(key);
+      if (delivered) this.seen.add(key);
+    }
+    if (this.seen.size > 100000) {
+      this.seen = new Set([...this.seen].slice(-100000));
+    }
   }
 
   // 静默窗口 250ms：把窗口内的复制都排进队列，结束时按复制顺序逐批交付。
@@ -445,10 +461,24 @@ class ClipboardWatcher {
       ? `捕获 ${item.msgs.length} 条重复消息（同一段聊天再次复制）`
       : `捕获 ${item.fresh.length} 条新消息${target.kind === 'group' ? `（群聊：${target.displayName}）` : ''}`);
     try {
-      this.onBatch({ msgs: item.fresh, allMsgs: item.msgs, contact, target, targetWindow: item.windowRef, repeat: item.repeat, media: item.media || null });
+      const pending = this.onBatch({ msgs: item.fresh, allMsgs: item.msgs, contact, target, targetWindow: item.windowRef, repeat: item.repeat, media: item.media || null });
+      if (pending && typeof pending.then === 'function') {
+        // 带附件的批次是异步归档（先落盘、再识图）：只有它真的成功才算「已导入」
+        pending.then(
+          () => this._settleFresh(item, true),
+          (error) => {
+            this._settleFresh(item, false);
+            log('error', 'capture', '批次交付失败：' + ((error && error.message) || error) + '（本次不记为已导入，重新复制可重试）');
+          }
+        );
+        return;
+      }
+      this._settleFresh(item, true);
     } catch (error) {
-      // 一批出错不影响后面的批次：只要没入库就是数据丢失，所以逐批兜住并记日志
-      log('error', 'capture', '批次交付失败：' + ((error && error.message) || error));
+      // 一批出错不影响后面的批次：只要没入库就是数据丢失，所以逐批兜住并记日志。
+      // 同时把这批从「等待中」撤掉，用户下次再复制同一段聊天还能重新入库。
+      this._settleFresh(item, false);
+      log('error', 'capture', '批次交付失败：' + ((error && error.message) || error) + '（本次不记为已导入，重新复制可重试）');
     }
   }
 
