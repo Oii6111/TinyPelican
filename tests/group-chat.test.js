@@ -346,6 +346,38 @@ test('联系人接口：群和群成员不出现在 /api/contacts 的返回里',
   assert.strictEqual(names.includes('张三'), false, '群成员（kind=member）也不该出现');
 });
 
+// ── 采集链路：群身份要一路透传到入库与展示 ────────────────────────────
+// 采集侧算出 batch.target 只是第一步；onBatch 不消费它的话，群消息仍会按联系人入库、
+// 通知里还会把群名写成「联系人」。这里锁两件事：describeTarget 的展示口径，
+// 以及 index.js 的 onBatch 确实把 target 传给了入库函数。
+test('describeTarget：群聊不叫联系人，老调用方传字符串时按私聊处理', () => {
+  const { describeTarget } = require('../core/ingest/pipeline');
+  const group = describeTarget({ kind: 'group', name: '张三、李四', displayName: '项目群', remark: '项目群', members: ['张三', '李四'] });
+  assert.strictEqual(group.isGroup, true);
+  assert.strictEqual(group.label, '群聊');
+  assert.strictEqual(group.name, '张三、李四');
+  assert.strictEqual(group.remark, '项目群');
+
+  const contact = describeTarget({ kind: 'contact', name: '张三' });
+  assert.strictEqual(contact.isGroup, false);
+  assert.strictEqual(contact.label, '联系人');
+
+  const legacy = describeTarget('张三');
+  assert.strictEqual(legacy.isGroup, false, '老调用方只给字符串时不能被当成群');
+  assert.strictEqual(legacy.name, '张三');
+  assert.strictEqual(describeTarget('').kind, 'contact');
+});
+
+test('index.js 的 onBatch 把 batch.target 传给入库，而不是只传联系人字符串', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'core', 'index.js'), 'utf8');
+  assert.match(source, /onBatch:\s*\(\{[^}]*\btarget\b/, 'onBatch 必须解构出 target');
+  assert.match(source, /ingestCapturedBatch\(msgs,\s*target\s*\|\|\s*contact/, '带附件归档要传 target');
+  assert.match(source, /ingestMessages\(msgs,\s*target\s*\|\|\s*contact/, '纯文本归档要传 target');
+  assert.match(source, /describeTarget\(/, '展示口径统一走 describeTarget');
+});
+
 // ── 未移植的断言（main 没有对应模块）──────────────────────────────────────
 // romance 源文件结尾还有 3 条测试：「群不能建关系档案」「关系接口拒绝群」「历史群关系也进不了情感大师」。
 // 它们依赖 core/memory/stores/romance-relationships 与 core/api/routes/romance；

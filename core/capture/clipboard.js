@@ -42,63 +42,11 @@ function usableWindowBounds(bounds) {
   return true;
 }
 
-// ── 批次归属判定（T3 接缝）─────────────────────────────────────────────
-// main 基线里 chat-parser 还没有 resolveBatchTarget（由 T3 数据模型任务合入）。
-// 这里优先用上游实现：模块加载时 chat-parser 已导出就以它为准，本地兜底不参与判定；
-// 所以 T3 落地前后不会出现「两套逻辑都生效」。切换条件只在 resolveBatchTarget() 里。
-const UPSTREAM_RESOLVE_BATCH_TARGET = typeof chatParser.resolveBatchTarget === 'function'
-  ? chatParser.resolveBatchTarget
-  : null;
-
-// [LOCAL-FALLBACK-START] 上游缺失时的等价实现（T3 落地后整段可删）
-// 语义与 chat-parser.resolveBatchTarget 一致：
-//   kind='contact' -> 私聊，name 是对方；kind='group' -> 群聊，members 是本批发言人；
-//   kind='unknown' -> 判不出来（自己昵称没配、或只有空白消息）。
-// session 是截屏 + 视觉模型读出的窗口会话名，比「数发言人」可靠：群里只有一个人说话时，
-// 启发式会把群判成私聊，而窗口上显示的就是群名。截图读到的是显示名，进 remark。
-function localGroupDisplayName(members = [], total = null) {
-  const names = (Array.isArray(members) ? members : [])
-    .map((n) => String(n || '').trim()).filter(Boolean);
-  if (!names.length) return '';
-  const head = names.slice(0, 3).join('、');
-  const count = Number(total) > names.length ? Number(total) : names.length;
-  return names.length > 3 ? `${head} 等 ${count} 人` : head;
-}
-
-function localResolveBatchTarget(msgs, selfNicknames = [], { session = null } = {}) {
-  const list = Array.isArray(msgs) ? msgs : [];
-  const names = [...new Set(list.map((m) => String(m.name || '').trim()).filter(Boolean))];
-  const self = new Set((Array.isArray(selfNicknames) ? selfNicknames : [])
-    .map((n) => String(n || '').trim()).filter(Boolean));
-  const others = names.filter((n) => !self.has(n));
-
-  if (session && session.name) {
-    const sessionName = String(session.name).trim();
-    if (session.kind === 'group') {
-      // 群的身份名仍按发言人拼（用户定的规则）；截图里的真群名放进 remark。
-      const identity = others.length ? localGroupDisplayName(others) : sessionName;
-      return {
-        kind: 'group', name: identity, displayName: sessionName, remark: sessionName,
-        members: others, memberCount: Number(session.memberCount) || 0, source: 'window'
-      };
-    }
-    // 私聊：剪贴板里的发言人是从消息原文来的，比窗口标题更可靠（标题可能被截断）。
-    const name = others.length === 1 ? others[0] : sessionName;
-    return { kind: 'contact', name, displayName: sessionName, remark: sessionName, members: [], source: 'window' };
-  }
-
-  if (others.length === 1) return { kind: 'contact', name: others[0], displayName: others[0], members: [], source: 'speakers' };
-  if (others.length < 1) return { kind: 'unknown', name: '', displayName: '', members: [], source: 'speakers' };
-  const display = localGroupDisplayName(others);
-  return { kind: 'group', name: display, displayName: display, members: others, source: 'speakers' };
-}
-// [LOCAL-FALLBACK-END]
-
-// 归属判定的唯一调用入口：上游存在时完全走 chat-parser，本地兜底不会执行。
-function resolveBatchTarget(msgs, selfNicknames, options) {
-  const resolver = UPSTREAM_RESOLVE_BATCH_TARGET || localResolveBatchTarget;
-  return resolver(msgs, selfNicknames, options);
-}
+// ── 批次归属判定 ───────────────────────────────────────────────────────
+// 统一走 chat-parser 的 resolveBatchTarget：它区分私聊/群聊/判不出来三态，
+// 并用「多个发言人」或「截屏读到的窗口会话名」互相修正。
+// 这里不再保留本地兜底实现——T3 已落地，两套语义并存只会在以后改漏一边。
+const resolveBatchTarget = chatParser.resolveBatchTarget;
 
 // 解析传感器输出：
 //   新格式 CHANGE <handle> <pid> <processName> <left> <top> <right> <bottom> <dpi> <b64>

@@ -73,6 +73,15 @@ function normalizeTarget(target) {
   };
 }
 
+// 批次归属的展示口径：群聊不能叫「联系人」。
+// 采集链路上「这批是谁的」要一路透传到通知/建议，这里给出统一判断，
+// 避免调用方各自用字符串拼文案、把群名当人名。
+function describeTarget(target) {
+  const t = normalizeTarget(target);
+  const isGroup = t.kind === 'group';
+  return { ...t, isGroup, label: isGroup ? '群聊' : '联系人' };
+}
+
 // 群先落到 member 行再入库：同一个群可能已经用别的显示名存在过，
 // 按成员重合归并成一个，避免同一批人复制两次变成两个群。
 function storageKeyFor(target) {
@@ -177,4 +186,4 @@ function applyVoiceFill(p) {
   return updated;
 }
 
-module.exports = { processBatchFile, processAllBatches, ingestMessages, ingestCapturedBatch, applyVoiceFill, normalizeTarget, storageKeyFor };
+module.exports = { processBatchFile, processAllBatches, ingestMessages, ingestCapturedBatch, applyVoiceFill, normalizeTarget, storageKeyFor, describeTarget };

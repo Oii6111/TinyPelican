@@ -16,7 +16,7 @@ const { ClipboardWatcher } = require('./capture/clipboard');
 const { WeChatChannel } = require('./channels/weixin/channel');
 const { publicAttachment } = require('./channels/weixin/media');
 const { prepareReply, deliverReply } = require('./channels/weixin/delivery');
-const { ingestMessages, ingestCapturedBatch } = require('./ingest/pipeline');
+const { ingestMessages, ingestCapturedBatch, describeTarget } = require('./ingest/pipeline');
 const { answerWechatMessage } = require('./agent/wechat-reply');
 const { formatAttachmentContext, WEIXIN_MEDIA_INSTRUCTIONS } = require('./agent/dsh-reply');
 const { historyEventList } = require('./agent/event-utils');
@@ -242,14 +242,20 @@ async function main() {
 
   const watcher = new ClipboardWatcher({
     config: cfg,
-    onBatch: ({ msgs, allMsgs, contact, targetWindow, repeat = false, media = null }) => {
+    onBatch: ({ msgs, allMsgs, contact, target, targetWindow, repeat = false, media = null }) => {
+      // target 是采集侧算出的归属（群聊/私聊/判不出来 + 成员名），比裸字符串可靠：
+      // 群里只有一个人说话时，只有它（或截屏读到的会话名）能看出这是群。
+      // 老调用方只给 contact 字符串时，describeTarget 会当成私聊，行为与升级前一致。
+      const batch = describeTarget(target || contact);
+      const batchName = batch.name;
+      const isGroup = batch.isGroup;
       // repeat = 同一段聊天又被复制了一次（内容早已归档）。此时不重复归档、不发“已录入”通知，
       // 但仍要重新给建议：用户再复制一次，意思就是「再给我建议」。
-      const hadContact = contact ? !!chatDb.getMember(contact) : true;
+      const hadContact = batchName ? !!chatDb.getMember(batchName) : true;
       // 带附件时要先落盘、生成描述（异步），所以整条链路走 Promise；
       // 附件描述只在首次导入生成，之后 agent 回读直接读库里的文字。
       const archiving = (!repeat && media)
-        ? ingestCapturedBatch(msgs, contact, { media, allMsgs, config: cfg }).then((result) => {
+        ? ingestCapturedBatch(msgs, target || contact, { media, allMsgs, config: cfg }).then((result) => {
           if (result.visionUnsupported) {
             log('warn', 'capture', '当前模型不支持视觉，图片只按元数据记录');
             notifyUser({
@@ -261,18 +267,26 @@ async function main() {
           }
           return result;
         })
-        : Promise.resolve({ added: repeat ? 0 : ingestMessages(msgs, contact) });
+        : Promise.resolve({ added: repeat ? 0 : ingestMessages(msgs, target || contact) });
 
       archiving.then(({ added }) => {
         if (!added) return;
         triggerIntent();
-        const newContactText = !hadContact && contact ? `\n识别到新联系人「${contact}」，请在联系人页面补充备注和描述。` : '';
-        notifyUser({ event: 'captureComplete', config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${contact ? `，联系人：${contact}` : ''}。${newContactText}` })
+        const newContactText = !hadContact && batchName && !isGroup
+          ? `\n识别到新联系人「${batchName}」，请在联系人页面补充备注和描述。`
+          : '';
+        notifyUser({ event: 'captureComplete', config: cfg, title: '聊天记录已录入', message: `已录入 ${added} 条聊天记录${batchName ? `，${batch.label}：${batchName}` : ''}。${newContactText}` })
           .catch((e) => log('warn', 'capture', '录入完成通知失败：' + String((e && e.message) || e)));
       }).catch((e) => log('error', 'capture', '归档失败：' + String((e && e.message) || e)))
         .finally(() => {
+          // 回复建议只对私聊生成：群聊没有「对谁说」的上下文，硬套联系人逻辑会把群名当人名、
+          // 拿群成员之外的资料拼建议。群聊建议需要单独策略（选谁回、群语境），留作后续。
+          if (isGroup) {
+            log('info', 'reply', '群聊批次暂不生成回复建议（群上下文策略待定）');
+            return;
+          }
           // 回复建议：先归档再生成，失败不影响归档
-          generateReplySuggestions({ contact, targetWindow, config: cfg })
+          generateReplySuggestions({ contact: batchName, targetWindow, config: cfg })
             .catch((e) => log('warn', 'reply', '回复建议生成失败：' + String((e && e.message) || e)));
         });
     }
