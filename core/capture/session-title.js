@@ -111,6 +111,17 @@ async function readTitleFromBytes(bytes, config) {
   return parsed;
 }
 
+// 能不能读会话名：只看有没有可用的视觉模型。
+// 采集侧要在**截屏之前**问这一句——截一次要起 PowerShell、写临时文件、等 400ms 左右，
+// 没配视觉模型时先截再发现读不了，等于每批白付一次截图成本。
+function canReadSessionTitle(config) {
+  try {
+    return !!visionTarget(config).ok;
+  } catch {
+    return false;
+  }
+}
+
 // 便利入口：截 → 读。产品里走的是「复制时先截、稍后再读」两步，这里给调用方和测试用。
 async function readSessionTitle(handle, config, { stripHeight = DEFAULT_STRIP_HEIGHT } = {}) {
   const bytes = await captureStrip(handle, { stripHeight });
@@ -118,6 +129,6 @@ async function readSessionTitle(handle, config, { stripHeight = DEFAULT_STRIP_HE
 }
 
 module.exports = {
-  captureStrip, readTitleFromBytes, readSessionTitle, parseTitleJson, normalizeTitle,
+  captureStrip, readTitleFromBytes, readSessionTitle, canReadSessionTitle, parseTitleJson, normalizeTitle,
   TITLE_PROMPT, DEFAULT_STRIP_HEIGHT
 };

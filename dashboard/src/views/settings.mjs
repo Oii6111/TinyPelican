@@ -47,6 +47,7 @@ export function mount(container, ctx = {}) {
   const wxLogin = createWechatLogin();
   const selfInput = el('input', { class: 'input', placeholder: '多个昵称用逗号分隔' });
   const captureChk = el('input', { type: 'checkbox' });
+  const sessionTitleChk = el('input', { type: 'checkbox' });
   const captureMsg = el('span', { class: 'muted', role: 'status' });
   const captureSaveBtn = el('button', { class: 'btn btn-primary', text: '保存记忆输入设置' });
 
@@ -353,6 +354,7 @@ export function mount(container, ctx = {}) {
       el('div', { class: 'desc', text: '复制微信聊天记录后，核心按「我的微信昵称」区分你与联系人，自动解析、去重并录入记忆。' }),
       field('我的微信昵称', selfInput, '多个名称以逗号分隔；修改后需重新复制一次聊天记录方可生效。'),
       switchField('启用剪贴板自动识别导入', captureChk, '启用后复制聊天记录将自动解析、去重并录入；关闭后仍可手动导入。'),
+      switchField('用截图确认当前会话名', sessionTitleChk, '默认开启。会把微信窗口顶部的会话名（群聊含人数）发给视觉模型，用来区分群聊与私聊——群里只有一个人说话时，仅凭发言人判断会误判成私聊。关掉后完全按发言人名字推断，不截屏、不调用模型。'),
       el('div', { class: 'field' }, captureSaveBtn, ' ', captureMsg)
     )
   );
@@ -658,6 +660,7 @@ export function mount(container, ctx = {}) {
       const s = await api.settings.get();
       advancedMemory.load(s);
       captureChk.checked = !!s.capture?.enabled;
+      sessionTitleChk.checked = s.capture?.readSessionTitle !== false;
       selfInput.value = (s.selfNicknames || []).join(', ');
       personaInput.value = String(s.userPersona || '');
       lastProviders = (s.engine && s.engine.providers) || {};
@@ -992,7 +995,7 @@ export function mount(container, ctx = {}) {
     try {
       const result = await api.settings.save({
         selfNicknames: [...new Set(selfInput.value.split(/[,，\n]/).map((name) => name.trim()).filter(Boolean))],
-        capture: { enabled: captureChk.checked }
+        capture: { enabled: captureChk.checked, readSessionTitle: sessionTitleChk.checked }
       });
       captureMsg.textContent = result.restarting ? '已保存，核心正在重启' : '已保存';
     } catch (error) {

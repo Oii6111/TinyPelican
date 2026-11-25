@@ -1,5 +1,5 @@
 // 会话名读取（截窗口标题条 + 视觉模型）与它在归属判定里的作用。
-// 关注点：只在微信窗口 + 显式开启时才动；任何失败都退回按发言人推断，绝不挡住入库。
+// 关注点：只在微信窗口 + 开关没被显式关掉时才动（默认开启）；任何失败都退回按发言人推断，绝不挡住入库。
 //
 // 这个测试文件不直接依赖 core/lib/chat-parser 的 resolveBatchTarget：
 // 归属判定在 clipboard.js 里有一个「优先上游、缺失本地兜底」的接缝，
@@ -69,7 +69,7 @@ function makeWatcher(config, reader) {
   return new ClipboardWatcher({ onBatch: () => {}, config, sessionReader: reader, stripCapture: fakeStrip });
 }
 
-test('只有「微信窗口 + 开关打开 + 有句柄」三个条件都满足才去读会话名', async () => {
+test('「微信窗口 + 开关没关 + 有句柄」才去读会话名；缺省配置默认开启', async () => {
   let calls = 0;
   const reader = async () => { calls++; return { name: '林夏', kind: 'contact', memberCount: 0 }; };
   const on = makeWatcher({ pollMs: 1, selfNicknames: SELF, capture: { readSessionTitle: true } }, reader);
@@ -82,10 +82,16 @@ test('只有「微信窗口 + 开关打开 + 有句柄」三个条件都满足�
   assert.strictEqual(await on._readSession({ handle: '123', processName: 'chrome' }), null);
   // 没有句柄
   assert.strictEqual(await on._readSession({ processName: 'Weixin' }), null);
-  // 开关没开（老配置里没有这个键）
-  const off = makeWatcher({ pollMs: 1, selfNicknames: SELF, capture: {} }, reader);
+  // 默认开启：老配置里没有这个键，也要读会话名（只有它能纠正「群里只有一个人说话」）
+  const byDefault = makeWatcher({ pollMs: 1, selfNicknames: SELF, capture: {} }, reader);
+  assert.deepStrictEqual(await byDefault._readSession({ handle: '123', processName: 'Weixin' }),
+    { name: '林夏', kind: 'contact', memberCount: 0 });
+  assert.strictEqual(calls, 2, '默认开启：缺省配置应调用视觉模型');
+
+  // 显式 false 才关掉：不截屏、不调模型
+  const off = makeWatcher({ pollMs: 1, selfNicknames: SELF, capture: { readSessionTitle: false } }, reader);
   assert.strictEqual(await off._readSession({ handle: '123', processName: 'Weixin' }), null);
-  assert.strictEqual(calls, 1, '开关关着就不该调用视觉模型');
+  assert.strictEqual(calls, 2, '关掉后不该再调用视觉模型');
 
   // 显式注入 false：彻底关掉
   const disabled = new ClipboardWatcher({ onBatch: () => {}, config: { pollMs: 1, selfNicknames: SELF, capture: { readSessionTitle: true } }, sessionReader: false, stripCapture: fakeStrip });

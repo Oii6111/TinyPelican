@@ -365,13 +365,28 @@ class ClipboardWatcher {
 
   // 复制那一刻就把标题条截下来。微信这时还是前台，晚一点可能被别的窗口盖住——
   // Qt 窗口被遮挡时 PrintWindow 会返回一片纯色，那就白截了。
+  // 走内置识别时先确认有可用的视觉模型：截一次要起 PowerShell + 写临时文件，
+  // 没配模型时先截再发现读不了，等于每批白付一次截图成本。
+  // 外部注入的 sessionReader（测试/自定义）自己负责，不受这里限制。
+  _visionReady() {
+    if (typeof this.sessionReader === 'function') return true;
+    try {
+      return require('./session-title').canReadSessionTitle(this.config);
+    } catch {
+      return false;
+    }
+  }
+
   // 只负责截，不负责识别；识别在交付前那一刻做。
   _startStrip(windowRef) {
     if (this.sessionReader === false) return null;
     if (!windowRef || !windowRef.handle) return null;
     if (!isWeixinProcess(windowRef.processName)) return null;
     const captureCfg = this.config.capture || {};
-    if (captureCfg.readSessionTitle !== true) return null;
+    // 默认开启（显式 false 才关）：只有它能纠正「群里只有一个人说话被当成私聊」。
+    // 关闭后完全退回按发言人名字的启发式，不截屏、不调模型。
+    if (captureCfg.readSessionTitle === false) return null;
+    if (!this._visionReady()) return null;
     try {
       const capture = this.stripCapture || require('./session-title').captureStrip;
       return Promise.resolve(capture(windowRef.handle)).catch(() => null);
@@ -390,8 +405,10 @@ class ClipboardWatcher {
     if (!windowRef || !windowRef.handle) return null;
     if (!isWeixinProcess(windowRef.processName)) return null;
     const captureCfg = this.config.capture || {};
-    // 必须显式 true 才调用：这一步会截屏 + 调视觉模型，不该在无关调用里被动触发。
-    if (captureCfg.readSessionTitle !== true) return null;
+    // 默认开启（显式 false 才关）：会截窗口标题条 + 调一次视觉模型，用来确认「这是哪个会话」。
+    // 没配视觉模型时（_visionReady 为假）直接返回 null，不截屏也不发请求。
+    if (captureCfg.readSessionTitle === false) return null;
+    if (!this._visionReady()) return null;
 
     const attempt = async (preCaptured) => {
       let bytes = null;
