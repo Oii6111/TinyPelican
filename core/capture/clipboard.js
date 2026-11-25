@@ -457,11 +457,14 @@ class ClipboardWatcher {
     return attempt(null);
   }
 
-  // 交付失败时附上调用栈：这类错误（例如 SQLite CANTOPEN）只靠 message 定位不到具体库。
-  // 默认不写，避免把日志刷满；排查时设 XIAOTIHU_DEBUG_STACK=1。
+  // 交付失败时附上调用栈。SQLite 的 "unable to open database file" 只有 message，
+  // 不带是哪个库、哪条路径，所以这类错误**默认就带栈**；其它错误要排查时设
+  // XIAOTIHU_DEBUG_STACK=1。
   _stackHint(error) {
-    if (process.env.XIAOTIHU_DEBUG_STACK !== '1') return '';
-    return '\n' + String((error && error.stack) || '').split('\n').slice(0, 6).join('\n');
+    const message = String((error && error.message) || '');
+    const wantStack = process.env.XIAOTIHU_DEBUG_STACK === '1' || /unable to open database file|SQLITE_CANTOPEN/i.test(message);
+    if (!wantStack) return '';
+    return '\n' + String((error && error.stack) || '').split('\n').slice(0, 8).join('\n');
   }
 
   _deliver(item, target = { kind: 'unknown', name: '' }) {

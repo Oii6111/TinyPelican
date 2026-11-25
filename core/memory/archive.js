@@ -40,8 +40,19 @@ function ensureMessageTime(db) {
 }
 
 function open(name) {
-  fs.mkdirSync(archiveDir(), { recursive: true });
-  const db = new DatabaseSync(archivePath(name));
+  const file = archivePath(name);
+  try {
+    fs.mkdirSync(archiveDir(), { recursive: true });
+  } catch (error) {
+    throw Object.assign(new Error(`冷库目录不可写：${archiveDir()}：${error.message}`), { code: 'ARCHIVE_DIR' });
+  }
+  let db;
+  try {
+    db = new DatabaseSync(file);
+  } catch (error) {
+    // SQLite 的 "unable to open database file" 不带路径，加了这一层才能知道是哪个库、哪条路径。
+    throw Object.assign(new Error(`冷库打开失败：${file}：${error.message}`), { code: 'ARCHIVE_OPEN', archivePath: file });
+  }
   db.exec('PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, sender TEXT NOT NULL, ts TEXT NOT NULL, type TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT UNIQUE); CREATE INDEX IF NOT EXISTS idx_message_ts ON message(ts, id);');
   const columns = new Set(db.prepare('PRAGMA table_info(message)').all().map(column => column.name));
   if (!columns.has('source')) db.exec("ALTER TABLE message ADD COLUMN source TEXT NOT NULL DEFAULT ''");

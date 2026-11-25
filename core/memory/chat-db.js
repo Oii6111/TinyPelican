@@ -513,9 +513,15 @@ function ingestMessages(name, items = [], { kind = 'contact', remark = '' } = {}
   const insertAttachment = db.prepare(`INSERT OR IGNORE INTO message_attachment(message_id,kind,name,mime_type,size,sha256,path,description,description_source,description_model,description_error,source,created_at)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   let added = 0;
-  const cold = archive.duplicateReader(contact);
-  db.exec('BEGIN');
+  // 冷库连接和 BEGIN 都放进 try：任何一步抛错都要确保连接被关闭。
+  // 之前它们在 try 外面，BEGIN 失败（例如上一次事务没收尾）时冷库连接会泄漏，
+  // 泄漏积累到一定程度，SQLite 就会报 "unable to open database file"。
+  let cold = null;
+  let inTransaction = false;
   try {
+    cold = archive.duplicateReader(contact);
+    db.exec('BEGIN');
+    inTransaction = true;
     for (const item of (Array.isArray(items) ? items : [])) {
       const message = { name: String(item.name || item.sender || ''), ts: String(item.ts || item.timestamp || now), type: String(item.type || 'text'), content: String(item.content || '') };
       const externalId = item.source === 'aiworks' ? item.externalId : undefined;
@@ -559,8 +565,13 @@ function ingestMessages(name, items = [], { kind = 'contact', remark = '' } = {}
     }
     if (added) db.prepare('INSERT INTO conversation(member_id,platform,last_message_at) VALUES(?,?,?) ON CONFLICT(member_id) DO UPDATE SET last_message_at=excluded.last_message_at').run(member.id, 'weixin', now);
     db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
-  finally { cold.close(); }
+    inTransaction = false;
+  } catch (error) {
+    if (inTransaction) { try { db.exec('ROLLBACK'); } catch {} }
+    throw error;
+  } finally {
+    if (cold) cold.close();
+  }
   // 注意：romance 分支在这里会自动建立关系档案（require('./stores/romance-relationships')）。
   // main 不引入 romance 关系存储，这一段刻意不移植——入库只负责消息本身。
   return added;
