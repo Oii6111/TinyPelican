@@ -4,7 +4,7 @@ import { mount as chat } from './views/chat.mjs';
 import { mount as channels } from './views/channels.mjs';
 import { mount as contacts } from './views/contacts.mjs';
 import { mount as chatImport } from './views/chat-import.mjs';
-import { mount as mountDailyActions } from './components/daily-actions.mjs';
+import { mountDailyActions } from './components/daily-actions.mjs';
 import { mount as email } from './views/email.mjs';
 import { mount as scheduleDashboard } from './views/proactive.mjs';
 import { mount as settings } from './views/settings.mjs';
