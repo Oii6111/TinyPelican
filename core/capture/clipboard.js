@@ -467,6 +467,11 @@ class ClipboardWatcher {
     log('info', 'capture', item.repeat
       ? `捕获 ${item.msgs.length} 条重复消息（同一段聊天再次复制）`
       : `捕获 ${item.fresh.length} 条新消息${target.kind === 'group' ? `（群聊：${target.displayName}）` : ''}`);
+    // 会话名（截图读到的显示名）只写进备注，身份键仍是消息里的昵称。
+    // 这条日志是「备注为什么没写上」的第一手线索：没有它，用户只能看到「导入成功但备注还是空的」。
+    if (target && target.remark && target.source === 'window') {
+      log('info', 'capture', `窗口会话名「${target.remark}」→ 写进备注（消息仍按昵称「${target.name}」归档）`);
+    }
     try {
       const pending = this.onBatch({ msgs: item.fresh, allMsgs: item.msgs, contact, target, targetWindow: item.windowRef, repeat: item.repeat, media: item.media || null });
       if (pending && typeof pending.then === 'function') {
