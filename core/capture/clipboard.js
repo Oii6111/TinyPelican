@@ -455,6 +455,13 @@ class ClipboardWatcher {
     return attempt(null);
   }
 
+  // 交付失败时附上调用栈：这类错误（例如 SQLite CANTOPEN）只靠 message 定位不到具体库。
+  // 默认不写，避免把日志刷满；排查时设 XIAOTIHU_DEBUG_STACK=1。
+  _stackHint(error) {
+    if (process.env.XIAOTIHU_DEBUG_STACK !== '1') return '';
+    return '\n' + String((error && error.stack) || '').split('\n').slice(0, 6).join('\n');
+  }
+
   _deliver(item, target = { kind: 'unknown', name: '' }) {
     const contact = target.kind === 'contact' ? target.name : '';
     log('info', 'capture', item.repeat
@@ -468,7 +475,7 @@ class ClipboardWatcher {
           () => this._settleFresh(item, true),
           (error) => {
             this._settleFresh(item, false);
-            log('error', 'capture', '批次交付失败：' + ((error && error.message) || error) + '（本次不记为已导入，重新复制可重试）');
+            log('error', 'capture', '批次交付失败：' + ((error && error.message) || error) + '（本次不记为已导入，重新复制可重试）' + this._stackHint(error));
           }
         );
         return;
@@ -478,7 +485,7 @@ class ClipboardWatcher {
       // 一批出错不影响后面的批次：只要没入库就是数据丢失，所以逐批兜住并记日志。
       // 同时把这批从「等待中」撤掉，用户下次再复制同一段聊天还能重新入库。
       this._settleFresh(item, false);
-      log('error', 'capture', '批次交付失败：' + ((error && error.message) || error) + '（本次不记为已导入，重新复制可重试）');
+      log('error', 'capture', '批次交付失败：' + ((error && error.message) || error) + '（本次不记为已导入，重新复制可重试）' + this._stackHint(error));
     }
   }
 
