@@ -20,29 +20,45 @@ export function mount(container) {
   );
   const sortRow = el('label', { class: 'contact-sort-row', title: '切换排序会先拉取联系人的关系概览', style: 'display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:#858b94;' },
     el('span', { text: '排序' }), sortSelect);
+  // 联系人和群聊是两个分区：群不是人，列表、详情、画像都不能混在一起。
+  const modeNav = el('nav', { class: 'contact-modes', 'aria-label': '切换联系人与群聊' });
   const list = el('div', { class: 'wechat-contact-list' });
-  const sidebar = el('aside', { class: 'wechat-sidebar' }, el('div', { class: 'wechat-search-wrap' }, search, sortRow), list);
+  const sidebar = el('aside', { class: 'wechat-sidebar' }, el('div', { class: 'wechat-search-wrap' }, modeNav, search, sortRow), list);
   const chatHead = el('header', { class: 'wechat-chat-head' });
+  // 页签：看板 / 画像 / 聊天记录，和 xth-love 一样同一时刻只显示一个面板。
+  const tabs = el('nav', { class: 'contact-tabs', 'aria-label': '联系人详情页签', role: 'tablist' });
   const chatLog = el('div', { class: 'wechat-chat-log' });
   const dateFilter = el('select', { class: 'contact-date-filter', 'aria-label': '按日期筛选已加载聊天记录', title: '筛选当前已加载的聊天记录' }, el('option', { value: '', text: '全部日期' }));
   const loadedCount = el('span', { class: 'contact-loaded-count' });
+  const toolbarTitle = el('span', { text: '聊天记录' });
   const toolbar = el('div', { class: 'contact-chat-toolbar', hidden: true },
-    el('strong', {}, contactIcon('chat'), el('span', { text: '聊天记录' }), loadedCount),
+    el('strong', {}, contactIcon('chat'), toolbarTitle, loadedCount),
     el('label', { class: 'contact-date-control' }, contactIcon('calendar'), dateFilter)
   );
   const exportButton = el('button', { class: 'contact-export-button', disabled: true, title: '导出当前已加载并筛选的聊天记录' }, contactIcon('export'), el('span', { text: '导出记录' }));
   const composer = el('div', { class: 'wechat-composer contact-readonly-footer' },
     el('div', { class: 'contact-readonly-bar' }, el('span', {}, contactIcon('lock'), el('span', { text: '聊天记录仅供查看' })), exportButton)
   );
-  const chatMain = el('section', { class: 'wechat-chat-main', 'aria-label': '联系人聊天记录' }, chatHead, toolbar, chatLog, composer);
-  const profilePane = el('aside', { class: 'wechat-profile-pane', 'aria-label': '联系人画像' });
-  container.append(el('div', { class: 'wechat-contacts-layout contact-workspace' }, sidebar, chatMain, profilePane));
+  const chatMain = el('section', { class: 'wechat-chat-main', 'aria-label': '联系人聊天记录', hidden: true }, toolbar, chatLog, composer);
+  const overviewPane = el('section', { class: 'contact-overview-pane', 'aria-label': '联系人看板', hidden: true });
+  const profilePane = el('aside', { class: 'wechat-profile-pane', 'aria-label': '联系人画像', hidden: true });
+  const groupPane = el('section', { class: 'contact-group-pane', 'aria-label': '群聊详情', hidden: true });
+  const welcomePane = el('div', { class: 'contact-welcome' });
+  const panel = el('div', { class: 'contact-panel' }, overviewPane, profilePane, groupPane, welcomePane, chatMain);
+  // 两栏：左侧列表 ｜ 主区（头部 + 页签 看板/画像/聊天记录 + 面板）
+  container.append(el('div', { class: 'wechat-contacts-layout contact-workspace' }, sidebar,
+    el('section', { class: 'contact-workspace-main' }, chatHead, tabs, panel)));
 
+  let mode = 'contact';       // 'contact' 联系人 / 'group' 群聊：群不是人，详情各走各的
   let selected = '';
-  let profileOpen = false;
+  let tab = 'overview';       // 'overview' 看板 / 'profile' 画像 / 'history' 聊天记录
+  let profileContact = '';    // 画像面板当前渲染的是谁，避免切页签重复渲染
   let profileCollapsed = false;
   let summaryCollapsed = false;
   let contacts = [];
+  let groups = [];
+  let activeGroup = null;
+  let groupVersion = 0;
   let stopMemory = () => {};
   let chatVersion = 0;
   let listVersion = 0;
@@ -55,6 +71,80 @@ export function mount(container) {
   let relationshipCollapsed = false;
   // 关系概览按联系人缓存：切换排序要读所有联系人的指标，不能每次点击都重新统计。
   const relationshipCache = new Map();
+
+  const TAB_DEFS = [['overview', '看板'], ['profile', '画像'], ['history', '聊天记录']];
+
+  // 页签：同一时刻只显示一个面板（看板 / 画像 / 聊天记录）。
+  function renderTabs() {
+    tabs.replaceChildren(...TAB_DEFS.map(([id, label]) => el('button', {
+      class: 'contact-tab' + (tab === id ? ' active' : ''),
+      type: 'button',
+      role: 'tab',
+      'aria-selected': String(tab === id),
+      onclick: () => setTab(id)
+    }, el('span', { text: label }))));
+  }
+
+  function syncTabs() {
+    renderTabs();
+    tabs.hidden = mode === 'group' || !activeContact;
+    syncProfileToggle();
+  }
+
+  // 面板显隐：联系人按页签；群聊没有页签，选中群就整块显示群详情。
+  function showPanel() {
+    if (mode === 'group') {
+      welcomePane.hidden = !!selected;
+      groupPane.hidden = !selected;
+      overviewPane.hidden = true;
+      profilePane.hidden = true;
+      chatMain.hidden = true;
+      welcomePane.replaceChildren(el('div', { class: 'contact-welcome-copy', text: selected ? '正在加载群聊…' : '从左侧选择群聊，查看群成员和最近对话' }));
+      return;
+    }
+    const ready = !!selected && !!activeContact;
+    welcomePane.hidden = ready;
+    welcomePane.replaceChildren(el('div', { class: 'contact-welcome-copy', text: ready ? '' : (selected ? '正在加载联系人…' : '从左侧选择联系人，查看看板、画像和聊天记录') }));
+    overviewPane.hidden = !ready || tab !== 'overview';
+    profilePane.hidden = !ready || tab !== 'profile';
+    profilePane.classList.toggle('open', ready && tab === 'profile');
+    chatMain.hidden = !ready || tab !== 'history';
+    groupPane.hidden = true;
+  }
+
+  function setTab(next) {
+    if (mode === 'group') return;
+    if (!TAB_DEFS.some(([id]) => id === next)) next = 'overview';
+    tab = next;
+    if (tab === 'profile' && activeContact && profileContact !== activeContact.name) renderProfile(activeContact);
+    syncTabs();
+    showPanel();
+    if (tab === 'history') chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function overviewCard(title, body, tools) {
+    return el('section', { class: 'wechat-profile-card contact-overview-card' },
+      el('div', { class: 'contact-card-head' }, el('h3', { text: title }), tools || null), body);
+  }
+
+  // 看板：关系概览（指标 + 社交目的/阶段/备忘）+ 最近的对话。
+  function renderOverview(contact) {
+    const recentBody = el('div', { class: 'contact-overview-recent' }, el('p', { class: 'contact-group-note', text: '正在加载最近对话…' }));
+    const all = el('button', { class: 'contact-card-link', text: '查看全部聊天', onclick: () => setTab('history') });
+    overviewPane.replaceChildren(relationshipPanel(contact), overviewCard('最近的对话', recentBody, all));
+    return recentBody;
+  }
+
+  function renderRecentMessages(body, messages) {
+    const recent = (messages || []).slice(-4);
+    body.replaceChildren();
+    if (!recent.length) { body.append(el('p', { class: 'contact-group-note', text: '暂时没有聊天记录，导入后会显示在这里。' })); return; }
+    recent.forEach((message) => {
+      body.append(el('div', { class: 'contact-overview-message' },
+        el('small', { text: `${isOutgoing(message) ? '我' : (message.name || message.sender || '对方')} · ${fmtTime(message.ts)}` }),
+        el('p', { text: message.content || `[${message.type || '附件'}]` })));
+    });
+  }
 
   function messageDate(message) {
     const date = new Date(message.ts);
@@ -110,10 +200,13 @@ export function mount(container) {
 
   dateFilter.onchange = () => { renderMessages(); chatLog.scrollTop = 0; };
   exportButton.onclick = () => {
-    if (!activeContact) return;
-    const content = filteredMessages().map((message) => `${fmtTime(message.ts)} ${message.name || message.sender || (isOutgoing(message) ? '我' : activeContact.name)}\n${message.content || `[${message.type || '消息'}]`}`).join('\n\n');
+    // 联系人和群聊都能导出已加载的记录；群导出用群名做文件名。
+    const target = activeContact || activeGroup;
+    if (!target) return;
+    const content = filteredMessages().map((message) => `${fmtTime(message.ts)} ${message.name || message.sender || (isOutgoing(message) ? '我' : target.name)}\n${message.content || `[${message.type || '消息'}]`}`).join('\n\n');
     const url = URL.createObjectURL(new Blob(['\uFEFF' + content], { type: 'text/plain;charset=utf-8' }));
-    const link = el('a', { href: url, download: `${activeContact.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')}-聊天记录.txt` });
+    const name = String(target.remark || target.name || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+    const link = el('a', { href: url, download: `${name}-聊天记录.txt` });
     document.body.append(link);
     link.click();
     link.remove();
@@ -181,20 +274,94 @@ export function mount(container) {
     });
   }
 
+  // 侧栏顶部：联系人 / 群聊 两个分区，带各自数量。
+  function renderModes() {
+    const items = [['contact', '联系人', contacts.length], ['group', '群聊', groups.length]];
+    modeNav.replaceChildren(...items.map(([id, label, count]) => el('button', {
+      class: 'contact-mode' + (mode === id ? ' active' : ''),
+      type: 'button',
+      'aria-pressed': String(mode === id),
+      onclick: () => setMode(id)
+    }, el('span', { text: label }), el('span', { class: 'contact-mode-count', text: String(count) }))));
+  }
+
+  // 切分区先清空选中和详情：不让上一个分区的画像/聊天残留到新列表旁边。
+  function setMode(next) {
+    if (next === mode) return;
+    mode = next;
+    selected = '';
+    tab = 'overview';
+    profileContact = '';
+    search.value = '';
+    search.placeholder = next === 'group' ? '⌕  搜索群聊' : '⌕  搜索联系人或聊天记录';
+    sortRow.hidden = next === 'group';
+    renderModes();
+    loadSelection();
+    if (next === 'group') loadGroups(); else loadList();
+  }
+
+  function loadSelection() {
+    if (mode === 'group') return loadGroup();
+    return loadChat();
+  }
+
+  async function loadGroups() {
+    let result;
+    try { result = await api.groups.list(); } catch { result = []; }
+    if (!visible) return;
+    groups = Array.isArray(result) ? result : (Array.isArray(result?.groups) ? result.groups : []);
+    renderModes();
+    if (mode === 'group') renderGroupList();
+  }
+
+  function groupTime(value) {
+    const date = new Date(value);
+    return value && !Number.isNaN(date.getTime()) ? date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '';
+  }
+
+  // 群列表：显示真群名（remark）退到身份名（发言人拼出来的 name），副行是人数与消息量。
+  function renderGroupList() {
+    empty(list);
+    const q = search.value.trim().toLowerCase();
+    const filtered = groups.filter((group) => !q
+      || String(group.name || '').toLowerCase().includes(q)
+      || String(group.remark || '').toLowerCase().includes(q));
+    if (!filtered.length) {
+      list.append(el('div', { class: 'wechat-empty', text: q ? '没有匹配的群聊' : '暂无群聊' }));
+      return;
+    }
+    filtered.forEach((group) => {
+      const title = group.remark || group.name;
+      const item = el('button', {
+        class: 'wechat-contact-item contact-group-item' + (group.name === selected ? ' active' : ''),
+        'aria-pressed': String(group.name === selected)
+      },
+      el('span', { class: 'wechat-contact-copy' },
+        el('strong', { text: title }),
+        el('small', { text: `${Number(group.memberCount) || 0} 人 · ${Number(group.messages) || 0} 条消息` })),
+      el('time', { text: groupTime(group.lastMessageAt) })
+      );
+      item.onclick = () => { selected = group.name; renderGroupList(); loadGroup(); };
+      list.append(item);
+    });
+  }
+
   async function loadList() {
+    if (mode === 'group') { renderGroupList(); return; }
     const version = ++listVersion;
     let result;
     try { result = await api.contacts.list(); } catch { result = []; }
-    if (version !== listVersion || !visible) return;
+    if (version !== listVersion || !visible || mode === 'group') return;
     contacts = result;
+    renderModes();
     if (sortKey) {
       await ensureRelationships();
-      if (version !== listVersion || !visible) return;
+      if (version !== listVersion || !visible || mode === 'group') return;
     }
     const q = search.value.trim();
     const matched = new Set();
     if (q) { try { (await api.search(q)).forEach((m) => matched.add(m.contact)); } catch {} }
-    if (version !== listVersion || !visible) return;
+    if (version !== listVersion || !visible || mode === 'group') return;
     empty(list);
     const filtered = contacts.filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase()) || String(c.remark || '').toLowerCase().includes(q.toLowerCase()) || matched.has(c.name));
     if (!filtered.length) { list.append(el('div', { class: 'wechat-empty', text: q ? '没有找到相关聊天' : '暂无联系人' })); return; }
@@ -209,25 +376,47 @@ export function mount(container) {
     });
   }
 
-  async function loadChat() {
+  async function loadChat(options = {}) {
     const version = ++chatVersion;
+    const keepTab = options.keepTab === true;
+    groupVersion++;
+    activeGroup = null;
     stopMemory();
     loadedMessages = [];
     moreButton = null;
     activeContact = null;
+    profileContact = '';
+    if (!keepTab) tab = 'overview';
+    toolbarTitle.textContent = '聊天记录';
     toolbar.hidden = !selected;
     exportButton.disabled = true;
     dateFilter.value = '';
     dateFilter.disabled = true;
     loadedCount.textContent = '';
+    profilePane.setAttribute('aria-label', '联系人画像');
     profilePane.classList.toggle('open', false);
     profilePane.replaceChildren();
-    chatLog.replaceChildren(el('div', { class: 'wechat-empty', text: selected ? '正在加载聊天记录…' : '选择联系人，查看聊天记录与画像' }));
-    if (!selected) { chatHead.replaceChildren(el('div', { class: 'contact-no-selection', text: '联系人聊天记录' })); return; }
+    overviewPane.replaceChildren();
+    groupPane.replaceChildren();
+    chatLog.replaceChildren(el('div', { class: 'wechat-empty', text: selected ? '正在加载聊天记录…' : '选择联系人，查看看板、画像和聊天记录' }));
+    if (!selected) {
+      chatHead.replaceChildren(el('div', { class: 'contact-no-selection', text: '联系人' }));
+      syncTabs();
+      showPanel();
+      return;
+    }
     chatHead.replaceChildren(el('div', { class: 'contact-no-selection', text: '正在加载联系人…' }));
+    syncTabs();
+    showPanel();
     let contact;
     try { contact = await api.contacts.get(selected); }
-    catch { if (version === chatVersion && visible) chatLog.replaceChildren(el('div', { class: 'wechat-empty', text: '联系人加载失败，请重新选择' })); return; }
+    catch {
+      if (version !== chatVersion || !visible) return;
+      chatLog.replaceChildren(el('div', { class: 'wechat-empty', text: '联系人加载失败，请重新选择' }));
+      syncTabs();
+      showPanel();
+      return;
+    }
     if (version !== chatVersion || !visible) return;
     activeContact = contact;
     const q = search.value.trim();
@@ -235,9 +424,13 @@ export function mount(container) {
     chatHead.append(el('div', { class: 'contact-chat-identity' }, el('div', { class: 'wechat-chat-title' },
       el('strong', { text: contact.remark || contact.name, title: contact.name }), el('small', { text: `${contact.messages || 0} 条消息 · 微信聊天记录` })
     )));
-    const profileBtn = el('button', { class: 'wechat-head-btn', title: '查看联系人画像', 'aria-label': '联系人画像', 'aria-expanded': String(profileOpen) }, contactIcon('profile'), el('span', { text: '画像' }));
-    syncProfileToggle = () => { profileBtn.classList.toggle('on', profileOpen); profileBtn.setAttribute('aria-expanded', String(profileOpen)); };
-    profileBtn.onclick = () => { profileOpen = !profileOpen; syncProfileToggle(); renderProfile(contact); };
+    const profileButton = el('button', { class: 'wechat-head-btn', title: '查看联系人画像', 'aria-label': '联系人画像', 'aria-expanded': String(tab === 'profile') }, contactIcon('profile'), el('span', { text: '画像' }));
+    syncProfileToggle = () => {
+      const on = tab === 'profile' && !!activeContact;
+      profileButton.classList.toggle('on', on);
+      profileButton.setAttribute('aria-expanded', String(on));
+    };
+    profileButton.onclick = () => setTab(tab === 'profile' ? 'overview' : 'profile');
     const starBtn = el('button', { class: 'wechat-head-icon' + (contact.important ? ' on' : ''), title: '特别关心', 'aria-label': '特别关心', 'aria-pressed': String(!!contact.important) }, contactIcon('star'));
     starBtn.onclick = async () => {
       starBtn.disabled = true;
@@ -251,9 +444,12 @@ export function mount(container) {
       finally { starBtn.disabled = false; }
     };
     const searchButton = el('button', { class: 'wechat-head-icon', title: '搜索聊天记录', 'aria-label': '搜索聊天记录', onclick: () => search.focus() }, contactIcon('search'));
-    chatHead.append(el('div', { class: 'wechat-head-actions' }, starBtn, searchButton, profileBtn));
-    syncProfileToggle();
-    renderProfile(contact);
+    chatHead.append(el('div', { class: 'wechat-head-actions' }, starBtn, searchButton, profileButton));
+    // 看板是默认页签：关系概览 + 最近对话；画像/聊天记录面板已经就绪，切页签只切显示。
+    const recentBody = renderOverview(contact);
+    syncTabs();
+    showPanel();
+    if (tab === 'profile') renderProfile(contact);
     chatLog.replaceChildren();
     try {
       const result = await api.contacts.messages(contact.name, q, 100);
@@ -294,8 +490,98 @@ export function mount(container) {
         moreButton = more;
       }
       renderMessages();
+      renderRecentMessages(recentBody, loadedMessages);
       chatLog.scrollTop = chatLog.scrollHeight;
-    } catch { if (version === chatVersion && visible) chatLog.replaceChildren(el('div', { class: 'wechat-empty', text: '聊天记录加载失败，请重新选择联系人重试' })); }
+    } catch {
+      if (version !== chatVersion || !visible) return;
+      chatLog.replaceChildren(el('div', { class: 'wechat-empty', text: '聊天记录加载失败，请重新选择联系人重试' }));
+      renderRecentMessages(recentBody, []);
+    }
+  }
+
+  // 群详情：群不是人，没有画像，也不进关系概览。主区页签隐藏，
+  // 只显示群头部 + 群成员网格 + 群里的最近对话。
+  async function loadGroup() {
+    const version = ++groupVersion;
+    chatVersion++;
+    stopMemory();
+    activeContact = null;
+    activeGroup = null;
+    profileContact = '';
+    loadedMessages = [];
+    moreButton = null;
+    profilePane.classList.toggle('open', false);
+    profilePane.replaceChildren();
+    overviewPane.replaceChildren();
+    groupPane.replaceChildren();
+    chatHead.replaceChildren();
+    syncTabs();
+    if (!selected) {
+      chatHead.append(el('div', { class: 'contact-no-selection', text: '群聊' }));
+      showPanel();
+      return;
+    }
+    const group = groups.find((item) => item.name === selected) || null;
+    const title = group ? (group.remark || group.name) : selected;
+    chatHead.append(el('div', { class: 'contact-chat-identity' }, el('div', { class: 'wechat-chat-title' },
+      el('strong', { text: title, title }),
+      el('small', { text: `${Number(group?.memberCount) || 0} 人 · ${Number(group?.messages) || 0} 条消息 · 群聊记录` })
+    )));
+    groupPane.replaceChildren(el('div', { class: 'hint', text: '正在读取群聊…' }));
+    showPanel();
+    let data;
+    try { data = await api.groups.get(selected); }
+    catch (error) {
+      if (version !== groupVersion || !visible) return;
+      groupPane.replaceChildren(el('div', { class: 'wechat-empty', text: '群聊加载失败：' + error.message }));
+      showPanel();
+      return;
+    }
+    if (version !== groupVersion || !visible) return;
+    activeGroup = data?.group || group || { name: selected, remark: '' };
+    const members = Array.isArray(data?.members) ? data.members : [];
+    const raw = data?.recentMessages;
+    const messages = Array.isArray(raw) ? raw : (Array.isArray(raw?.messages) ? raw.messages : []);
+    const total = Number(activeGroup?.messages) || messages.length;
+    chatHead.replaceChildren(el('div', { class: 'contact-chat-identity' }, el('div', { class: 'wechat-chat-title' },
+      el('strong', { text: title, title }),
+      el('small', { text: `${members.length} 人 · ${total} 条消息 · 群聊记录` })
+    )));
+    renderGroupPane(activeGroup, members, messages);
+    showPanel();
+  }
+
+  function renderGroupPane(group, members, messages) {
+    const added = members.filter((member) => member.kind !== 'member').length;
+    const latestAt = messages.length ? messages[messages.length - 1].ts : '';
+    const stat = (label, value, note) => el('div', { class: 'contact-group-stat' },
+      el('span', { text: label }), el('strong', { text: value }), note ? el('small', { text: note }) : null);
+    const grid = el('div', { class: 'contact-group-members' }, ...members.map((member) => {
+      const isContact = member.kind !== 'member';
+      return el('div', {
+        class: 'contact-group-member' + (isContact ? '' : ' is-pending'),
+        title: isContact ? '已加为联系人' : '只在群聊里见过，还没加为联系人'
+      },
+      el('strong', { text: member.displayName || member.name }),
+      el('small', { text: isContact ? '已加为联系人' : '未加为联系人' }));
+    }));
+    const recent = el('div', { class: 'contact-group-recent' }, ...messages.slice(-8).map((message) => el('div', { class: 'contact-group-recent-item' },
+      el('small', { text: `${message.name || message.sender || '群成员'} · ${fmtTime(message.ts)}` }),
+      el('p', { text: message.content || `[${message.type || '附件'}]` }))));
+    groupPane.replaceChildren(
+      el('div', { class: 'contact-group-stats' },
+        stat('群成员', `${members.length} 人`, '从群聊记录里识别到的发言人'),
+        stat('已加为联系人', `${added} 人`, added ? '在联系人分区里能找到他们' : '群里的陌生人不会自动进联系人'),
+        stat('消息量', `${Number(group.messages) || messages.length} 条`, '已导入的群消息'),
+        stat('最近活跃', latestAt ? fmtTime(latestAt) : '暂无记录', '以已导入的聊天为准')),
+      el('section', { class: 'wechat-profile-card contact-group-members-card' },
+        el('div', { class: 'contact-card-head' }, el('h3', { text: '群成员' })),
+        members.length ? grid : el('div', { class: 'hint', text: '还没有识别到群成员。' })),
+      el('section', { class: 'wechat-profile-card contact-group-recent-card' },
+        el('div', { class: 'contact-card-head' }, el('h3', { text: '群里的最近对话' })),
+        messages.length ? recent : el('div', { class: 'hint', text: '暂时没有群消息。' })),
+      el('p', { class: 'contact-group-note', text: '群聊不是人，没有画像：这里只显示群成员和群消息，不会进入联系人的关系概览。' })
+    );
   }
 
   function relationshipPercent(value) {
@@ -430,9 +716,8 @@ export function mount(container) {
 
   function renderProfile(contact) {
     stopMemory();
+    profileContact = contact.name;
     profilePane.replaceChildren();
-    profilePane.classList.toggle('open', profileOpen);
-    if (!profileOpen) { profilePane.replaceChildren(); return; }
     const remark = el('input', { id: 'contact-profile-remark', class: 'input', value: contact.remark || '', placeholder: '添加备注，方便下次找到' });
     const profile = contact.profile || {};
     const editors = new Map();
@@ -464,7 +749,7 @@ export function mount(container) {
         if (section === '其他信息') Object.assign(updatedProfile, parseFields(area.value));
         else updatedProfile[section] = Object.fromEntries(Object.entries(parseFields(area.value)).filter(([field, value]) => value || Object.prototype.hasOwnProperty.call(profile[section] || {}, field)));
       }
-      try { await api.contacts.saveProfile(contact.name, { remark: remark.value.trim(), profile: updatedProfile, profileMode: 'replace' }); toast('画像已保存'); loadList(); if (selected === contact.name) loadChat(); }
+      try { await api.contacts.saveProfile(contact.name, { remark: remark.value.trim(), profile: updatedProfile, profileMode: 'replace' }); toast('画像已保存'); loadList(); if (selected === contact.name) loadChat({ keepTab: true }); }
       catch (e) { toast('保存失败：' + e.message, false); }
       finally { save.disabled = false; setContactButton(save, 'save', '保存画像'); }
     };
@@ -475,7 +760,7 @@ export function mount(container) {
       remove.disabled = true;
       try {
         await api.contacts.remove(contact.name);
-        if (selected === contact.name) { selected = ''; profileOpen = false; loadChat(); }
+        if (selected === contact.name) { selected = ''; tab = 'overview'; loadChat(); }
         loadList();
       } catch (error) { toast('删除失败：' + error.message, false); }
       finally { remove.disabled = false; }
@@ -575,29 +860,44 @@ export function mount(container) {
     const danger = el('section', { class: 'contact-data-management', 'aria-label': '数据管理' },
       el('div', { class: 'contact-data-heading', text: '数据管理' }), el('div', { class: 'contact-data-actions' }, clear, remove)
     );
-    const close = el('button', { class: 'wechat-close-btn', 'aria-label': '关闭联系人画像', title: '关闭联系人画像', onclick: () => { profileOpen = false; syncProfileToggle(); stopMemory(); profilePane.classList.toggle('open', false); } }, contactIcon('close'));
+    const close = el('button', { class: 'wechat-close-btn', 'aria-label': '关闭联系人画像', title: '关闭联系人画像', onclick: () => setTab('overview') }, contactIcon('close'));
     profilePane.append(
       el('div', { class: 'wechat-profile-head' }, el('div', { class: 'contact-profile-heading' }, el('strong', { text: '联系人画像' }), el('span', { class: 'contact-ai-badge', text: 'AI' })), close),
       el('div', { class: 'contact-profile-identity' }, el('div', { class: 'wechat-profile-name', text: contact.remark || contact.name }), el('p', { text: contact.remark ? contact.name + ' · 基于聊天记录生成' : '基于聊天记录生成' })),
       el('label', { class: 'wechat-profile-label', for: 'contact-profile-remark', text: '备注' }), remark,
-      relationshipPanel(contact), fields, memory.panel, actions, emailPanel, danger
+      fields, memory.panel, actions, emailPanel, danger
     );
     loadContactEmails();
   }
 
   let searchTimer;
   sortSelect.onchange = async () => {
+    if (mode !== 'contact') return;
     sortKey = sortSelect.value;
     // 排序指标要先拿到关系概览；先取数再重排，避免列表先跳到「没数据」的顺序。
     if (sortKey) await ensureRelationships();
-    if (!visible) return;
+    if (!visible || mode !== 'contact') return;
     loadList();
   };
-  search.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { loadList(); if (selected) loadChat(); }, 220); });
+  search.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      loadList();
+      if (mode === 'contact' && selected) loadChat({ keepTab: true });
+    }, 220);
+  });
+  renderModes();
   loadList();
   loadChat();
+  loadGroups();
   return {
-    show() { visible = true; loadList(); if (selected) loadChat(); },
-    hide() { visible = false; chatVersion++; listVersion++; clearTimeout(searchTimer); stopMemory(); }
+    show() {
+      visible = true;
+      loadList();
+      loadGroups();
+      if (selected) loadSelection();
+      else { syncTabs(); showPanel(); }
+    },
+    hide() { visible = false; chatVersion++; groupVersion++; listVersion++; clearTimeout(searchTimer); stopMemory(); }
   };
 }

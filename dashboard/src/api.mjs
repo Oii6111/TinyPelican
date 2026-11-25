@@ -84,6 +84,11 @@ export const api = {
     remove: (name) => del('/api/contacts/' + encodeURIComponent(name)),
     clearMessages: (name) => del('/api/contacts/' + encodeURIComponent(name) + '/messages')
   },
+  // 群聊：群不是人，和联系人分两条链路，不进画像/关系概览
+  groups: {
+    list: () => get('/api/groups'),
+    get: (name) => get('/api/groups/' + encodeURIComponent(name))
+  },
   search: (q) => get('/api/search?q=' + encodeURIComponent(q)),
 
   intents: {

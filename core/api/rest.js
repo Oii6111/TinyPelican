@@ -67,6 +67,7 @@ function createRestServer({ config = null, onRestart = null, emailService = null
   require('./routes/health')(router, ctx);
   require('./routes/status')(router, ctx);
   require('./routes/contacts')(router, ctx);
+  require('./routes/groups')(router, ctx);
   require('./routes/search')(router, ctx);
   require('./routes/web-search')(router, ctx);
   require('./routes/email')(router, ctx);

@@ -12,6 +12,30 @@
 .contact-workspace [hidden] { display: none !important; }
 .contact-workspace button { font: inherit; }
 .contact-workspace button:disabled { cursor: not-allowed; opacity: .55; }
+/* 两栏：侧栏 260 固定 ｜ 主区（头部 + 页签 + 面板） */
+.contact-workspace .wechat-sidebar { width: 260px; flex: 0 0 260px; }
+.contact-workspace-main { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+/* 页签：看板 / 画像 / 聊天记录，参考 xth-love 的下边框激活样式 */
+.contact-tabs { display: flex; flex-shrink: 0; gap: 24px; padding: 0 28px; border-bottom: 1px solid var(--contact-line); background: #fff; }
+.contact-tab { padding: 10px 0; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--contact-muted); font-size: 13px; cursor: pointer; }
+.contact-tab:hover { color: var(--contact-ink); }
+.contact-tab.active { border-bottom-color: var(--contact-amber); color: #946620; font-weight: 600; }
+.contact-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.contact-welcome { flex: 1; display: grid; place-items: center; padding: 32px; color: #8a9098; font-size: 14px; text-align: center; }
+.contact-overview-pane, .contact-group-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px 32px; display: flex; flex-direction: column; gap: 18px; background: #f8f9f6; }
+.contact-overview-pane .wechat-profile-card, .contact-group-pane .wechat-profile-card { margin-top: 0; }
+.contact-overview-message { margin-top: 14px; border-left: 2px solid #eef0ed; padding-left: 14px; }
+.contact-overview-message small { color: var(--contact-muted); font-size: 11px; }
+.contact-overview-message p { margin: 4px 0 0; color: var(--contact-ink); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.contact-card-link { border: 0; background: none; padding: 2px 0; color: #9d7028; font-size: 12px; cursor: pointer; }
+.contact-card-link:hover { color: #7d581b; text-decoration: underline; }
+/* 联系人 / 群聊 两个分区：群不是人，列表和详情都分开 */
+.contact-modes { display: flex; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: #eef1ec; }
+.contact-mode { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--contact-muted); cursor: pointer; font-size: 13px; }
+.contact-mode:hover { color: var(--contact-ink); }
+.contact-mode.active { background: #fff; color: var(--contact-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, .06); }
+.contact-mode-count { color: #a1a6ac; font-size: 11px; font-variant-numeric: tabular-nums; }
+.contact-mode.active .contact-mode-count { color: #747c86; }
 .contact-ui-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 20px; width: 20px; height: 20px; }
 .contact-ui-icon svg { display: block; width: 100%; height: 100%; }
 .contact-workspace .wechat-chat-head { min-height: 88px; height: auto; flex: 0 0 88px; gap: 16px; padding: 16px 28px; border-color: var(--contact-line); }
@@ -50,8 +74,8 @@
 .contact-export-button { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; padding: 3px; border: 0; background: transparent; color: #7d8793; cursor: pointer; }
 .contact-export-button:hover { color: #986a26; }
 .contact-no-selection { color: #8a9098; font-size: 15px; }
-.contact-workspace .wechat-profile-pane { border-left: 0; transition: none; }
-.contact-workspace .wechat-profile-pane.open { position: static; width: clamp(330px, 31vw, 430px); flex: 0 0 clamp(330px, 31vw, 430px); padding: 22px 24px 24px; border-left: 1px solid var(--contact-line); box-shadow: none; }
+.contact-workspace .wechat-profile-pane { border: 0; transition: none; flex: 1 1 auto; min-height: 0; }
+.contact-workspace .wechat-profile-pane.open { position: static; width: 100%; flex: 1 1 auto; padding: 22px 28px 32px; border: 0; box-shadow: none; overflow-y: auto; }
 .contact-workspace .wechat-profile-head { margin-bottom: 24px; font-size: 18px; color: var(--contact-ink); }
 .contact-profile-heading { display: flex; align-items: center; gap: 10px; }
 .contact-ai-badge { display: inline-flex; align-items: center; justify-content: center; padding: 1px 7px; border-radius: 7px; background: var(--contact-soft); color: #a67a30; font-size: 11px; font-weight: 600; }
@@ -129,14 +153,40 @@
 .contact-data-heading::after { content: ''; height: 1px; background: var(--contact-line); flex: 1; }
 .contact-data-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .contact-workspace .contact-data-actions .btn { min-height: 36px; margin-top: 0; font-size: 11px; padding: 8px; white-space: normal; }
+/* ---------- 群聊：群不是人，主区是群成员与群概览，没有页签也没有画像 ---------- */
+.contact-group-item .wechat-contact-copy strong { color: var(--contact-ink); }
+.contact-group-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.contact-group-stat { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 10px 12px; border: 1px solid #eef0ed; border-radius: 12px; background: #fbfcfa; }
+.contact-group-stat span { color: #9aa1a8; font-size: 11px; }
+.contact-group-stat strong { color: var(--contact-ink); font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.contact-group-stat small { color: #a0a6ad; font-size: 10px; line-height: 1.6; }
+.contact-group-note { margin: 12px 0 0; color: #a0a6ad; font-size: 10px; line-height: 1.7; }
+.contact-group-members { display: flex; flex-wrap: wrap; gap: 8px; }
+.contact-group-member { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; padding: 8px 12px; border: 1px solid var(--contact-line); border-radius: 12px; background: #fff; }
+.contact-group-member strong { color: var(--contact-ink); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.contact-group-member small { color: var(--contact-muted); font-size: 11px; }
+/* 群里出现过但还没加为联系人：虚线框，和「已加为联系人」区分开 */
+.contact-group-member.is-pending { border-style: dashed; background: transparent; }
+.contact-group-member.is-pending strong { color: #6a717a; font-weight: 500; }
+/* 群里的最近对话：只做预览，真正的群消息量仍以群列表为准 */
+.contact-group-recent { display: flex; flex-direction: column; }
+.contact-group-recent-item + .contact-group-recent-item { margin-top: 14px; padding-top: 14px; border-top: 1px solid #f0f1ee; }
+.contact-group-recent-item small { color: var(--contact-muted); font-size: 11px; }
+.contact-group-recent-item p { margin: 4px 0 0; color: var(--contact-ink); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+
 @container contacts (max-width: 1000px) {
-  .contact-workspace .wechat-profile-pane.open { position: absolute; top: 0; right: 0; bottom: 0; width: min(400px, 92%); z-index: 4; box-shadow: -12px 0 30px #30352c12; }
   .contact-workspace .wechat-chat-head { padding-inline: 20px; }
+  .contact-tabs { padding-inline: 20px; }
+  .contact-overview-pane, .contact-group-pane { padding: 20px; }
   .contact-chat-toolbar { padding-inline: 20px; }
   .contact-workspace .wechat-chat-log { padding-inline: 20px; }
 }
 @container contacts (max-width: 650px) {
   .contact-workspace .wechat-sidebar { width: 164px; flex-basis: 164px; }
+  .contact-modes { margin-bottom: 8px; }
+  .contact-mode { padding: 6px 4px; font-size: 12px; }
+  .contact-tabs { gap: 16px; padding-inline: 12px; }
+  .contact-overview-pane, .contact-group-pane { padding: 14px 12px 20px; gap: 12px; }
   .contact-workspace .wechat-chat-head { padding: 12px; gap: 8px; }
   .contact-workspace .wechat-chat-title strong { font-size: 14px; }
   .contact-workspace .wechat-chat-title small { font-size: 10px; }

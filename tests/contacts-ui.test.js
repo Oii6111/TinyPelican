@@ -166,7 +166,7 @@ test('聊天按日分组、合并连续时间，历史加载保持顺序，按�
     const exportText = await exported.text();
     assert.match(exportText, /更早的聊天/);
     assert.doesNotMatch(exportText, /刚想说/);
-    assert.equal(fixture.root.all().some((entry) => entry.tagName === 'textarea'), false);
+    assert.equal(byClass(fixture.root, 'wechat-profile-editor').length, 0, '没打开画像页签前不挂载画像编辑器');
   } finally { view?.hide(); URL.createObjectURL = originalCreate; fixture.restore(); }
 });
 
@@ -379,5 +379,132 @@ test('快速切换联系人不会显示旧请求结果，待确认与失败状�
     assert.match(byClass(fixture.root, 'contact-summary-card')[0].textContent, /失败/);
     assert.doesNotMatch(byClass(fixture.root, 'contact-summary-card')[0].textContent, /已完成/);
     assert.match(byClass(fixture.root, 'contact-memory-state')[0].textContent, /连接失败/);
+  } finally { view?.hide(); fixture.restore(); }
+});
+
+test('页签：默认看板，切画像只显示画像，切聊天记录只显示聊天，群聊模式没有页签', async () => {
+  const contacts = [{ name: '联系人', remark: '', messages: 8, profile: { 基础身份: { 职业: '学生' } }, profileMeta: {} }];
+  const groups = [
+    { id: 1, name: '张三、李四', remark: '项目群', kind: 'group', messages: 12, memberCount: 2, lastMessageAt: '2026-11-20T10:03:00Z' },
+    { id: 2, name: '老王、小赵', remark: '', kind: 'group', messages: 4, memberCount: 2, lastMessageAt: '2026-11-19T09:00:00Z' }
+  ];
+  const groupDetail = {
+    group: groups[0],
+    members: [
+      { id: 1, name: '张三', displayName: '张三', kind: 'member' },
+      { id: 2, name: '李四', displayName: '李四', kind: 'contact' }
+    ],
+    recentMessages: [
+      { id: 11, ts: '2026-11-20T10:00:00Z', name: '张三', content: '周六爬山', isOwner: false },
+      { id: 12, ts: '2026-11-20T10:03:00Z', name: '我', content: '几点集合', isOwner: true }
+    ]
+  };
+  const calls = [];
+  const fixture = setup(async (url) => {
+    calls.push(String(url));
+    if (url === '/api/contacts') return contacts;
+    if (url === '/api/groups') return groups;
+    if (url === '/api/groups/' + encodeURIComponent('张三、李四')) return groupDetail;
+    if (String(url).includes('/messages?')) return { messages: [{ id: 21, ts: '2026-11-20T09:00:00Z', name: '联系人', content: '最近一条', isOwner: false }] };
+    if (String(url).endsWith('/emails')) return { emails: [] };
+    if (String(url).endsWith('/chat-summary')) return { chatSummary: {}, jobs: [] };
+    if (String(url).endsWith('/relationship')) return { name: '联系人', kind: 'contact', socialGoal: '保持联系', stage: '同事', notes: '周三约了咖啡', metrics: null, recent: { lastMessageAt: '', messages: 1, daysSinceLast: 0 } };
+    return contacts[0];
+  });
+  let view;
+  try {
+    const { mount } = await import(mountUrl);
+    view = mount(fixture.root);
+    await settle();
+
+    // 两栏：左侧列表 ｜ 主区（头部 + 页签 + 面板）
+    const layout = byClass(fixture.root, 'wechat-contacts-layout')[0];
+    assert.deepEqual(layout.children.map((node) => node.className.split(' ')[0]), ['wechat-sidebar', 'contact-workspace-main']);
+    const main = byClass(fixture.root, 'contact-workspace-main')[0];
+    assert.deepEqual(main.children.map((node) => node.className.split(' ')[0]), ['wechat-chat-head', 'contact-tabs', 'contact-panel']);
+    assert.deepEqual(byClass(fixture.root, 'contact-mode').map((node) => node.textContent), ['联系人1', '群聊2']);
+
+    // 没选中：不显示页签，显示欢迎态
+    const tabs = () => byClass(fixture.root, 'contact-tabs')[0];
+    assert.equal(tabs().hidden, true);
+    assert.match(byClass(fixture.root, 'contact-welcome')[0].textContent, /从左侧选择联系人/);
+
+    // 选中联系人：默认在看板
+    await byClass(fixture.root, 'wechat-contact-item')[0].click();
+    await settle();
+    const overview = () => byClass(fixture.root, 'contact-overview-pane')[0];
+    const profile = () => byClass(fixture.root, 'wechat-profile-pane')[0];
+    const chat = () => byClass(fixture.root, 'wechat-chat-main')[0];
+    assert.equal(tabs().hidden, false);
+    assert.deepEqual(byClass(fixture.root, 'contact-tab').map((node) => node.textContent), ['看板', '画像', '聊天记录']);
+    assert.ok(byClass(fixture.root, 'contact-tab')[0].className.includes('active'));
+    assert.equal(overview().hidden, false, '默认显示看板');
+    assert.equal(profile().hidden, true);
+    assert.equal(chat().hidden, true);
+    assert.ok(byClass(fixture.root, 'contact-relationship-card').length, '看板里有关系概览');
+    assert.match(byClass(fixture.root, 'contact-overview-message')[0].textContent, /最近一条/);
+    assert.equal(button(fixture.root, '联系人画像').attributes['aria-expanded'], 'false');
+
+    // 切到画像：只显示画像
+    await byClass(fixture.root, 'contact-tab')[1].click();
+    await settle();
+    assert.equal(overview().hidden, true);
+    assert.equal(profile().hidden, false);
+    assert.ok(profile().className.includes('open'));
+    assert.equal(chat().hidden, true);
+    assert.ok(byClass(fixture.root, 'contact-profile-card').length, '画像页签渲染画像');
+    assert.equal(button(fixture.root, '联系人画像').attributes['aria-expanded'], 'true');
+    assert.equal(byClass(fixture.root, 'contact-tab')[1].attributes['aria-selected'], 'true');
+
+    // 切到聊天记录：只显示聊天
+    await byClass(fixture.root, 'contact-tab')[2].click();
+    await settle();
+    assert.equal(overview().hidden, true);
+    assert.equal(profile().hidden, true);
+    assert.equal(chat().hidden, false);
+    assert.match(byClass(fixture.root, 'wechat-chat-log')[0].textContent, /最近一条/);
+
+    // 重新选中同一个联系人：页签回到看板
+    await byClass(fixture.root, 'wechat-contact-item')[0].click();
+    await settle();
+    assert.ok(byClass(fixture.root, 'contact-tab')[0].className.includes('active'));
+    assert.equal(overview().hidden, false);
+
+    // 切群聊：没有页签，主区只有群详情
+    const relationshipRequests = () => calls.filter((url) => url.endsWith('/relationship')).length;
+    const before = relationshipRequests();
+    await byClass(fixture.root, 'contact-mode')[1].click();
+    await settle();
+    assert.equal(byClass(fixture.root, 'wechat-contact-item').length, 2);
+    assert.deepEqual(byClass(fixture.root, 'wechat-contact-item').map((node) => node.all().find((child) => child.tagName === 'strong').textContent), ['项目群', '老王、小赵']);
+    assert.match(byClass(fixture.root, 'wechat-contact-item')[0].textContent, /2 人 · 12 条消息/);
+    assert.equal(byClass(fixture.root, 'contact-sort-row')[0].hidden, true);
+    assert.equal(tabs().hidden, true, '群聊没有页签');
+    assert.equal(byClass(fixture.root, 'contact-welcome')[0].hidden, false);
+    await byClass(fixture.root, 'wechat-contact-item')[0].click();
+    await settle();
+    assert.equal(calls.filter((url) => url === '/api/groups/' + encodeURIComponent('张三、李四')).length, 1);
+    assert.equal(relationshipRequests(), before, '群不进关系概览链路');
+    assert.equal(tabs().hidden, true);
+    const groupPane = byClass(fixture.root, 'contact-group-pane')[0];
+    assert.equal(groupPane.hidden, false);
+    assert.equal(profile().hidden, true);
+    assert.equal(chat().hidden, true);
+    assert.equal(byClass(fixture.root, 'contact-group-member').length, 2);
+    assert.deepEqual(byClass(fixture.root, 'contact-group-member').map((node) => node.textContent), ['张三未加为联系人', '李四已加为联系人']);
+    assert.match(byClass(fixture.root, 'contact-group-recent')[0].textContent, /周六爬山/);
+    assert.match(byClass(fixture.root, 'contact-group-recent')[0].textContent, /几点集合/);
+    assert.equal(byClass(groupPane, 'contact-profile-card').length, 0);
+    assert.equal(byClass(groupPane, 'contact-relationship-card').length, 0);
+    assert.match(groupPane.textContent, /群聊不是人，没有画像/);
+    assert.match(byClass(fixture.root, 'wechat-chat-title')[0].textContent, /项目群/);
+
+    // 切回联系人：选中与详情清空，页签隐藏，回到欢迎态
+    await byClass(fixture.root, 'contact-mode')[0].click();
+    await settle();
+    assert.equal(byClass(fixture.root, 'wechat-contact-item').length, 1);
+    assert.equal(tabs().hidden, true);
+    assert.equal(byClass(fixture.root, 'contact-welcome')[0].hidden, false);
+    assert.equal(byClass(fixture.root, 'contact-sort-row')[0].hidden, false);
   } finally { view?.hide(); fixture.restore(); }
 });
